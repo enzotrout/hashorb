@@ -1,4 +1,31 @@
+# Python virtual environment
 .venv/
+
+# Python bytecode
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# macOS
 .DS_Store
+
+# VS Code local workspace
+.vscode/*.code-workspace
+
+# Environment files
+.env
+.env.*
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Misc
+.cache/
