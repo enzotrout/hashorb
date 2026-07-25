@@ -18,10 +18,6 @@ htmlcov/
 # VS Code local workspace
 .vscode/*.code-workspace
 
-# Environment files
-.env
-.env.*
-
 # Build artifacts
 build/
 dist/
@@ -29,3 +25,8 @@ dist/
 
 # Misc
 .cache/
+
+# Environment files
+.env
+.env.*
+!.env.example
