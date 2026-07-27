@@ -341,6 +341,7 @@ def run_continuous_mining(
     replacements = 0
     total_hashes = 0
     total_elapsed_ns = 0
+    stop_observed = False
 
     def finish(
         outcome: ContinuousMiningOutcome,
@@ -361,8 +362,15 @@ def run_continuous_mining(
             total_elapsed_ns=total_elapsed_ns,
         )
 
-    def finish_stopped() -> ContinuousMiningResult:
+    def observe_stop() -> None:
+        nonlocal stop_observed
+        if stop_observed:
+            return
+        stop_observed = True
         event_observer.stop_requested()
+
+    def finish_stopped() -> ContinuousMiningResult:
+        observe_stop()
         return finish(ContinuousMiningOutcome.STOPPED_BY_USER)
 
     while True:
@@ -385,11 +393,19 @@ def run_continuous_mining(
 
         if chunk_result.match is not None:
             match = chunk_result.match
+            if stop_token.stop_requested:
+                observe_stop()
             event_observer.candidate_found(current_work, match)
+            if stop_token.stop_requested:
+                observe_stop()
             accepted = submit_share(current_work, match)
             if not isinstance(accepted, bool):
                 raise ContinuousMiningValidationError("submit_share must return an actual Boolean")
+            if stop_token.stop_requested:
+                observe_stop()
             event_observer.submission_completed(current_work, match, accepted)
+            if stop_token.stop_requested:
+                observe_stop()
             outcome = (
                 ContinuousMiningOutcome.SHARE_ACCEPTED
                 if accepted

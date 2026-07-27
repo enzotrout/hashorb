@@ -520,7 +520,10 @@ def test_candidate_returned_during_stop_requested_chunk_still_submits() -> None:
 
     assert result.outcome is ContinuousMiningOutcome.SHARE_ACCEPTED
     assert len(harness.submit_calls) == 1
-    assert ("stopped",) not in harness.observations
+    assert harness.observations.count(("stopped",)) == 1
+    assert harness.observations.index(("stopped",)) < harness.observations.index(
+        ("candidate", "initial-job", 0)
+    )
 
 
 def test_network_only_candidate_is_submitted() -> None:
