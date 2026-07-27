@@ -139,11 +139,41 @@ installation and restoration of portable Ctrl-C and termination handlers.
 Those handlers only request stop. A current synchronous Python range may
 finish, while the orchestrator prevents another search or replacement poll.
 
-The CLI acquires initial authorized work through bounded 0.25-second client
-polls so shutdown remains responsive before mining begins. `StratumClient`
-continues to own protocol state and queues. At each completed nonce boundary,
-the orchestrator drains queued pool notifications before advancing local work.
-Only final terminal progression exhaustion uses bounded waits for a newer job.
+The session-recovery owner acquires initial authorized work through bounded
+0.25-second client polls so shutdown remains responsive before mining begins.
+`StratumClient` continues to own protocol state and queues. At each completed
+nonce boundary, the orchestrator drains queued pool notifications before
+advancing local work. Only final terminal progression exhaustion uses bounded
+waits for a newer job.
+
+## Stratum Session-Recovery Boundary
+
+`hashphere.mining.recovery` owns the immutable reconnect policy, deterministic
+delay calculation, interruptible backoff, injectable client factory, and the
+currently usable `StratumMiningSession`. A session groups exactly one fresh
+client, subscription, assembler, usable difficulty-snapshotted job, negotiated
+extra-nonce seed, and session index. Recovery closes an unusable client
+best-effort before another attempt and never reuses its notification queue,
+request IDs, assembler, prepared work, progression cursor, or nonce seed.
+
+Only `StratumConnectionError` is recoverable. Normal bounded receive timeout is
+control flow, while protocol, authorization, mining, observability, and
+programming errors remain terminal. Recovery requires a fresh authorization,
+then a new-session difficulty followed by a usable job before publishing the
+session. Each successfully authorized session receives exactly one random seed
+at its newly negotiated width; progression within that session is
+deterministic. Invocation-wide chunk, hash, elapsed-time, candidate,
+submission, and recovery totals remain owned by continuous orchestration and
+survive session replacement.
+
+The CLI owns environment loading, configured-endpoint selection, signal
+registration, final session closure, event-sink lifecycle, console output, and
+exit codes. Its stop token interrupts backoff and prevents later client
+creation or search. `StratumClient` remains unaware of retry policy, and the
+transport remains unaware of client/session state. A submission failure is
+terminal and bypasses recovery because retrying an uncertain request could
+duplicate `mining.submit`. Pool failover is not part of this owner and remains
+deferred.
 
 ## Mining Work-Space Progression Boundary
 
@@ -167,14 +197,13 @@ values.
 Continuous orchestration owns the priority decision: after a completed chunk
 and stop check, queued pool work supersedes local progression. Only the final
 newest job from one drain is prepared. A replacement abandons local time and
-extra-nonce cursor state, restarts from the invocation seed and the pool's
+extra-nonce cursor state, restarts from the current session seed and the pool's
 network time, and preserves session totals.
 
 Continuous observers remain passive adapters into `EventSink`. The CLI still
-owns opt-ins, configuration, client and sink construction, one invocation-
-scoped extra nonce, sanitized output, client closure, sink closure, and signal
-restoration. Reconnect and session recovery remain higher-level future
-responsibilities rather than leaking into transport, progression, or hashing
+owns opt-ins, configuration, recovery-owner and sink construction, sanitized
+output, final session closure, sink closure, and signal restoration. Reconnect
+and session recovery remain outside transport, progression, and hashing
 primitives.
 
 ---
@@ -196,7 +225,9 @@ fields through an injected sink; event writers append validated records, and
 analyzers read and aggregate them. Raw protocol messages, credentials, extra
 nonces, complete coinbase data, and arbitrary exception messages do not cross
 the observability boundary. The CLI formats analyzer results without exposing
-raw records or identifiers.
+raw records or identifiers. Recovery observers emit controlled lifecycle
+events, and the analyzer counts connection losses, reconnect attempts,
+successes, failures, and exhaustion without owning retry decisions.
 
 JSONL is the first local persistence format. Rotation, retention,
 machine-readable summary output, and external telemetry exporters remain

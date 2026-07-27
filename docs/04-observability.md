@@ -96,6 +96,22 @@ exposing signals or raw work:
 - `mining_waiting_for_job` records entry into bounded replacement-job waiting
   only after local progression is terminally exhausted.
 
+Continuous session recovery additionally emits:
+
+- `stratum_connection_lost` when a genuine connection failure enters recovery.
+- `stratum_reconnect_scheduled` before one deterministic interruptible delay.
+- `stratum_reconnect_attempted` immediately before creating the fresh client.
+- `stratum_reconnect_failed` after a recoverable attempt fails.
+- `stratum_reconnect_succeeded` only after fresh authorization, difficulty, and
+  usable job establish the replacement session.
+- `stratum_reconnect_exhausted` before terminal failure when the policy permits
+  no further attempt.
+
+Their stable fields are limited to attempt and maximum counts, delay seconds,
+controlled recovery stage and error category, successful reconnect count, and
+session index. Event order follows execution; a scheduled event precedes its
+attempt, and success never means merely that a TCP socket opened.
+
 For each prepared variant, `nonce_space_exhausted` follows the completed final
 range. Queued pool work is observed and selected before local progression. A
 local successor emits any cycle/time transition followed by
@@ -136,6 +152,8 @@ Failure events contain only a controlled stage and safe exception category.
 Progression records contain counts and controlled reasons only: actual starting
 or advanced `extra_nonce_2`, `extra_nonce_1`, effective network time, header
 prefix, and raw work identity are prohibited.
+Recovery records likewise omit endpoint credentials, both extra nonces, job
+identity, raw exceptions, protocol messages, and request or response payloads.
 
 ## Append, Flush, and Close Behavior
 
@@ -206,9 +224,10 @@ acceptance.
 The immutable summary reports record and run status counts, chronological
 first and last UTC timestamps, sorted command and completion-outcome counts,
 known mining event counts, work variants searched, extra-nonce advances and
-cycles, network-time rolls, duplicate work ignored, range totals, accepted and
-rejected submission counts, and sorted controlled failure-stage/category
-counts. Command counts
+cycles, network-time rolls, duplicate work ignored, connection losses,
+reconnect attempts, reconnect successes, reconnect failures, reconnect
+exhaustion events, range totals, accepted and rejected submission counts, and
+sorted controlled failure-stage/category counts. Command counts
 are per distinct run ID rather than per record. The human-readable CLI always
 shows the five currently known commands in a stable order, including zero
 counts, followed by any future command names in sorted order.
@@ -220,6 +239,11 @@ variant; reasons `extra_nonce_2` and `network_time` each count one deterministic
 extra-nonce advance. Cycle, time-roll, and duplicate records each add one to
 their corresponding aggregate. Unknown future schema-version-1 events retain
 the existing forward-compatible behavior and do not affect current totals.
+
+Recovery event fields are validated before aggregation. The analyzer counts
+event occurrences rather than trusting cumulative reconnect or session-index
+fields. These recovery counters do not affect nonce-range totals or weighted
+hash rate.
 
 Aggregate mining rate is weighted from the integer totals:
 

@@ -469,13 +469,14 @@ stop, a submission result, or failure. Supplying it provides a controlled live-
 validation boundary. Idle polls and notifications do not consume the limit,
 and replacement work does not reset it.
 
-The CLI handshakes and creates `MiningJobAssembler`, one `StopController`, and
-one invocation-scoped `extra_nonce_2`. Initial work is acquired with repeated
-0.25-second `StratumClient.poll_notification` calls rather than an indefinite
-blocking read. A normal timeout returns control for another stop check. A job
-received before the first difficulty is observed and discarded; it is never
-retained for later reuse. The first job arriving after known difficulty starts
-the mining lifecycle.
+The CLI creates one `StopController` and a `StratumSessionRecovery` owner. The
+owner handshakes, creates a fresh `MiningJobAssembler`, and generates one
+session-scoped `extra_nonce_2` seed after successful authorization. Initial
+work is acquired with repeated 0.25-second `StratumClient.poll_notification`
+calls rather than an indefinite blocking read. A normal timeout returns
+control for another stop check. A job received before the first difficulty is
+observed and discarded; it is never retained for later reuse. The first job
+arriving after known difficulty starts that session's mining lifecycle.
 
 For one prepared variant, `run_continuous_mining` searches adjacent half-
 open ranges. The first begins at the configured start, every later range begins
@@ -493,7 +494,7 @@ position. Only the final newest job in one drain is prepared and searched;
 superseded intermediate jobs remain observed but do not count as used work or
 replacement transitions. Both `clean_jobs` values switch work under the
 documented freshness policy. A replacement abandons the old local progression
-cursor, starts from the same invocation seed and the new pool job's network
+cursor, starts from the same current-session seed and the new pool job's network
 time, restarts at the configured nonce, and preserves all session counters.
 
 `StopToken` is a read-only cooperative boundary. The CLI maps Ctrl-C and
@@ -512,29 +513,31 @@ The continuous hierarchy is:
 pool job -> effective network time -> extra_nonce_2 -> nonce range
 ```
 
-The CLI generates exactly one random lowercase `extra_nonce_2` of the
-negotiated width. `MiningWorkCursor` treats it as a numeric starting offset and
-advances by one modulo `2**(8 * extra_nonce_2_size)`. It records how many
-variants have been searched at the current time, so every value—including
-zero after wrap—is visited exactly once without allocating a history set. The
-starting value is not repeated until the cycle is declared complete.
+The recovery owner generates exactly one random lowercase `extra_nonce_2` of
+the negotiated width after each successful session authorization.
+`MiningWorkCursor` treats it as a numeric starting offset and advances by one
+modulo `2**(8 * extra_nonce_2_size)`. It records how many variants have been
+searched at the current time, so every value—including zero after wrap—is
+visited exactly once without allocating a history set. The starting value is
+not repeated until the cycle is declared complete, and no additional random
+value is generated within that session.
 
 Each successor keeps fixed-width lowercase hexadecimal representation,
 prepares a new coinbase, Merkle root, targets, and 76-byte header prefix once,
 and restarts the nonce at the configured start. No random value is generated
-after invocation initialization. Once the complete negotiated extra-nonce
+after session initialization. Once the complete negotiated extra-nonce
 cycle has been searched at one time, the cursor increments network time by
-exactly one second and resets the extra nonce to the invocation seed. Locally
-rolled time is exactly eight lowercase hexadecimal characters. It never wraps
-beyond `ffffffff`.
+exactly one second and resets the extra nonce to the current-session seed.
+Locally rolled time is exactly eight lowercase hexadecimal characters. It
+never wraps beyond `ffffffff`.
 
 Ordering at an exhausted nonce boundary is deliberate: finish the chunk,
 honor stop and chunk-limit boundaries, emit exhaustion, drain every immediately
 available notification, select the final newest valid pool job when present,
 and only otherwise advance local work. Pool work therefore wins over local
 progression. A new pool job resets local time to the pool-provided value and
-uses the same invocation seed; local rolled time from an older job is never
-carried forward.
+uses the same current-session seed; local rolled time from an older job is
+never carried forward.
 
 Duplicate prevention uses compact validated identities rather than an
 unbounded nonce ledger. Pool context identity covers all job construction data
@@ -561,15 +564,88 @@ failure is not retried.
 
 Controlled outcomes are `stopped_by_user`, `chunk_limit_reached`,
 `share_accepted`, and `share_rejected`. The CLI returns zero for each, two for
-syntax or opt-in failure, and one for runtime or cleanup failure. Reconnect,
-retry, session recovery, native and parallel CPU backends, GPU execution, and
-alternative search strategies remain deferred.
+syntax or opt-in failure, and one for runtime, recovery exhaustion, or cleanup
+failure. Native and parallel CPU backends, GPU execution, alternative search
+strategies, and pool failover remain deferred.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not
 write log files directly. The event schema, safe-field policy, persistence
 lifecycle, and read-only analysis behavior are documented in
 [`04-observability.md`](04-observability.md).
+
+## Single-Endpoint Session Recovery
+
+`ReconnectPolicy` is an immutable, validated policy. Its production default is
+five attempts after the failed active connection or failed initial attempt.
+One-based attempts use deterministic exponential delays of 1, 2, 4, 8, and 16
+seconds; larger configured sequences are capped at 30 seconds. The CLI accepts
+`--max-reconnect-attempts` from 0 through 100, where zero disables retry.
+There is no jitter and every fresh client still targets only the configured
+host and port.
+
+The recoverable class is deliberately narrow: only `StratumConnectionError`
+from connect, handshake transport, initial work waiting, nonblocking
+between-chunk notification polling, or terminal replacement waiting enters
+recovery. A normal receive timeout is not a failure. Invalid configuration,
+malformed or unsupported messages, response-ID errors, authorization
+rejection, mining and progression invariants, event-log failures, and arbitrary
+programming errors are terminal.
+
+Connection loss follows this state flow:
+
+```text
+connection unavailable
+    -> failed client closed best-effort
+    -> interruptible deterministic backoff
+    -> fresh client and request-ID lifecycle
+    -> subscribe and authorize
+    -> fresh assembler and one new negotiated-width seed
+    -> wait for fresh difficulty
+    -> wait for a later usable mining.notify
+    -> install the new session and resume
+```
+
+No queued notification, old difficulty, assembler, prepared work, progression
+cursor, rolled time, or request ID survives the disconnected session. Jobs
+arriving before the new session's first difficulty remain unusable. After a
+difficulty is known, the normal arrival-order rules apply and the newest job
+from the immediate drain wins. Both `clean_jobs` values continue to switch
+work under the freshness policy.
+
+One new random seed is generated for every successfully authorized session,
+using that session's `extra_nonce_2_size`; failed connection and authorization
+attempts do not generate one. A fresh session establishes a new Stratum
+acceptance context. Consequently, its first usable work may be searched even
+if header and target values happen to be identical to the disconnected
+session. This is explicit because submission belongs to the newly authorized
+session, not the stale client context.
+
+Continuous orchestration installs a new cursor at the configured start nonce
+and discards all session-local progression. It preserves invocation-wide
+chunks consumed, hashes checked, mining elapsed nanoseconds, candidates,
+submissions, reconnect attempts, successful reconnects, failed reconnect
+attempts, and the optional `max_chunks` budget. New-session work counts as a
+replacement only when prior work was actually searched; unseen work is not
+reported as used or replaced.
+
+Backoff checks the shared stop token in bounded sleep quanta. A stop before an
+attempt, during its delay, after a failed attempt, or after authorization but
+before usable work prevents another client or search and produces the normal
+`stopped_by_user` outcome. No receiver thread, asyncio task, or busy loop is
+introduced. Signal installation and restoration remain CLI responsibilities.
+
+Candidate discovery proceeds directly to at most one submission through the
+current session. Recovery never runs between discovery and submission. A
+`False` pool response remains a terminal normal rejection, and any transport
+failure during `mining.submit` is terminal because the pool may already have
+received the request. The uncertain request is never resent.
+
+After every permitted connection attempt fails,
+`SessionRecoveryExhaustedError` records only the safe attempt count, recovery
+stage, and controlled error category. The CLI returns status 1 without raw
+exception text. Pool failover, random jitter, and durable recovery state remain
+deferred.
 
 ## Compute Backend and Compute Profile
 

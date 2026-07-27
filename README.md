@@ -4,7 +4,8 @@ Hashphere is an experimental Python Bitcoin mining project. Live operations are
 explicitly opt-in and include Stratum inspection, bounded mining, and a
 synchronous continuous lifecycle that searches one Python nonce chunk at a
 time. Continuous mining now expands deterministic Bitcoin work space after a
-nonce boundary; reconnect and session recovery are not implemented yet.
+nonce boundary and recovers fresh authorized work after single-endpoint
+Stratum connection loss.
 
 ## Configure the environment
 
@@ -230,6 +231,7 @@ HASHPHERE_ENABLE_LIVE_MINING=1 \
 uv run python -m hashphere stratum-mine \
   --start-nonce 0 \
   --chunk-size 100000 \
+  --max-reconnect-attempts 5 \
   --log-file logs/hashphere.jsonl
 ```
 
@@ -237,6 +239,13 @@ uv run python -m hashphere stratum-mine \
 unpadded ASCII decimal syntax and the unsigned 32-bit nonce range. With no
 `--max-chunks`, the command continues until Ctrl-C, a candidate is submitted,
 or an unrecoverable error occurs. There is no hidden chunk limit.
+
+`--max-reconnect-attempts` defaults to `5`, accepts strict unpadded ASCII
+decimal values from `0` through `100`, and counts retries after a failed active
+connection or initial attempt. Zero disables retries. The fixed retry delays
+are 1, 2, 4, 8, and 16 seconds for the default policy, with longer configured
+sequences capped at 30 seconds. There is no random jitter or endpoint
+failover. Ctrl-C interrupts backoff before another client is created.
 
 For a controlled live validation, cap the number of actual searches:
 
@@ -247,6 +256,7 @@ uv run python -m hashphere stratum-mine \
   --start-nonce 0 \
   --chunk-size 100000 \
   --max-chunks 3 \
+  --max-reconnect-attempts 5 \
   --log-file logs/hashphere.jsonl
 ```
 
@@ -265,6 +275,7 @@ uv run python -m hashphere stratum-mine \
   --start-nonce 4294967295 \
   --chunk-size 1 \
   --max-chunks 3 \
+  --max-reconnect-attempts 5 \
   --log-file logs/hashphere.jsonl
 ```
 
@@ -283,11 +294,13 @@ This milestone does not cancel a chunk mid-search.
 If one prepared variant exhausts the remaining 32-bit nonce space, Hashphere
 does not wrap or repeat its nonce ranges. It first drains queued pool
 notifications. A genuinely newer selected job takes priority and restarts at
-the configured nonce with the invocation's original extra-nonce seed.
+the configured nonce with the current session's original extra-nonce seed.
 Otherwise, Hashphere advances `extra_nonce_2` by one modulo its negotiated
 fixed-width space, rebuilds the coinbase-derived work once, and restarts the
-nonce position. The single random seed is generated only at invocation start;
-all later values are deterministic.
+nonce position. One random seed is generated only after each successful
+session authorization, using that session's negotiated width; all later values
+inside the session are deterministic. A reconnect may negotiate a different
+width and therefore receives one new seed, which is never printed or logged.
 
 After every negotiated `extra_nonce_2` value has been searched once at one
 network time, the time advances by exactly one second and extra-nonce
@@ -298,12 +311,30 @@ duplicate range searches without retaining an unbounded nonce history. A
 changed target is treated as a new acceptance context, while an identical pool
 reannouncement does not restart already searched work.
 
+On a genuine connection or transport-availability failure during handshake,
+initial work acquisition, between-chunk polling, or terminal replacement wait,
+Hashphere closes the failed client best-effort and creates a new client for the
+same configured endpoint. It requires a fresh subscription, authorization,
+difficulty, and later usable job before resuming. Old notifications, assembler
+state, prepared work, request IDs, local extra-nonce progress, and rolled time
+are discarded. Invocation-wide chunk consumption, hashes, elapsed mining time,
+candidates, submissions, and recovery counters remain cumulative. New-session
+work is a new Stratum acceptance context even if its prepared header and
+targets happen to match the prior session.
+
+Malformed protocol data, authorization rejection, mining invariants, logging
+errors, and other non-connection failures remain terminal. Most importantly,
+a `mining.submit` transport failure is never retried: its outcome is uncertain,
+and resending could duplicate a submission. Pool failover, random backoff
+jitter, multiprocessing, native backends, and GPU execution remain deferred.
+
 The actual generated or advanced extra nonce is never displayed or logged.
 Final output and JSONL analysis expose only safe aggregate variant, advance,
-cycle, network-time-roll, and duplicate counts. Reconnect, retry,
-multiprocessing, native backends, and GPU execution remain unimplemented.
+cycle, network-time-roll, duplicate, connection-loss, and reconnect counts.
 
-Final output reports sanitized aggregate counters and weighted hash rate.
+Final output reports sanitized aggregate counters and weighted hash rate,
+including reconnect attempts, successful reconnects, failed reconnect
+attempts, and sessions established.
 Controlled stop, chunk-limit, accepted-share, and rejected-share outcomes exit
 with status `0`; syntax or opt-in failures return `2`, and runtime or cleanup
 failures return `1` without printing arbitrary exception details.
@@ -394,6 +425,11 @@ Mining:
   Extra nonce 2 cycles: 0
   Network-time rolls: 0
   Duplicate work ignored: 0
+  Connection losses: 0
+  Reconnect attempts: 0
+  Reconnect successes: 0
+  Reconnect failures: 0
+  Reconnect exhausted events: 0
   Nonce ranges completed: 0
   Hashes checked: 0
   Mining elapsed: 0 ns

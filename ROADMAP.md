@@ -52,7 +52,8 @@ Progress:
 - ✅ Continuous synchronous mining lifecycle and controlled shutdown
 - ✅ Search-space expansion with extra-nonce and network-time progression
 - ✅ Duplicate-work prevention across local progression and pool reannouncements
-- ⬜ Reconnect, session recovery, and pool failover
+- ✅ Single-endpoint reconnect and fresh-session recovery
+- ⬜ Pool failover
 - ⬜ Multiprocess CPU backend
 
 ---
@@ -89,7 +90,8 @@ Progress:
 - ✅ Bounded chunked mining
 - ✅ Continuous mining lifecycle
 - ✅ Extra-nonce progression, network-time rolling, and duplicate-work prevention
-- ⬜ Reconnect and session recovery
+- ✅ Single-endpoint reconnect and session recovery
+- ⬜ Pool failover
 - ⬜ Multi-process mining
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -155,19 +157,19 @@ Planned:
 
 # Current Milestone
 
-**Deterministic Search-Space Expansion — Complete**
+**Resilient Single-Endpoint Stratum Recovery — Complete**
 
 Objective:
 
-Expand a continuous mining session from nonce chunks into deterministic work
-variants. Advance fixed-width `extra_nonce_2` values arithmetically, roll
-network time only after a complete negotiated cycle, prioritize newer pool
-work, and prevent duplicate range searches without unbounded history.
+Recover continuous mining from genuine Stratum connection loss through a
+bounded deterministic retry policy. Establish a fresh authorized session,
+fresh difficulty and job, and one newly negotiated extra-nonce seed while
+preserving invocation-wide mining and recovery counters.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
-analysis, and search-space expansion remain complete. Reconnect, session
-recovery, and pool failover are next. A compute-backend abstraction then
-precedes native and parallel CPU backends.
+analysis, search-space expansion, and single-endpoint session recovery remain
+complete. A compute-backend abstraction is next and precedes native and
+parallel CPU backends. Pool failover remains a later recovery milestone.
 Sequential, partitioned, strided, and orbiting-bit strategies precede CUDA,
 DGX Spark/GB10, multi-GPU, and host-side verification. Lite/Auto/Max/Custom
 operating profiles, macOS/Windows/Linux/Docker packaging, broader Stratum pool
@@ -181,5 +183,4 @@ order.
 
 Continue with:
 
-**Add reconnect, session recovery, and pool failover without duplicating or
-silently losing accepted work.**
+**Define the compute-backend abstraction without changing mining semantics.**
