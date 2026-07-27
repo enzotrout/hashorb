@@ -359,6 +359,29 @@ The explicitly opt-in one-shot runner described below owns the first complete
 bounded live integration. Continuous mining, submission counters, stale- or
 duplicate-share classification, and automatic retry remain deferred.
 
+## Bounded Notification Polling
+
+An authorized `StratumClient` can call `poll_notification(timeout_seconds=0.0)`
+to check the shared Stratum stream for one supported notification without
+blocking indefinitely. The timeout accepts a finite, nonnegative integer or
+float. Zero requests a nonblocking check; a normal receive timeout returns
+`None` and leaves the client authorized. Supported queued notifications are
+always returned first and retain their original arrival order.
+
+When the queue is empty, the transport temporarily applies the requested
+timeout while preserving newline-delimited framing. It restores the socket's
+previous timeout after a message, a timeout, or a receive failure. Partial
+message bytes remain buffered for the next receive. Only the dedicated normal
+receive-timeout condition becomes `None`; connection closure, transport
+failure, malformed messages, unexpected responses, and unsupported
+notifications continue to raise their existing errors. Polling does not close,
+reconnect, retry, change request IDs, or discard messages.
+
+This bounded check will allow future mining orchestration to inspect new pool
+notifications between bounded nonce-search chunks. Chunk scheduling,
+`clean_jobs` cancellation, job replacement, time rolling, and continuous mining
+remain deferred.
+
 ## One-Shot Live Mining Orchestration
 
 `stratum-mine-once` is guarded by both

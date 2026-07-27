@@ -35,21 +35,20 @@ Hashphere is an educational Bitcoin mining project whose goals are:
 
 # Current Phase
 
-**Phase 0 — Development Environment**
+**Phase 2 — CPU Miner and Stratum Integration**
 
 Progress:
 
-- ✅ 0.1 Machine Audit
-- ✅ 0.2 Git Setup
-- ✅ 0.3 Python Environment
-- ⬜ 0.4 VS Code
-- ⬜ 0.5 ChatGPT / Codex
-- ⬜ 0.6 Docker
-- ⬜ 0.7 Bitcoin Core
-- ⬜ 0.8 DGX Spark
-- ⬜ 0.9 GitHub Project
-- ⬜ 0.10 Engineering Standards
-- ⬜ 0.11 Validation
+- ✅ Runtime configuration and synchronous Stratum transport
+- ✅ Subscribe, authorize, notification parsing, and authenticated share submission
+- ✅ Immutable mining jobs and deterministic coinbase, Merkle, and header construction
+- ✅ Double-SHA256, target calculation, and proof-of-work comparison
+- ✅ Prepared mining work and bounded sequential nonce search
+- ✅ Opt-in bounded live Stratum mining with at most one submission
+- 🚧 Timeout-aware Stratum notification polling
+- ⬜ Chunked mining orchestration and notification handling between chunks
+- ⬜ Continuous CPU mining and worker scheduling
+- ⬜ Multiprocess CPU backend
 
 ---
 
@@ -68,17 +67,22 @@ Planned:
 
 # Phase 2 — CPU Miner
 
-Planned:
+Progress:
 
-- Block template retrieval
-- Coinbase creation
-- Merkle root calculation
-- Header assembly
-- SHA256d engine
-- Nonce search
-- Multi-process mining
-- Block submission
-- Persistent best hash
+- ⬜ Bitcoin Core block-template retrieval
+- ✅ Stratum mining-job ingestion
+- ✅ Coinbase creation
+- ✅ Merkle root calculation
+- ✅ Header assembly and hashing
+- ✅ SHA256d engine
+- ✅ Bounded nonce search
+- ✅ Stratum share submission
+- ✅ One bounded live mining range
+- 🚧 Timeout-aware notification polling
+- ⬜ Chunked and continuous mining
+- ⬜ Multi-process mining
+- ⬜ Direct block submission
+- ⬜ Persistent best hash
 
 ---
 
@@ -141,19 +145,18 @@ Planned:
 
 # Current Milestone
 
-**Milestone 0.4 — VS Code Professional Development Environment**
+**Timeout-Aware Stratum Notification Polling**
 
 Objective:
 
-Create a professional development environment with:
+Allow an authorized synchronous Stratum client to check for supported mining
+notifications for a caller-bounded duration while preserving queued messages,
+newline framing, connection errors, and the transport's configured timeout.
 
-- Python integration
-- Git integration
-- Debugging
-- Remote SSH
-- Terminal integration
-- ChatGPT Codex
-- GitHub authentication
+This milestone creates the receive boundary needed before mining can be split
+into bounded nonce chunks. It does not introduce chunk scheduling, job
+replacement, `clean_jobs` cancellation, retries, reconnects, or continuous
+mining.
 
 ---
 
@@ -161,4 +164,5 @@ Create a professional development environment with:
 
 Continue with:
 
-**Milestone 0.4 — VS Code Professional Setup**
+**Complete and review timeout-aware notification polling, then design bounded
+nonce-chunk orchestration.**

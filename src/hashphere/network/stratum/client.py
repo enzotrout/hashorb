@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from collections.abc import Mapping
 from enum import Enum, auto
@@ -23,7 +24,10 @@ from hashphere.network.stratum.messages import (
     parse_submit_result,
     parse_subscribe_result,
 )
-from hashphere.network.stratum.transport import StratumTransport
+from hashphere.network.stratum.transport import (
+    StratumReceiveTimeoutError,
+    StratumTransport,
+)
 
 _StratumNotification = SetDifficultyNotification | MiningNotifyNotification
 
@@ -73,8 +77,11 @@ class _StratumTransport(Protocol):
     def send_message(self, message: Mapping[str, object]) -> None:
         """Send one JSON-compatible Stratum message."""
 
-    def receive_message(self) -> Mapping[str, object]:
-        """Receive one decoded Stratum message."""
+    def receive_message(
+        self,
+        timeout_seconds: float | None = None,
+    ) -> Mapping[str, object]:
+        """Receive one decoded Stratum message with an optional timeout."""
 
     def close(self) -> None:
         """Close the transport."""
@@ -209,6 +216,30 @@ class StratumClient:
             return self._notifications.popleft()
 
         message = self._transport.receive_message()
+        return self._route_notification_message(message)
+
+    def poll_notification(
+        self,
+        timeout_seconds: float = 0.0,
+    ) -> SetDifficultyNotification | MiningNotifyNotification | None:
+        """Return the next notification, or ``None`` after a bounded timeout."""
+
+        self._require_state(StratumClientState.AUTHORIZED, "poll_notification")
+        _validate_poll_timeout(timeout_seconds)
+        if self._notifications:
+            return self._notifications.popleft()
+
+        try:
+            message = self._transport.receive_message(timeout_seconds=timeout_seconds)
+        except StratumReceiveTimeoutError:
+            return None
+
+        return self._route_notification_message(message)
+
+    def _route_notification_message(
+        self,
+        message: Mapping[str, object],
+    ) -> _StratumNotification:
         if "method" not in message:
             response_id = self._parse_response_id(message)
             raise StratumRequestError(
@@ -295,3 +326,12 @@ class StratumClient:
             raise StratumClientStateError(
                 f"{operation} requires state {required.name}; current state is {self._state.name}"
             )
+
+
+def _validate_poll_timeout(timeout_seconds: float) -> None:
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise TypeError("timeout_seconds must be an integer or float")
+    if timeout_seconds < 0 or (
+        isinstance(timeout_seconds, float) and not math.isfinite(timeout_seconds)
+    ):
+        raise ValueError("timeout_seconds must be finite and nonnegative")

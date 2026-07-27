@@ -29,6 +29,7 @@ Major packages:
 - `core`
 - `crypto`
 - `mining`
+- `network`
 - `protocol`
 - `rpc`
 - `telemetry`
@@ -73,6 +74,28 @@ Hashphere is built around the following engineering principles:
 - Clear separation of responsibilities
 - Testability by design
 - Documentation before implementation
+
+---
+
+# Stratum Transport and Client Boundary
+
+`hashphere.network.stratum.transport` owns the single synchronous TCP socket,
+newline-delimited JSON framing, and raw receive buffering. A bounded receive
+temporarily changes the socket timeout, restores the prior timeout on every
+outcome, and retains incomplete or additional framed data for later calls. A
+normal receive timeout is distinct from connection closure, I/O failure, and
+malformed protocol data.
+
+`hashphere.network.stratum.client` owns connection state, request identifiers,
+request-response routing, notification parsing, and the ordered notification
+queue. In the authorized state, bounded polling returns queued notifications
+before touching the transport and maps only a normal receive timeout to
+`None`. Other transport and protocol failures remain visible to the caller.
+The client does not close, retry, or reconnect automatically after a poll.
+
+This split keeps socket mechanics out of mining orchestration and keeps
+protocol state out of the transport. Both layers remain synchronous and expose
+small injectable boundaries for deterministic tests.
 
 ---
 

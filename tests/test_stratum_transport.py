@@ -10,6 +10,7 @@ import hashphere.network.stratum.transport as transport_module
 from hashphere.network.stratum import (
     StratumConnectionError,
     StratumProtocolError,
+    StratumReceiveTimeoutError,
     StratumTransport,
 )
 
@@ -17,14 +18,26 @@ from hashphere.network.stratum import (
 class FakeSocket:
     """Small socket test double."""
 
-    def __init__(self, incoming: bytes = b"") -> None:
+    def __init__(
+        self,
+        incoming: bytes = b"",
+        *,
+        recv_effects: list[bytes | BaseException] | None = None,
+    ) -> None:
         self.reader = io.BytesIO(incoming)
+        self.recv_effects = recv_effects or []
         self.sent = bytearray()
         self.closed = False
         self.timeout: float | None = None
+        self.timeout_history: list[float | None] = []
+        self.recv_calls = 0
 
-    def settimeout(self, timeout: float) -> None:
+    def settimeout(self, timeout: float | None) -> None:
         self.timeout = timeout
+        self.timeout_history.append(timeout)
+
+    def gettimeout(self) -> float | None:
+        return self.timeout
 
     def makefile(self, mode: str) -> io.BytesIO:
         assert mode == "rb"
@@ -32,6 +45,15 @@ class FakeSocket:
 
     def sendall(self, payload: bytes) -> None:
         self.sent.extend(payload)
+
+    def recv(self, size: int) -> bytes:
+        self.recv_calls += 1
+        if self.recv_effects:
+            effect = self.recv_effects.pop(0)
+            if isinstance(effect, BaseException):
+                raise effect
+            return effect
+        return self.reader.read(size)
 
     def close(self) -> None:
         self.closed = True
@@ -159,9 +181,7 @@ def test_send_message_writes_compact_json_line(
         }
     )
 
-    assert bytes(fake_socket.sent) == (
-        b'{"id":1,"method":"mining.subscribe","params":[]}\n'
-    )
+    assert bytes(fake_socket.sent) == (b'{"id":1,"method":"mining.subscribe","params":[]}\n')
 
 
 def test_send_requires_connection() -> None:
@@ -199,6 +219,18 @@ def test_receive_message_decodes_json_object(
         "result": True,
         "error": None,
     }
+
+
+def test_ordinary_receive_retains_configured_socket_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket = FakeSocket(b'{"id":1}\n')
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+    timeout_history = list(fake_socket.timeout_history)
+
+    assert transport.receive_message(None) == {"id": 1}
+    assert fake_socket.timeout == 5.0
+    assert fake_socket.timeout_history == timeout_history
 
 
 @pytest.mark.parametrize(
@@ -244,6 +276,100 @@ def test_receive_requires_connection() -> None:
         transport.receive_message()
 
 
+def test_temporary_receive_timeout_is_restored_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket = FakeSocket(b'{"id":1}\n')
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    assert transport.receive_message(0.25) == {"id": 1}
+    assert fake_socket.timeout == 5.0
+    assert fake_socket.timeout_history[-1] == 5.0
+
+
+@pytest.mark.parametrize(
+    "timeout_error",
+    [BlockingIOError(), TimeoutError()],
+)
+def test_temporary_receive_timeout_is_distinct_and_restored(
+    monkeypatch: pytest.MonkeyPatch,
+    timeout_error: BaseException,
+) -> None:
+    fake_socket = FakeSocket(recv_effects=[timeout_error])
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    with pytest.raises(StratumReceiveTimeoutError, match="timed out"):
+        transport.receive_message(0.0)
+
+    assert fake_socket.timeout == 5.0
+    assert fake_socket.timeout_history[-1] == 5.0
+
+
+def test_temporary_receive_timeout_is_restored_after_connection_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket = FakeSocket(recv_effects=[OSError("read failed")])
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    with pytest.raises(StratumConnectionError, match="failed to read"):
+        transport.receive_message(1.0)
+
+    assert fake_socket.timeout == 5.0
+    assert fake_socket.timeout_history[-1] == 5.0
+
+
+def test_temporary_receive_timeout_is_restored_after_connection_closure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket = FakeSocket()
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    with pytest.raises(StratumConnectionError, match="closed the connection"):
+        transport.receive_message(1.0)
+
+    assert fake_socket.timeout == 5.0
+    assert fake_socket.timeout_history[-1] == 5.0
+
+
+def test_temporary_receive_timeout_is_restored_before_parsing_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket = FakeSocket(b"not-json\n")
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    with pytest.raises(StratumProtocolError, match="malformed JSON"):
+        transport.receive_message(1.0)
+
+    assert fake_socket.timeout == 5.0
+    assert fake_socket.timeout_history[-1] == 5.0
+
+
+def test_partial_message_is_preserved_across_receive_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket = FakeSocket(
+        recv_effects=[b'{"id":', TimeoutError(), b"1}\n"],
+    )
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    with pytest.raises(StratumReceiveTimeoutError):
+        transport.receive_message(1.0)
+
+    assert transport.receive_message(1.0) == {"id": 1}
+
+
+def test_multiple_framed_messages_are_preserved_in_arrival_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket = FakeSocket(b'{"id":1}\n{"id":2}\n')
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    assert transport.receive_message(0.0) == {"id": 1}
+    recv_calls = fake_socket.recv_calls
+    assert transport.receive_message(0.0) == {"id": 2}
+    assert fake_socket.recv_calls == recv_calls
+
+
 def test_close_is_safe_and_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -273,4 +399,3 @@ def test_context_manager_connects_and_closes(
 
     assert transport.is_connected is False
     assert fake_socket.closed is True
-

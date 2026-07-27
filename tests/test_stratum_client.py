@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Mapping
+from decimal import Decimal
 
 import pytest
 
@@ -17,6 +18,9 @@ from hashphere.network.stratum import (
     StratumClientError,
     StratumClientState,
     StratumClientStateError,
+    StratumConnectionError,
+    StratumMessageError,
+    StratumReceiveTimeoutError,
     StratumRequestError,
     SubscribeResult,
 )
@@ -39,6 +43,7 @@ class FakeTransport:
         self.connect_calls = 0
         self.close_calls = 0
         self.connected = False
+        self.receive_timeouts: list[float | None] = []
 
     def connect(self) -> None:
         self.connect_calls += 1
@@ -51,7 +56,11 @@ class FakeTransport:
             raise self.send_error
         self.sent.append(dict(message))
 
-    def receive_message(self) -> dict[str, object]:
+    def receive_message(
+        self,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, object]:
+        self.receive_timeouts.append(timeout_seconds)
         if not self.incoming:
             raise AssertionError("fake transport has no incoming messages")
         message = self.incoming.popleft()
@@ -323,6 +332,227 @@ def test_receive_notification_reads_when_queue_is_empty() -> None:
     client.handshake()
 
     assert client.receive_notification() == SetDifficultyNotification(difficulty=4096.5)
+
+
+def test_poll_notification_requires_authorized_state() -> None:
+    disconnected = make_client(FakeTransport())
+    with pytest.raises(StratumClientStateError, match="poll_notification requires"):
+        disconnected.poll_notification()
+
+    connected = make_client(FakeTransport())
+    connected.connect()
+    with pytest.raises(StratumClientStateError, match="poll_notification requires"):
+        connected.poll_notification()
+
+    subscribed = make_client(FakeTransport([subscribe_response()]))
+    subscribed.connect()
+    subscribed.subscribe()
+    with pytest.raises(StratumClientStateError, match="poll_notification requires"):
+        subscribed.poll_notification()
+
+
+def test_poll_notification_returns_queued_messages_before_transport_access() -> None:
+    transport = FakeTransport(
+        [
+            difficulty_notification(2048),
+            mining_notification("queued-job"),
+            subscribe_response(),
+            authorize_response(),
+        ]
+    )
+    client = make_client(transport)
+    client.handshake()
+    receive_calls = len(transport.receive_timeouts)
+
+    assert client.poll_notification(10) == SetDifficultyNotification(difficulty=2048)
+    assert client.poll_notification(10) == MiningNotifyNotification(
+        job_id="queued-job",
+        previous_block_hash="00aabbcc",
+        coinbase_part_1="01000000",
+        coinbase_part_2="ffffffff",
+        merkle_branches=("11223344",),
+        version="20000000",
+        network_bits="170fffff",
+        network_time="65f04abc",
+        clean_jobs=True,
+    )
+    assert len(transport.receive_timeouts) == receive_calls
+
+
+@pytest.mark.parametrize("timeout_seconds", [0.0, 2, 0.125])
+def test_poll_notification_returns_none_only_for_normal_timeout(
+    timeout_seconds: float,
+) -> None:
+    transport = FakeTransport(
+        [
+            subscribe_response(),
+            authorize_response(),
+            StratumReceiveTimeoutError("no message"),
+        ]
+    )
+    client = make_client(transport)
+    client.handshake()
+
+    assert client.poll_notification(timeout_seconds) is None
+    assert transport.receive_timeouts[-1] == timeout_seconds
+    assert client.state is StratumClientState.AUTHORIZED
+
+
+def test_poll_notification_uses_nonblocking_timeout_by_default() -> None:
+    transport = FakeTransport(
+        [
+            subscribe_response(),
+            authorize_response(),
+            StratumReceiveTimeoutError("no message"),
+        ]
+    )
+    client = make_client(transport)
+    client.handshake()
+
+    assert client.poll_notification() is None
+    assert transport.receive_timeouts[-1] == 0.0
+
+
+def test_poll_timeout_does_not_lose_the_next_notification() -> None:
+    transport = FakeTransport(
+        [
+            subscribe_response(),
+            authorize_response(),
+            StratumReceiveTimeoutError("no message"),
+            difficulty_notification(8192),
+        ]
+    )
+    client = make_client(transport)
+    client.handshake()
+
+    assert client.poll_notification(0.0) is None
+    assert client.poll_notification(1.0) == SetDifficultyNotification(difficulty=8192)
+
+
+def test_poll_notification_does_not_allocate_a_request_id() -> None:
+    transport = FakeTransport(
+        [
+            subscribe_response(),
+            authorize_response(),
+            StratumReceiveTimeoutError("no message"),
+            {"id": 3, "result": True, "error": None},
+        ]
+    )
+    client = make_client(transport)
+    client.handshake()
+
+    assert client.poll_notification() is None
+    assert client.submit_share("job-1", "00000000", "65f04abc", 1) is True
+    assert [request["id"] for request in transport.sent] == [1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            difficulty_notification(4096.5),
+            SetDifficultyNotification(difficulty=4096.5),
+        ),
+        (
+            mining_notification("polled-job"),
+            MiningNotifyNotification(
+                job_id="polled-job",
+                previous_block_hash="00aabbcc",
+                coinbase_part_1="01000000",
+                coinbase_part_2="ffffffff",
+                merkle_branches=("11223344",),
+                version="20000000",
+                network_bits="170fffff",
+                network_time="65f04abc",
+                clean_jobs=True,
+            ),
+        ),
+    ],
+)
+def test_poll_notification_returns_supported_notification(
+    message: dict[str, object],
+    expected: SetDifficultyNotification | MiningNotifyNotification,
+) -> None:
+    transport = FakeTransport([subscribe_response(), authorize_response(), message])
+    client = make_client(transport)
+    client.handshake()
+
+    assert client.poll_notification(1.0) == expected
+    assert client.state is StratumClientState.AUTHORIZED
+
+
+def test_poll_notification_rejects_malformed_notification() -> None:
+    transport = FakeTransport(
+        [subscribe_response(), authorize_response(), difficulty_notification("high")]
+    )
+    client = make_client(transport)
+    client.handshake()
+
+    with pytest.raises(StratumMessageError, match="integer or float"):
+        client.poll_notification(1.0)
+
+
+def test_poll_notification_rejects_unsupported_notification() -> None:
+    transport = FakeTransport(
+        [
+            subscribe_response(),
+            authorize_response(),
+            {"id": None, "method": "client.reconnect", "params": []},
+        ]
+    )
+    client = make_client(transport)
+    client.handshake()
+
+    with pytest.raises(StratumClientError, match="unsupported.*client.reconnect"):
+        client.poll_notification(1.0)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        StratumConnectionError("server closed connection"),
+        RuntimeError("transport failed"),
+    ],
+)
+def test_poll_notification_does_not_swallow_transport_failures(
+    failure: BaseException,
+) -> None:
+    transport = FakeTransport([subscribe_response(), authorize_response(), failure])
+    client = make_client(transport)
+    client.handshake()
+
+    with pytest.raises(type(failure), match=str(failure)):
+        client.poll_notification(1.0)
+
+    assert client.state is StratumClientState.AUTHORIZED
+
+
+@pytest.mark.parametrize(
+    "timeout_seconds",
+    [
+        True,
+        False,
+        -0.1,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        "1",
+        Decimal("1"),
+        None,
+        object(),
+    ],
+)
+def test_poll_notification_rejects_invalid_timeout(timeout_seconds: object) -> None:
+    transport = FakeTransport([subscribe_response(), authorize_response()])
+    client = make_client(transport)
+    client.handshake()
+    receive_calls = len(transport.receive_timeouts)
+
+    with pytest.raises((TypeError, ValueError), match="timeout_seconds"):
+        client.poll_notification(timeout_seconds)  # type: ignore[arg-type]
+
+    assert len(transport.receive_timeouts) == receive_calls
+    assert client.state is StratumClientState.AUTHORIZED
 
 
 def test_unexpected_response_while_receiving_notification_is_rejected() -> None:

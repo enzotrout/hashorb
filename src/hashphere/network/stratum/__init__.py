@@ -27,6 +27,7 @@ from hashphere.network.stratum.messages import (
 from hashphere.network.stratum.transport import (
     StratumConnectionError,
     StratumProtocolError,
+    StratumReceiveTimeoutError,
     StratumTransport,
     StratumTransportError,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "StratumError",
     "StratumMessageError",
     "StratumProtocolError",
+    "StratumReceiveTimeoutError",
     "StratumRequestError",
     "StratumTransport",
     "StratumTransportError",
