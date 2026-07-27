@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import secrets
+import signal
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from types import FrameType
 
 from hashphere.config import Settings
 from hashphere.mining import (
@@ -15,6 +17,10 @@ from hashphere.mining import (
     ChunkedMiningPlan,
     ChunkedMiningResult,
     CoinbaseError,
+    ContinuousMiningError,
+    ContinuousMiningOutcome,
+    ContinuousMiningPlan,
+    ContinuousMiningResult,
     MerkleError,
     MiningJob,
     MiningJobAssembler,
@@ -23,9 +29,11 @@ from hashphere.mining import (
     NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
+    StopController,
     TargetError,
     prepare_mining_work,
     run_chunked_mining,
+    run_continuous_mining,
     search_nonce_range,
 )
 from hashphere.network.stratum import (
@@ -55,17 +63,83 @@ _LIVE_MINING_FLAG = "HASHPHERE_ENABLE_LIVE_MINING"
 _STRATUM_USER_AGENT = "Hashphere/0.1"
 _NONCE_LIMIT = 1 << 32
 _MAX_NONCE = _NONCE_LIMIT - 1
+_CONTINUOUS_NOTIFICATION_WAIT_SECONDS = 0.25
 _KNOWN_LOG_COMMANDS = (
     "stratum-handshake",
     "stratum-observe",
     "stratum-mine-once",
     "stratum-mine-chunks",
+    "stratum-mine",
 )
 _USAGE = (
     "Usage: python -m hashphere "
     "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-    "logs-summary} [options]"
+    "stratum-mine,logs-summary} [options]"
 )
+
+type _PythonSignalHandler = Callable[[int, FrameType | None], object]
+type _PreviousSignalHandler = int | _PythonSignalHandler | None
+
+
+class _SignalLifecycleError(RuntimeError):
+    """Raised when portable stop-signal handlers cannot be managed safely."""
+
+
+class _StopSignalScope:
+    """Install and restore signal handlers that only request cooperative stop."""
+
+    __slots__ = ("_controller", "_previous")
+
+    def __init__(self, controller: StopController) -> None:
+        self._controller = controller
+        self._previous: list[tuple[signal.Signals, _PreviousSignalHandler]] = []
+
+    def install(self) -> None:
+        """Install handlers for the portable shutdown signals on this platform."""
+
+        try:
+            for signal_number in _supported_stop_signals():
+                previous = signal.getsignal(signal_number)
+                signal.signal(signal_number, self._handle_signal)
+                self._previous.append((signal_number, previous))
+        except (OSError, RuntimeError, ValueError) as exc:
+            try:
+                self.restore()
+            except _SignalLifecycleError:
+                pass
+            raise _SignalLifecycleError("could not install stop signal handlers") from exc
+
+    def restore(self) -> None:
+        """Restore every installed previous handler, attempting all restorations."""
+
+        failed = False
+        for signal_number, previous in reversed(self._previous):
+            try:
+                if previous is None:
+                    failed = True
+                    continue
+                signal.signal(signal_number, previous)
+            except (OSError, RuntimeError, ValueError):
+                failed = True
+        self._previous.clear()
+        if failed:
+            raise _SignalLifecycleError("could not restore stop signal handlers")
+
+    def _handle_signal(self, signal_number: int, frame: FrameType | None) -> None:
+        """Translate a signal into an idempotent stop request without reporting it."""
+
+        del signal_number, frame
+        self._controller.request_stop()
+
+
+def _supported_stop_signals() -> tuple[signal.Signals, ...]:
+    """Return Ctrl-C and termination signals available on the current platform."""
+
+    result: list[signal.Signals] = [signal.SIGINT]
+    termination = getattr(signal, "SIGTERM", None)
+    if isinstance(termination, signal.Signals) and termination not in result:
+        result.append(termination)
+    return tuple(result)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +263,40 @@ class _ChunkedEventObserver:
         )
 
 
+class _ContinuousEventObserver(_ChunkedEventObserver):
+    """Translate continuous lifecycle callbacks into sanitized stable events."""
+
+    __slots__ = ("_stop_emitted",)
+
+    def __init__(self, events: EventSink) -> None:
+        super().__init__(events)
+        self._stop_emitted = False
+
+    def stop_requested(self) -> None:
+        """Emit one controlled stop event without signal details."""
+
+        if self._stop_emitted:
+            return
+        self._stop_emitted = True
+        self._events.emit("mining_stop_requested")
+
+    def nonce_space_exhausted(self, work: PreparedMiningWork) -> None:
+        """Emit safe metadata when one prepared work exhausts its nonce space."""
+
+        self._events.emit(
+            "nonce_space_exhausted",
+            fields={"job_id": work.job_id},
+        )
+
+    def waiting_for_job(self, work: PreparedMiningWork) -> None:
+        """Emit safe metadata when waiting for a newer mining job."""
+
+        self._events.emit(
+            "mining_waiting_for_job",
+            fields={"job_id": work.job_id},
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected Hashphere command and return its process status."""
 
@@ -250,6 +358,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             "stratum-mine-chunks",
             log_file,
             lambda events: _run_stratum_mine_chunks(plan, events),
+        )
+    if arguments and arguments[0] == "stratum-mine":
+        try:
+            continuous_plan, log_file = _parse_continuous_mining_arguments(arguments[1:])
+        except ValueError as exc:
+            print(f"Argument error: {exc}", file=sys.stderr)
+            print(_USAGE, file=sys.stderr)
+            return 2
+        return _run_with_event_sink(
+            "stratum-mine",
+            log_file,
+            lambda events: _run_stratum_mine(continuous_plan, events),
         )
 
     print(_USAGE, file=sys.stderr)
@@ -644,6 +764,149 @@ def _run_stratum_mine_chunks(
     return 0
 
 
+def _run_stratum_mine(
+    plan: ContinuousMiningPlan,
+    events: EventSink,
+) -> int:
+    """Run one explicitly enabled continuous Stratum mining session."""
+
+    settings = _load_live_mining_settings()
+    if settings is None:
+        _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
+        return 2
+
+    controller = StopController()
+    signal_scope = _StopSignalScope(controller)
+    observer = _ContinuousEventObserver(events)
+    client: StratumClient | None = None
+    subscription: SubscribeResult | None = None
+    result: ContinuousMiningResult | None = None
+    stopped_before_work = False
+    status = 0
+    pending_failure: BaseException | None = None
+    cleanup_failure_reported = False
+    try:
+        signal_scope.install()
+        client = StratumClient(settings, _STRATUM_USER_AGENT)
+        subscription = client.handshake()
+        _emit_stratum_authorized(events, settings, subscription)
+        assembler = MiningJobAssembler(subscription)
+        extra_nonce_2 = _generate_extra_nonce_2(subscription.extra_nonce_2_size)
+        initial_job = _receive_initial_continuous_job(
+            client,
+            assembler,
+            controller,
+            observer,
+        )
+        if initial_job is None:
+            stopped_before_work = True
+        else:
+            result = run_continuous_mining(
+                plan,
+                assembler,
+                initial_job,
+                extra_nonce_2,
+                controller,
+                receive_notification=lambda timeout: client.poll_notification(
+                    timeout_seconds=timeout
+                ),
+                submit_share=lambda work, match: client.submit_share(
+                    work.job_id,
+                    work.extra_nonce_2,
+                    work.network_time,
+                    match.nonce,
+                ),
+                observer=observer,
+                prepare_work=prepare_mining_work,
+                search_range=search_nonce_range,
+            )
+    except StratumAuthorizationError as exc:
+        pending_failure = exc
+        print("Stratum authorization failed.", file=sys.stderr)
+        status = 1
+        _emit_command_failed(events, "handshake", _error_category(exc))
+    except StratumConnectionError as exc:
+        pending_failure = exc
+        print("Could not connect to the configured Stratum endpoint.", file=sys.stderr)
+        status = 1
+        _emit_command_failed(events, "continuous_mining", _error_category(exc))
+    except (
+        StratumTransportError,
+        StratumMessageError,
+        StratumClientError,
+        MiningJobError,
+        CoinbaseError,
+        MerkleError,
+        BlockHeaderError,
+        TargetError,
+        NonceSearchError,
+        ContinuousMiningError,
+        _SignalLifecycleError,
+        OSError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        pending_failure = exc
+        print("Continuous Stratum mining failed.", file=sys.stderr)
+        status = 1
+        _emit_command_failed(events, "continuous_mining", _error_category(exc))
+    except Exception as exc:
+        pending_failure = exc
+        print("Continuous Stratum mining failed.", file=sys.stderr)
+        status = 1
+        _emit_command_failed(events, "continuous_mining", "UnexpectedError")
+    except BaseException as exc:
+        pending_failure = exc
+        try:
+            _emit_command_failed(events, "continuous_mining", "UnexpectedError")
+        except EventLogError:
+            pass
+        raise
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except BaseException:
+                if pending_failure is None and status == 0:
+                    print("Could not close the Stratum connection cleanly.", file=sys.stderr)
+                    status = 1
+                    cleanup_failure_reported = True
+                    _emit_command_failed(events, "cleanup", "ClientCloseError")
+        try:
+            signal_scope.restore()
+        except _SignalLifecycleError:
+            if pending_failure is None and status == 0 and not cleanup_failure_reported:
+                print("Could not restore signal handlers cleanly.", file=sys.stderr)
+                status = 1
+                _emit_command_failed(events, "cleanup", "SignalRestoreError")
+
+    if status != 0:
+        return status
+    if subscription is None:
+        raise RuntimeError("continuous mining completed without a subscription")
+    if stopped_before_work:
+        outcome = ContinuousMiningOutcome.STOPPED_BY_USER
+    elif result is not None:
+        outcome = result.outcome
+    else:
+        raise RuntimeError("continuous mining completed without an outcome")
+
+    completion_level = "WARNING" if outcome is ContinuousMiningOutcome.SHARE_REJECTED else "INFO"
+    events.emit(
+        "command_completed",
+        level=completion_level,
+        fields={"outcome": outcome.value},
+    )
+    _print_continuous_mining_outcome(
+        settings,
+        subscription,
+        plan,
+        outcome,
+        result,
+    )
+    return 0
+
+
 def _load_live_settings(operation: str) -> Settings | None:
     """Load settings and enforce the shared explicit live-network opt-in."""
 
@@ -749,6 +1012,71 @@ def _parse_chunked_mining_plan(arguments: Sequence[str]) -> ChunkedMiningPlan:
         unsupported_message="unsupported stratum-mine-chunks argument",
     )
     return _chunked_plan_from_options(option_values)
+
+
+def _parse_continuous_mining_arguments(
+    arguments: Sequence[str],
+) -> tuple[ContinuousMiningPlan, str | None]:
+    """Parse continuous mining options and an optional structured-log path."""
+
+    option_values = _parse_option_values(
+        arguments,
+        {"--start-nonce", "--chunk-size", "--max-chunks", "--log-file"},
+        unsupported_message="unsupported stratum-mine argument",
+    )
+    log_file = (
+        _validate_log_file_path(option_values["--log-file"])
+        if "--log-file" in option_values
+        else None
+    )
+    return _continuous_plan_from_options(option_values), log_file
+
+
+def _parse_continuous_mining_plan(arguments: Sequence[str]) -> ContinuousMiningPlan:
+    """Parse strict continuous mining options into a validated plan."""
+
+    option_values = _parse_option_values(
+        arguments,
+        {"--start-nonce", "--chunk-size", "--max-chunks"},
+        unsupported_message="unsupported stratum-mine argument",
+    )
+    return _continuous_plan_from_options(option_values)
+
+
+def _continuous_plan_from_options(
+    option_values: dict[str, str],
+) -> ContinuousMiningPlan:
+    """Build one continuous plan without inventing a default chunk limit."""
+
+    if "--chunk-size" not in option_values:
+        raise ValueError("--chunk-size is required")
+    start_nonce = _parse_unpadded_decimal_option(
+        "--start-nonce",
+        option_values.get("--start-nonce", "0"),
+        minimum=0,
+        maximum=_MAX_NONCE,
+    )
+    chunk_size = _parse_unpadded_decimal_option(
+        "--chunk-size",
+        option_values["--chunk-size"],
+        minimum=1,
+        maximum=_NONCE_LIMIT,
+    )
+    max_chunks = (
+        _parse_unpadded_decimal_option(
+            "--max-chunks",
+            option_values["--max-chunks"],
+            minimum=1,
+            maximum=_NONCE_LIMIT,
+        )
+        if "--max-chunks" in option_values
+        else None
+    )
+    return ContinuousMiningPlan(
+        start_nonce=start_nonce,
+        chunk_size=chunk_size,
+        max_chunks=max_chunks,
+    )
 
 
 def _chunked_plan_from_options(option_values: dict[str, str]) -> ChunkedMiningPlan:
@@ -977,6 +1305,37 @@ def _receive_buildable_job(
         return assembler.build_job(notification)
 
 
+def _receive_initial_continuous_job(
+    client: StratumClient,
+    assembler: MiningJobAssembler,
+    stop_controller: StopController,
+    observer: _ContinuousEventObserver,
+) -> MiningJob | None:
+    """Wait responsively for the first job announced after known difficulty."""
+
+    while not stop_controller.stop_requested:
+        notification = client.poll_notification(
+            timeout_seconds=_CONTINUOUS_NOTIFICATION_WAIT_SECONDS
+        )
+        if notification is None:
+            continue
+        if not isinstance(
+            notification,
+            (SetDifficultyNotification, MiningNotifyNotification),
+        ):
+            raise StratumClientError("unsupported parsed Stratum notification")
+        observer.notification_received(notification)
+        if isinstance(notification, SetDifficultyNotification):
+            assembler.apply_difficulty(notification)
+            continue
+        if assembler.current_difficulty is None:
+            continue
+        return assembler.build_job(notification)
+
+    observer.stop_requested()
+    return None
+
+
 def _generate_extra_nonce_2(byte_size: int) -> str:
     """Generate one lowercase hexadecimal second extra nonce."""
 
@@ -1097,6 +1456,9 @@ def _error_category(error: BaseException) -> str:
         (TargetError, "TargetError"),
         (NonceSearchError, "NonceSearchError"),
         (ChunkedMiningError, "ChunkedMiningError"),
+        (ContinuousMiningError, "ContinuousMiningError"),
+        (_SignalLifecycleError, "SignalLifecycleError"),
+        (OSError, "OSError"),
         (TypeError, "TypeError"),
         (ValueError, "ValueError"),
     )
@@ -1232,6 +1594,53 @@ def _print_chunked_mining_outcome(
     print(f"Meets share target: {str(match.meets_share_target).lower()}")
     print(f"Meets network target: {str(match.meets_network_target).lower()}")
     print(f"Pool result: {'accepted' if result.pool_accepted else 'rejected'}")
+
+
+def _print_continuous_mining_outcome(
+    settings: Settings,
+    subscription: SubscribeResult,
+    plan: ContinuousMiningPlan,
+    outcome: ContinuousMiningOutcome,
+    result: ContinuousMiningResult | None,
+) -> None:
+    """Print a sanitized aggregate summary of one continuous session."""
+
+    print("Continuous Stratum mining completed.")
+    print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
+    print(f"Username: {_mask_username(settings.stratum_username)}")
+    if result is None:
+        print("Final difficulty: unavailable")
+        print("Network bits: unavailable")
+    else:
+        print(f"Final difficulty: {result.final_job.difficulty}")
+        print(f"Network bits: {result.final_job.network_bits}")
+    print(f"Extra nonce 2 size: {subscription.extra_nonce_2_size}")
+    print(f"Start nonce: {plan.start_nonce}")
+    print(f"Chunk size: {plan.chunk_size}")
+    print(f"Maximum chunks: {plan.max_chunks if plan.max_chunks is not None else 'unlimited'}")
+    print(f"Chunks completed: {result.chunks_completed if result is not None else 0}")
+    print(f"Jobs used: {result.jobs_used if result is not None else 0}")
+    print(f"Job replacements: {result.job_replacements if result is not None else 0}")
+    print(f"Candidates found: {result.candidates_found if result is not None else 0}")
+    print(f"Submissions performed: {result.submissions_performed if result is not None else 0}")
+    print(f"Hashes checked: {result.total_hashes_checked if result is not None else 0}")
+    print(f"Elapsed time: {result.total_elapsed_ns if result is not None else 0} ns")
+    rate = result.weighted_hashes_per_second if result is not None else None
+    if rate is None:
+        print("Hashes per second: unavailable")
+    else:
+        print(f"Hashes per second: {rate:.2f}")
+
+    if result is not None and result.match is not None:
+        match = result.match
+        nonce_hex = match.nonce.to_bytes(4, byteorder="little", signed=False).hex()
+        print(f"Matched nonce: {match.nonce}")
+        print(f"Submitted nonce hex: {nonce_hex}")
+        print(f"Raw block hash: {_abbreviate_hex(match.block_hash.hex())}")
+        print(f"Meets share target: {str(match.meets_share_target).lower()}")
+        print(f"Meets network target: {str(match.meets_network_target).lower()}")
+        print(f"Pool result: {'accepted' if result.pool_accepted else 'rejected'}")
+    print(f"Result: {outcome.value}")
 
 
 def _mask_username(username: str) -> str:
