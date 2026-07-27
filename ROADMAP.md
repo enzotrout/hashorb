@@ -50,8 +50,9 @@ Progress:
 - ✅ Built-in structured-log summary command
 - ✅ Bounded chunked mining and notification handling between chunks
 - ✅ Continuous synchronous mining lifecycle and controlled shutdown
-- ⬜ Search-space expansion with extra-nonce and network-time progression
-- ⬜ Continuous worker scheduling and recovery
+- ✅ Search-space expansion with extra-nonce and network-time progression
+- ✅ Duplicate-work prevention across local progression and pool reannouncements
+- ⬜ Reconnect, session recovery, and pool failover
 - ⬜ Multiprocess CPU backend
 
 ---
@@ -87,7 +88,8 @@ Progress:
 - ✅ Built-in structured-log analysis
 - ✅ Bounded chunked mining
 - ✅ Continuous mining lifecycle
-- ⬜ Extra-nonce progression, network-time rolling, and duplicate-work prevention
+- ✅ Extra-nonce progression, network-time rolling, and duplicate-work prevention
+- ⬜ Reconnect and session recovery
 - ⬜ Multi-process mining
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -153,19 +155,19 @@ Planned:
 
 # Current Milestone
 
-**Continuous Live Stratum Mining Lifecycle — Complete**
+**Deterministic Search-Space Expansion — Complete**
 
 Objective:
 
-Search sequential bounded nonce chunks until controlled shutdown, an optional
-chunk limit, one submission result, or an unrecoverable failure. Maintain
-ordered difficulty and job semantics, responsive bounded notification waits,
-accurate cumulative metrics, and portable signal restoration.
+Expand a continuous mining session from nonce chunks into deterministic work
+variants. Advance fixed-width `extra_nonce_2` values arithmetically, roll
+network time only after a complete negotiated cycle, prioritize newer pool
+work, and prevent duplicate range searches without unbounded history.
 
-Bounded chunking, JSONL writing, and native analysis remain complete. Search-
-space expansion through `extra_nonce_2` progression, network-time rolling, and
-duplicate-work prevention is next. Reconnects and pool failover follow that.
-A compute-backend abstraction then precedes native and parallel CPU backends.
+Bounded chunking, continuous lifecycle management, JSONL writing, native
+analysis, and search-space expansion remain complete. Reconnect, session
+recovery, and pool failover are next. A compute-backend abstraction then
+precedes native and parallel CPU backends.
 Sequential, partitioned, strided, and orbiting-bit strategies precede CUDA,
 DGX Spark/GB10, multi-GPU, and host-side verification. Lite/Auto/Max/Custom
 operating profiles, macOS/Windows/Linux/Docker packaging, broader Stratum pool
@@ -179,5 +181,5 @@ order.
 
 Continue with:
 
-**Expand search space safely with extra-nonce progression, network-time rolling,
-and duplicate-work prevention.**
+**Add reconnect, session recovery, and pool failover without duplicating or
+silently losing accepted work.**

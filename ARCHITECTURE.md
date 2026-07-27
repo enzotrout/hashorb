@@ -126,11 +126,12 @@ control mining progress.
 
 `hashphere.mining.continuous` owns repeated half-open chunk scheduling, the
 current per-job nonce position, cumulative session accounting, ordered
-notification draining, newest-job replacement, nonce-space exhaustion waits,
-cooperative stop checks, and the one terminal submission. It composes the same
-deterministic preparation and range-search primitives through injected
-callbacks. It owns no sockets, settings, signal registration, console output,
-event files, or cleanup.
+notification draining, newest-job replacement, deterministic work-space
+advancement, terminal exhaustion waits, cooperative stop checks, and the one
+terminal submission. It composes the same deterministic preparation,
+progression, and range-search primitives through injected callbacks. It owns
+no sockets, settings, signal registration, console output, event files, or
+cleanup.
 
 The read-only `StopToken` protocol is the orchestration boundary for graceful
 shutdown; `StopController` supplies an idempotent implementation. The CLI owns
@@ -140,15 +141,40 @@ finish, while the orchestrator prevents another search or replacement poll.
 
 The CLI acquires initial authorized work through bounded 0.25-second client
 polls so shutdown remains responsive before mining begins. `StratumClient`
-continues to own protocol state and queues. After nonce-space exhaustion, the
-orchestrator uses the same bounded client polling boundary while waiting for a
-newer job; it does not wrap nonces or create another extra nonce.
+continues to own protocol state and queues. At each completed nonce boundary,
+the orchestrator drains queued pool notifications before advancing local work.
+Only final terminal progression exhaustion uses bounded waits for a newer job.
+
+## Mining Work-Space Progression Boundary
+
+`hashphere.mining.progression` owns a compact immutable cursor over the search
+hierarchy: pool job, effective network time, fixed-width `extra_nonce_2`, then
+the nonce range scheduled by continuous orchestration. One caller-generated
+extra-nonce seed initializes the cursor. Successors are arithmetic modulo the
+negotiated space; a complete cycle rolls network time by one second and resets
+to that same seed. The cursor neither generates randomness nor owns sockets,
+settings, stop signals, output, persistence, or submission.
+
+`MiningJobContextIdentity` identifies pool work and its acceptance context,
+while `MiningWorkIdentity` uses the prepared 76-byte header prefix, job ID, and
+both targets. The first prevents an identical notification from restarting
+work; the second prevents an effectively identical prepared variant from
+reusing the configured nonce start. A changed share target is deliberately a
+new acceptance context. These identities and arithmetic counters remain
+bounded in size and do not retain a set of searched nonces or extra-nonce
+values.
+
+Continuous orchestration owns the priority decision: after a completed chunk
+and stop check, queued pool work supersedes local progression. Only the final
+newest job from one drain is prepared. A replacement abandons local time and
+extra-nonce cursor state, restarts from the invocation seed and the pool's
+network time, and preserves session totals.
 
 Continuous observers remain passive adapters into `EventSink`. The CLI still
 owns opt-ins, configuration, client and sink construction, one invocation-
 scoped extra nonce, sanitized output, client closure, sink closure, and signal
-restoration. Search-space progression and reconnect recovery remain higher-
-level future responsibilities rather than leaking into transport or hashing
+restoration. Reconnect and session recovery remain higher-level future
+responsibilities rather than leaking into transport, progression, or hashing
 primitives.
 
 ---

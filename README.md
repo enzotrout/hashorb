@@ -3,7 +3,8 @@
 Hashphere is an experimental Python Bitcoin mining project. Live operations are
 explicitly opt-in and include Stratum inspection, bounded mining, and a
 synchronous continuous lifecycle that searches one Python nonce chunk at a
-time. Search-space progression and reconnect behavior are not implemented yet.
+time. Continuous mining now expands deterministic Bitcoin work space after a
+nonce boundary; reconnect and session recovery are not implemented yet.
 
 ## Configure the environment
 
@@ -254,6 +255,19 @@ notification waits and job replacements do not consume it. Reaching the limit
 is a successful `chunk_limit_reached` outcome, and the final permitted chunk
 may still submit its candidate.
 
+To validate progression without a large hash run, search the final nonce of
+three consecutive work variants:
+
+```bash
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine \
+  --start-nonce 4294967295 \
+  --chunk-size 1 \
+  --max-chunks 3 \
+  --log-file logs/hashphere.jsonl
+```
+
 Chunks for unchanged work are adjacent half-open ranges with no skipped or
 repeated nonce. Difficulty notifications affect later jobs only. When several
 jobs are available between chunks, only the final newest job is prepared and
@@ -266,13 +280,28 @@ current Python chunk may finish, but no later chunk or replacement poll starts;
 a candidate returned by that exact completed search is still submitted once.
 This milestone does not cancel a chunk mid-search.
 
-If one job exhausts the remaining 32-bit nonce space, Hashphere does not wrap
-or repeat it. The command waits with bounded notification polls until a newer
-job arrives or shutdown is requested. The invocation's one generated
-`extra_nonce_2` is reused across all jobs and is never displayed. Future
-`extra_nonce_2` progression and network-time rolling will remove this idle
-state. Reconnect, retry, multiprocessing, native backends, and GPU execution
-are also not implemented by this command.
+If one prepared variant exhausts the remaining 32-bit nonce space, Hashphere
+does not wrap or repeat its nonce ranges. It first drains queued pool
+notifications. A genuinely newer selected job takes priority and restarts at
+the configured nonce with the invocation's original extra-nonce seed.
+Otherwise, Hashphere advances `extra_nonce_2` by one modulo its negotiated
+fixed-width space, rebuilds the coinbase-derived work once, and restarts the
+nonce position. The single random seed is generated only at invocation start;
+all later values are deterministic.
+
+After every negotiated `extra_nonce_2` value has been searched once at one
+network time, the time advances by exactly one second and extra-nonce
+progression restarts from the original seed. Local time never wraps beyond
+`ffffffff`; only then does the command wait with bounded notification polls
+for newer pool work. Compact cursor and effective-work identities prevent
+duplicate range searches without retaining an unbounded nonce history. A
+changed target is treated as a new acceptance context, while an identical pool
+reannouncement does not restart already searched work.
+
+The actual generated or advanced extra nonce is never displayed or logged.
+Final output and JSONL analysis expose only safe aggregate variant, advance,
+cycle, network-time-roll, and duplicate counts. Reconnect, retry,
+multiprocessing, native backends, and GPU execution remain unimplemented.
 
 Final output reports sanitized aggregate counters and weighted hash rate.
 Controlled stop, chunk-limit, accepted-share, and rejected-share outcomes exit
@@ -360,6 +389,11 @@ Completion outcomes:
 Mining:
   Difficulty events: 0
   Jobs received: 0
+  Work variants searched: 0
+  Extra nonce 2 advances: 0
+  Extra nonce 2 cycles: 0
+  Network-time rolls: 0
+  Duplicate work ignored: 0
   Nonce ranges completed: 0
   Hashes checked: 0
   Mining elapsed: 0 ns

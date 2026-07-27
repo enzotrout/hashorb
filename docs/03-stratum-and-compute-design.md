@@ -378,8 +378,10 @@ notifications continue to raise their existing errors. Polling does not close,
 reconnect, retry, change request IDs, or discard messages.
 
 Bounded chunked mining uses this check between exhausted nonfinal searches.
-Continuous mining also uses a 0.25-second bounded poll while waiting for initial
-or replacement work. Mid-chunk cancellation and time rolling remain deferred.
+Continuous mining uses nonblocking drains between chunks and 0.25-second polls
+while waiting for initial work or after deterministic local progression is
+fully exhausted. Mid-chunk cancellation remains deferred; local time rolling
+belongs to the separate deterministic progression boundary below.
 
 ## One-Shot Live Mining Orchestration
 
@@ -475,13 +477,13 @@ received before the first difficulty is observed and discarded; it is never
 retained for later reuse. The first job arriving after known difficulty starts
 the mining lifecycle.
 
-For unchanged prepared work, `run_continuous_mining` searches adjacent half-
+For one prepared variant, `run_continuous_mining` searches adjacent half-
 open ranges. The first begins at the configured start, every later range begins
 at the previous exclusive stop, and a range approaching `2**32` is shortened.
 Each actual chunk invokes `search_nonce_range` exactly once. Preparation occurs
-once until selected work changes. Integer hash and elapsed-nanosecond totals
-span the whole session, and weighted rate is derived from those totals rather
-than averaged per-chunk rates.
+exactly once per effective variant. Integer hash and elapsed-nanosecond totals
+span all jobs, times, extra nonces, and chunks, and weighted rate is derived
+from those totals rather than averaged per-chunk rates.
 
 After an exhausted chunk, a stop request and optional chunk limit are checked
 before any further poll or search. When continuing, nonblocking polls drain all
@@ -490,8 +492,9 @@ jobs announced later. Each job snapshots the difficulty at its arrival
 position. Only the final newest job in one drain is prepared and searched;
 superseded intermediate jobs remain observed but do not count as used work or
 replacement transitions. Both `clean_jobs` values switch work under the
-documented freshness policy. A replacement reuses the same `extra_nonce_2`,
-restarts at the configured nonce, and preserves all session counters.
+documented freshness policy. A replacement abandons the old local progression
+cursor, starts from the same invocation seed and the new pool job's network
+time, restarts at the configured nonce, and preserves all session counters.
 
 `StopToken` is a read-only cooperative boundary. The CLI maps Ctrl-C and
 supported termination signals to idempotent stop requests, then restores every
@@ -501,14 +504,54 @@ that completed call returns a candidate, the exact candidate is still
 submitted once before the session terminates; mid-chunk cancellation remains a
 future compute-backend capability.
 
-If the current work reaches the exclusive stop `2**32`, it emits nonce-space
-exhaustion and does not wrap, clamp, or repeat nonces. Immediately queued
-notifications are drained first. Without a newer job, the lifecycle enters
-bounded 0.25-second waits, continues applying difficulty updates, and resumes
-at the configured start only after a later job arrives. Stop requests remain
-responsive, and optional chunk limits count searches rather than waits. Future
-`extra_nonce_2` progression and network-time rolling will replace this idle
-state and must include duplicate-work prevention.
+## Deterministic Work-Space Expansion
+
+The continuous hierarchy is:
+
+```text
+pool job -> effective network time -> extra_nonce_2 -> nonce range
+```
+
+The CLI generates exactly one random lowercase `extra_nonce_2` of the
+negotiated width. `MiningWorkCursor` treats it as a numeric starting offset and
+advances by one modulo `2**(8 * extra_nonce_2_size)`. It records how many
+variants have been searched at the current time, so every value—including
+zero after wrap—is visited exactly once without allocating a history set. The
+starting value is not repeated until the cycle is declared complete.
+
+Each successor keeps fixed-width lowercase hexadecimal representation,
+prepares a new coinbase, Merkle root, targets, and 76-byte header prefix once,
+and restarts the nonce at the configured start. No random value is generated
+after invocation initialization. Once the complete negotiated extra-nonce
+cycle has been searched at one time, the cursor increments network time by
+exactly one second and resets the extra nonce to the invocation seed. Locally
+rolled time is exactly eight lowercase hexadecimal characters. It never wraps
+beyond `ffffffff`.
+
+Ordering at an exhausted nonce boundary is deliberate: finish the chunk,
+honor stop and chunk-limit boundaries, emit exhaustion, drain every immediately
+available notification, select the final newest valid pool job when present,
+and only otherwise advance local work. Pool work therefore wins over local
+progression. A new pool job resets local time to the pool-provided value and
+uses the same invocation seed; local rolled time from an older job is never
+carried forward.
+
+Duplicate prevention uses compact validated identities rather than an
+unbounded nonce ledger. Pool context identity covers all job construction data
+and snapshotted difficulty but ignores `clean_jobs` alone. Effective work
+identity covers job ID, the prepared 76-byte prefix, network target, and share
+target. An identical reannouncement is observed but does not restart the
+configured nonce range. A header-identical announcement with a genuinely
+changed share target is a new acceptance context and is prepared and searched.
+Arithmetic cursor state prevents duplicate local extra-nonce/time variants and
+nonce wrap.
+
+Only after the final extra-nonce cycle at network time `ffffffff` does local
+progression become unavailable. The lifecycle then enters bounded 0.25-second
+waits, continues applying difficulty updates, ignores repeated work, and
+resumes only with genuinely new pool work. Stop requests remain responsive,
+and optional chunk limits count actual searches across variants rather than
+waits or preparations.
 
 The first share-target or network-target match ends searching. No notification
 is polled between discovery and submission. Exact prepared-work job ID, extra
@@ -519,8 +562,8 @@ failure is not retried.
 Controlled outcomes are `stopped_by_user`, `chunk_limit_reached`,
 `share_accepted`, and `share_rejected`. The CLI returns zero for each, two for
 syntax or opt-in failure, and one for runtime or cleanup failure. Reconnect,
-retry, extra-nonce progression, network-time rolling, native and parallel CPU
-backends, GPU execution, and alternative search strategies remain deferred.
+retry, session recovery, native and parallel CPU backends, GPU execution, and
+alternative search strategies remain deferred.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not
@@ -600,6 +643,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
     ├── header.py
     ├── job.py
     ├── merkle.py
+    ├── progression.py
     ├── search.py
     ├── target.py
     ├── engine.py
@@ -616,6 +660,7 @@ Responsibilities:
 - `header.py`: serialize and hash raw 80-byte block headers
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
+- `progression.py`: advance immutable extra-nonce and network-time work variants
 - `search.py`: prepare fixed mining work and search bounded sequential nonce ranges
 - `target.py`: calculate targets and compare raw block-hash integers
 - `engine.py`: coordinate mining jobs and search operations

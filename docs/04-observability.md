@@ -78,19 +78,31 @@ search still has exactly one ordered `nonce_range_started` and
 The analyzer therefore aggregates continuous hashes, elapsed nanoseconds, and
 weighted rate without a new range schema.
 
-Three stable lifecycle events describe controlled state without exposing
-signals or raw work:
+Stable lifecycle and progression events describe controlled state without
+exposing signals or raw work:
 
 - `mining_stop_requested` records one idempotent cooperative stop request and
   contains no signal number, signal name, frame, or exception text.
 - `nonce_space_exhausted` records the safe current job ID after its remaining
   unsigned 32-bit nonce range has been searched.
-- `mining_waiting_for_job` records entry into bounded replacement-job waiting.
+- `mining_work_advanced` records a safe reason, per-job variant index, and
+  cumulative extra-nonce/time counters immediately before a variant's first
+  search.
+- `extra_nonce_2_cycle_completed` records the cumulative completed-cycle
+  count, never the negotiated values.
+- `network_time_rolled` records the cumulative local roll count, never an
+  actual network time.
+- `duplicate_work_ignored` records a controlled reason and cumulative count.
+- `mining_waiting_for_job` records entry into bounded replacement-job waiting
+  only after local progression is terminally exhausted.
 
-For exhaustion, `nonce_space_exhausted` follows the completed final range.
-`mining_waiting_for_job` is emitted only when immediately queued notifications
-do not provide replacement work. A later `mining_job_replaced` precedes the
-next range start. Controlled stop emits `mining_stop_requested` before terminal
+For each prepared variant, `nonce_space_exhausted` follows the completed final
+range. Queued pool work is observed and selected before local progression. A
+local successor emits any cycle/time transition followed by
+`mining_work_advanced` before its first range. `mining_waiting_for_job` is
+emitted only after the complete extra-nonce cycle at maximum network time. A
+later `mining_job_replaced` precedes the next work-advance and range events.
+Controlled stop emits `mining_stop_requested` before terminal
 `command_completed`; no event follows that terminal record.
 
 An exhausted range emits no share events. The completion outcome is one of
@@ -121,6 +133,9 @@ CLI events omit usernames entirely. They also never include complete payout
 addresses, either extra nonce, complete coinbase transactions, raw jobs, raw
 subscribe/authorization/submission requests, or arbitrary exception messages.
 Failure events contain only a controlled stage and safe exception category.
+Progression records contain counts and controlled reasons only: actual starting
+or advanced `extra_nonce_2`, `extra_nonce_1`, effective network time, header
+prefix, and raw work identity are prohibited.
 
 ## Append, Flush, and Close Behavior
 
@@ -190,16 +205,21 @@ acceptance.
 
 The immutable summary reports record and run status counts, chronological
 first and last UTC timestamps, sorted command and completion-outcome counts,
-known mining event counts, range totals, accepted and rejected submission
-counts, and sorted controlled failure-stage/category counts. Command counts
+known mining event counts, work variants searched, extra-nonce advances and
+cycles, network-time rolls, duplicate work ignored, range totals, accepted and
+rejected submission counts, and sorted controlled failure-stage/category
+counts. Command counts
 are per distinct run ID rather than per record. The human-readable CLI always
 shows the five currently known commands in a stable order, including zero
 counts, followed by any future command names in sorted order.
 
-The schema-version-1 analyzer accepts `mining_job_replaced` and the continuous
-lifecycle events through its existing unknown-event forward-compatibility
-rule. These records participate in record and run-integrity validation but do
-not add high-cardinality log-summary aggregates.
+The analyzer treats progression events as stable known records and validates
+only their safe fields. It counts event occurrences rather than trusting or
+summing cumulative fields. A `mining_work_advanced` record counts one searched
+variant; reasons `extra_nonce_2` and `network_time` each count one deterministic
+extra-nonce advance. Cycle, time-roll, and duplicate records each add one to
+their corresponding aggregate. Unknown future schema-version-1 events retain
+the existing forward-compatible behavior and do not affect current totals.
 
 Aggregate mining rate is weighted from the integer totals:
 
@@ -215,6 +235,7 @@ usernames, payout addresses, passwords, extra nonces, coinbase data, nonces,
 block hashes, raw events, raw exception messages, and protocol payloads. The
 user-supplied path may be displayed.
 
-Machine-readable summary output, file rotation and retention, compression,
-remote export, background delivery, and Prometheus/Grafana-compatible metrics
-remain deferred.
+Long continuous runs can grow append-only JSONL files substantially. File
+rotation and retention, machine-readable summary output, compression, remote
+export, background delivery, and Prometheus/Grafana-compatible metrics remain
+deferred.
