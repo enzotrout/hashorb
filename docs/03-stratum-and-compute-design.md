@@ -355,10 +355,44 @@ client authorized. Send, receive, validation, and protocol failures propagate
 without automatically closing, reconnecting, retrying, or resubmitting; the
 caller remains responsible for `close`.
 
-An explicitly opt-in live mining runner remains deferred, along with continuous
-mining, submission counters, stale- or duplicate-share classification,
-`clean_jobs` cancellation, extra-nonce generation, network-time rolling,
-multiprocessing, GPU execution, and orbiting-bit search.
+The explicitly opt-in one-shot runner described below owns the first complete
+bounded live integration. Continuous mining, submission counters, stale- or
+duplicate-share classification, and automatic retry remain deferred.
+
+## One-Shot Live Mining Orchestration
+
+`stratum-mine-once` is guarded by both
+`HASHPHERE_ENABLE_LIVE_STRATUM=1` and
+`HASHPHERE_ENABLE_LIVE_MINING=1`. It loads `Settings`, handshakes through
+`StratumClient`, creates a `MiningJobAssembler` from the subscription, generates
+one `extra_nonce_2`, prepares fixed work once, searches exactly one caller-
+bounded half-open nonce range, and conditionally submits the exact returned
+match. The client is closed on success or failure.
+
+Difficulty applies only to subsequent jobs. Each difficulty notification
+replaces the assembler's current difficulty. Jobs arriving before the first
+difficulty are discarded for assembly rather than retained and combined with a
+later update. The first valid job arriving after a known difficulty snapshots
+that difficulty and becomes the only job searched by the invocation. This also
+applies to notifications that were queued during the handshake.
+
+The runner generates `extra_nonce_2` exactly once with
+`secrets.token_hex(extra_nonce_2_size)`. The same lowercase hexadecimal value
+is passed to work preparation and any conditional submission. It is not rolled
+or regenerated during search. Fixed work is prepared once and
+`search_nonce_range` is called once with the requested start and exclusive stop
+unchanged.
+
+An exhausted range is a successful bounded run and performs no submission. A
+share-target or network-target match is submitted once. Pool acceptance and
+rejection are both completed exchanges with exit status zero; failures return
+nonzero. There is no retry, resubmission, reconnect, or automatic continuation
+into another range.
+
+Continuous mining, `clean_jobs` cancellation during hashing, active job
+replacement, `extra_nonce_2` progression, network-time rolling, reconnects,
+telemetry aggregation, multiprocessing, GPU execution, and orbiting-bit search
+remain deferred.
 
 ## Compute Backend and Compute Profile
 

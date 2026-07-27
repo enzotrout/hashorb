@@ -1,8 +1,9 @@
 # Hashphere
 
-Hashphere is an experimental Python Bitcoin mining project. Its current live
-operation is limited to a Stratum subscription and authorization handshake; it
-does not mine or submit shares.
+Hashphere is an experimental Python Bitcoin mining project. Live operations are
+explicitly opt-in and include Stratum inspection plus one bounded, synchronous
+mining range that may submit at most one returned match. Hashphere is not yet a
+continuous miner.
 
 ## Configure the environment
 
@@ -94,3 +95,76 @@ incoming message. Missing opt-in or invalid configuration exits nonzero;
 connection, authorization, timeout, malformed-message, unsupported-
 notification, and other protocol failures emit a generic sanitized error and
 also exit nonzero.
+
+## Run one bounded live mining range
+
+This command performs real hashing and is permitted to send `mining.submit`.
+It therefore requires two exact opt-ins. Run:
+
+```bash
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine-once \
+  --start-nonce 0 \
+  --hash-count 100000
+```
+
+`--hash-count` is required and must be a positive ASCII decimal integer no
+larger than `2**32`. `--start-nonce` defaults to `0` and may be an ASCII decimal
+integer through `0xffffffff`. Together they select the unchanged half-open
+range `[start_nonce, start_nonce + hash_count)`. A range extending beyond
+`2**32` is rejected rather than wrapped, shortened, or split.
+
+The command handshakes, waits for a job that arrives after a known difficulty,
+generates one `extra_nonce_2`, prepares fixed work once, and searches the range
+once. A typical exhausted result is:
+
+```text
+Bounded Stratum mining completed.
+Endpoint: stratum.ckpool.org:3333
+Username: bc1q…ook1
+Job ID: 1a2b3c
+Difficulty: 10000
+Network bits: 17023ad4
+Extra nonce 2 size: 4
+Start nonce: 0
+Exclusive stop nonce: 100000
+Hashes checked: 100000
+Elapsed time: 250000000 ns
+Hashes per second: 400000.00
+Result: no qualifying hash found
+```
+
+If a qualifying hash is returned, it is submitted exactly once. Accepted output
+adds fields like:
+
+```text
+Matched nonce: 305419896
+Submitted nonce hex: 78563412
+Raw block hash: 12345678…00000000
+Meets share target: true
+Meets network target: false
+Pool result: accepted
+```
+
+A normal pool rejection uses the same sanitized summary with:
+
+```text
+Pool result: rejected
+```
+
+Bounded exhaustion, acceptance, and rejection are completed runs and return
+exit status `0`. Configuration, opt-in, connection, protocol, preparation,
+search, submission, or cleanup failures return nonzero. The client is always
+closed, and there is no retry, reconnect, resubmission, next-range search,
+extra-nonce progression, or network-time rolling.
+
+A small bounded run will probably find no share at difficulty 10000. CKPool
+worker statistics require an accepted submitted share; a successful handshake,
+observed job, or exhausted local range is not enough. This command is a
+one-shot engineering runner, not a continuous miner.
+
+Output includes a masked username and abbreviated block hash. It never includes
+the password, complete payout address or username, complete coinbase
+transaction, raw job JSON, authorization request, or complete submission
+request.

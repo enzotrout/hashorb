@@ -426,7 +426,7 @@ def test_unknown_command_prints_usage(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.strip() == (
-        "Usage: python -m hashphere {stratum-handshake,stratum-observe}"
+        "Usage: python -m hashphere {stratum-handshake,stratum-observe,stratum-mine-once} [options]"
     )
 
 
