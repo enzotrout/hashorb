@@ -1,5 +1,10 @@
 """Mining-domain models and assembly services."""
 
+from hashphere.mining.coinbase import (
+    CoinbaseError,
+    CoinbaseValidationError,
+    build_coinbase_transaction,
+)
 from hashphere.mining.job import (
     MiningJob,
     MiningJobAssembler,
@@ -9,9 +14,12 @@ from hashphere.mining.job import (
 )
 
 __all__ = [
+    "CoinbaseError",
+    "CoinbaseValidationError",
     "MiningJob",
     "MiningJobAssembler",
     "MiningJobError",
     "MiningJobStateError",
     "MiningJobValidationError",
+    "build_coinbase_transaction",
 ]

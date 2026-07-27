@@ -90,10 +90,28 @@ field sizes, difficulty, and extra-nonce sizes independently of the networking
 parser. Protocol hexadecimal strings remain unchanged; byte-order conversion
 is deferred to serialization.
 
-This boundary does not calculate share or network targets, build coinbase
-transactions, calculate Merkle roots, serialize headers, generate
+The mining-job boundary itself does not calculate share or network targets,
+build coinbase transactions, calculate Merkle roots, serialize headers, generate
 `extra_nonce_2`, hash, mine, or submit shares. Those responsibilities remain
 deferred to later slices.
+
+## Coinbase Assembly Boundary
+
+`build_coinbase_transaction` deterministically assembles raw transaction bytes
+from a validated `MiningJob` and a caller-supplied `extra_nonce_2`. The protocol
+composition is exactly:
+
+    coinbase_part_1 || extra_nonce_1 || extra_nonce_2 || coinbase_part_2
+
+All four hexadecimal components are decoded in that order without padding,
+normalization, byte reversal, or endian conversion. The caller is responsible
+for choosing or generating `extra_nonce_2`; the assembler only validates its
+type, hexadecimal representation, and exact session-defined size.
+
+This boundary does not parse or otherwise validate the assembled transaction,
+calculate a transaction ID or coinbase hash, apply double-SHA256, calculate a
+Merkle root or target, construct a block header, iterate nonces, hash, perform
+networking, or submit shares. Those stages remain deferred.
 
 ## Compute Backend and Compute Profile
 
@@ -163,6 +181,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
 ## Proposed Mining Components
 
     src/hashphere/mining/
+    ├── coinbase.py
     ├── job.py
     ├── engine.py
     ├── profiles.py
@@ -174,6 +193,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
 
 Responsibilities:
 
+- `coinbase.py`: assemble raw coinbase transaction bytes from protocol components
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `engine.py`: coordinate mining jobs and search operations
 - `profiles.py`: define Lite, Auto, and Max policies
