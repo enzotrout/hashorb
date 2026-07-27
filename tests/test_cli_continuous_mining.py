@@ -89,6 +89,7 @@ class FakeClient:
         submission_failure: BaseException | None = None,
         close_failure: BaseException | None = None,
         poll_hook: Callable[[int], None] | None = None,
+        extra_nonce_2_size: int = 4,
     ) -> None:
         self.notifications = deque(
             notifications if notifications is not None else [difficulty(), job()]
@@ -99,6 +100,7 @@ class FakeClient:
         self.submission_failure = submission_failure
         self.close_failure = close_failure
         self.poll_hook = poll_hook
+        self.extra_nonce_2_size = extra_nonce_2_size
         self.state = StratumClientState.DISCONNECTED
         self.handshake_calls = 0
         self.poll_timeouts: list[float] = []
@@ -113,7 +115,7 @@ class FakeClient:
         return SubscribeResult(
             subscriptions=(("mining.notify", "subscription-id"),),
             extra_nonce_1="08000002",
-            extra_nonce_2_size=4,
+            extra_nonce_2_size=self.extra_nonce_2_size,
         )
 
     def poll_notification(self, timeout_seconds: float = 0.0) -> object | None:
@@ -124,7 +126,10 @@ class FakeClient:
             raise self.poll_failure
         if not self.notifications:
             return None
-        return self.notifications.popleft()
+        value = self.notifications.popleft()
+        if isinstance(value, BaseException):
+            raise value
+        return value
 
     def submit_share(
         self,
@@ -157,7 +162,10 @@ class SearchHarness:
     signal_trigger_call: int | None = None
     signal_trigger: Callable[[], None] | None = None
     generated_extra_nonce_2: str = "abababab"
+    generated_extra_nonce_2_values: deque[str] = field(default_factory=deque)
     generated_sizes: list[int] = field(default_factory=list)
+    reconnect_delays: list[float] = field(default_factory=list)
+    stop_during_reconnect_wait: bool = False
     prepare_calls: list[tuple[MiningJob, str]] = field(default_factory=list)
     search_calls: list[tuple[PreparedMiningWork, int, int]] = field(default_factory=list)
 
@@ -208,6 +216,7 @@ def install_fakes(
     search_harness: SearchHarness | None = None,
     *,
     deterministic_log: bool = False,
+    additional_clients: list[FakeClient] | None = None,
 ) -> tuple[SearchHarness, SignalHarness]:
     """Install settings, client, signal, and cryptography-free search fakes."""
 
@@ -219,13 +228,19 @@ def install_fakes(
         classmethod(lambda cls: settings),
     )
 
+    clients = deque([client, *(additional_clients or [])])
+
     def client_factory(received_settings: Settings, user_agent: str) -> FakeClient:
         assert received_settings is settings
         assert user_agent == "Hashphere/0.1"
-        return client
+        if not clients:
+            raise AssertionError("unexpected Stratum client creation")
+        return clients.popleft()
 
     def generate(byte_size: int) -> str:
         configured.generated_sizes.append(byte_size)
+        if configured.generated_extra_nonce_2_values:
+            return configured.generated_extra_nonce_2_values.popleft()
         return configured.generated_extra_nonce_2
 
     def prepare(received_job: MiningJob, extra_nonce_2: str) -> PreparedMiningWork:
@@ -279,6 +294,17 @@ def install_fakes(
     monkeypatch.setattr(cli_module, "_generate_extra_nonce_2", generate)
     monkeypatch.setattr(cli_module, "prepare_mining_work", prepare)
     monkeypatch.setattr(cli_module, "search_nonce_range", search_range)
+
+    def wait_without_sleep(delay_seconds: float, stop_token: object) -> bool:
+        del stop_token
+        configured.reconnect_delays.append(delay_seconds)
+        if configured.stop_during_reconnect_wait:
+            assert configured.signal_trigger is not None
+            configured.signal_trigger()
+            return False
+        return True
+
+    monkeypatch.setattr(cli_module, "wait_for_reconnect_delay", wait_without_sleep)
     monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
     monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
     signals = install_signal_fakes(monkeypatch)
@@ -303,6 +329,7 @@ def arguments(
     chunk_size: str = "2",
     start_nonce: str | None = None,
     max_chunks: str | None = "3",
+    max_reconnect_attempts: str | None = None,
     log_file: Path | None = None,
 ) -> list[str]:
     """Build one continuous command argument list."""
@@ -312,6 +339,8 @@ def arguments(
         result.extend(["--start-nonce", start_nonce])
     if max_chunks is not None:
         result.extend(["--max-chunks", max_chunks])
+    if max_reconnect_attempts is not None:
+        result.extend(["--max-reconnect-attempts", max_reconnect_attempts])
     if log_file is not None:
         result.extend(["--log-file", str(log_file)])
     return result
@@ -337,6 +366,22 @@ def test_parse_continuous_plan_supports_unlimited_and_limited_forms() -> None:
     ) == ContinuousMiningPlan(7, 10, 3)
 
 
+def test_parse_continuous_reconnect_policy_defaults_and_accepts_bounds() -> None:
+    plan, policy, log_file = cli_module._parse_continuous_mining_arguments(["--chunk-size", "10"])
+    assert plan == ContinuousMiningPlan(0, 10, None)
+    assert policy.maximum_attempts == 5
+    assert log_file is None
+
+    _, disabled, _ = cli_module._parse_continuous_mining_arguments(
+        ["--chunk-size", "10", "--max-reconnect-attempts", "0"]
+    )
+    _, maximum, _ = cli_module._parse_continuous_mining_arguments(
+        ["--chunk-size", "10", "--max-reconnect-attempts", "100"]
+    )
+    assert disabled.maximum_attempts == 0
+    assert maximum.maximum_attempts == 100
+
+
 @pytest.mark.parametrize(
     "values",
     [
@@ -345,7 +390,16 @@ def test_parse_continuous_plan_supports_unlimited_and_limited_forms() -> None:
         ["--chunk-size"],
         ["--unknown", "1", "--chunk-size", "1"],
         ["--chunk-size", "1", "--chunk-size", "2"],
+        ["--chunk-size", "1", "--max-reconnect-attempts"],
         ["--chunk-size", "1", "--max-chunks", "1", "--max-chunks", "2"],
+        [
+            "--chunk-size",
+            "1",
+            "--max-reconnect-attempts",
+            "1",
+            "--max-reconnect-attempts",
+            "2",
+        ],
     ],
 )
 def test_parse_rejects_missing_duplicate_and_unknown_options(values: list[str]) -> None:
@@ -375,6 +429,17 @@ def test_positive_options_require_strict_unpadded_ascii_decimal(
 def test_start_nonce_requires_canonical_in_range_decimal(value: str) -> None:
     with pytest.raises(ValueError, match="--start-nonce"):
         cli_module._parse_continuous_mining_plan(["--start-nonce", value, "--chunk-size", "1"])
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "-1", "+1", "0x10", "1.0", "00", "01", " 1", "1 ", "101"],
+)
+def test_reconnect_attempts_require_bounded_unpadded_ascii_decimal(value: str) -> None:
+    with pytest.raises(ValueError, match="--max-reconnect-attempts"):
+        cli_module._parse_continuous_mining_arguments(
+            ["--chunk-size", "1", "--max-reconnect-attempts", value]
+        )
 
 
 def test_both_live_opt_ins_are_required(
@@ -415,7 +480,7 @@ def test_three_chunk_limit_prints_sanitized_aggregate_and_closes(
         (9, 11),
         (11, 13),
     ]
-    assert client.poll_timeouts == [0.25, 0.25, 0.0, 0.0]
+    assert client.poll_timeouts == [0.25, 0.25, 0.0, 0.0, 0.0]
     assert harness.generated_sizes == [4]
     assert len(harness.prepare_calls) == 1
     assert client.submit_calls == []
@@ -499,7 +564,7 @@ def test_omitted_max_chunks_prints_unlimited_and_signal_stops_after_chunk(
     assert cli_module.main(arguments(max_chunks=None)) == 0
 
     assert len(harness.search_calls) == 1
-    assert client.poll_timeouts == [0.25, 0.25]
+    assert client.poll_timeouts == [0.25, 0.25, 0.0]
     assert client.submit_calls == []
     assert client.close_calls == 1
     assert signals.current == signals.previous
@@ -543,9 +608,189 @@ def test_initial_timeouts_and_pre_difficulty_job_are_not_reused(
 
     assert cli_module.main(arguments(max_chunks="1")) == 0
 
-    assert client.poll_timeouts == [0.25, 0.25, 0.25, 0.25]
+    assert client.poll_timeouts == [0.25, 0.25, 0.25, 0.25, 0.0]
     assert [prepared.job_id for prepared, _ in harness.prepare_calls] == ["usable"]
     assert harness.prepare_calls[0][0].difficulty == 15000
+
+
+def test_initial_connection_failure_recovers_with_fresh_client_and_session(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recovered.jsonl"
+    failed = FakeClient(handshake_failure=StratumConnectionError("private initial failure"))
+    successful = FakeClient()
+    harness, _ = install_fakes(
+        monkeypatch,
+        failed,
+        deterministic_log=True,
+        additional_clients=[successful],
+    )
+
+    assert (
+        cli_module.main(
+            arguments(
+                max_chunks="1",
+                max_reconnect_attempts="1",
+                log_file=path,
+            )
+        )
+        == 0
+    )
+
+    assert failed.close_calls == 1
+    assert successful.close_calls == 1
+    assert harness.reconnect_delays == [1.0]
+    assert harness.generated_sizes == [4]
+    output = capsys.readouterr().out
+    assert "Reconnect attempts: 1" in output
+    assert "Successful reconnects: 1" in output
+    assert "Failed reconnect attempts: 0" in output
+    assert "Sessions established: 1" in output
+    assert "private initial failure" not in output
+    records = read_events(path)
+    recovery_events = [
+        record["event"]
+        for record in records
+        if record["event"].startswith("stratum_reconnect")
+        or record["event"] == "stratum_connection_lost"
+    ]
+    assert recovery_events == [
+        "stratum_connection_lost",
+        "stratum_reconnect_scheduled",
+        "stratum_reconnect_attempted",
+        "stratum_reconnect_succeeded",
+    ]
+    reconnect_success = next(
+        record for record in records if record["event"] == "stratum_reconnect_succeeded"
+    )
+    assert reconnect_success["successful_reconnect_count"] == 1
+    assert reconnect_success["session_index"] == 1
+    serialized = path.read_text(encoding="utf-8")
+    for sensitive in (
+        "private initial failure",
+        "secret-password",
+        "worker.1234567890",
+        "08000002",
+        "abababab",
+    ):
+        assert sensitive not in serialized
+
+
+def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failed = FakeClient(
+        notifications=[
+            difficulty(),
+            job(),
+            None,
+            StratumConnectionError("private poll failure"),
+        ]
+    )
+    recovered = FakeClient(
+        notifications=[difficulty(20000), job("new-session"), None],
+        extra_nonce_2_size=2,
+    )
+    search_harness = SearchHarness(generated_extra_nonce_2_values=deque(["abababab", "cdcd"]))
+    harness, _ = install_fakes(
+        monkeypatch,
+        failed,
+        search_harness,
+        additional_clients=[recovered],
+    )
+
+    assert cli_module.main(arguments(max_chunks="2", max_reconnect_attempts="1")) == 0
+
+    assert [(prepared.job_id, seed) for prepared, seed in harness.prepare_calls] == [
+        ("initial-job", "abababab"),
+        ("new-session", "cdcd"),
+    ]
+    assert [(work.job_id, start) for work, start, _ in harness.search_calls] == [
+        ("initial-job", 0),
+        ("new-session", 0),
+    ]
+    assert harness.generated_sizes == [4, 2]
+    assert failed.close_calls == 1
+    assert recovered.close_calls == 1
+    output = capsys.readouterr().out
+    assert "Extra nonce 2 size: 2" in output
+    assert "Reconnect attempts: 1" in output
+    assert "Sessions established: 2" in output
+    assert "abababab" not in output
+    assert "cdcd" not in output
+
+
+def test_stop_during_reconnect_backoff_is_successful_and_creates_no_new_client(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failed = FakeClient(handshake_failure=StratumConnectionError("private failure"))
+    unused = FakeClient()
+    search_harness = SearchHarness(stop_during_reconnect_wait=True)
+    harness, signals = install_fakes(
+        monkeypatch,
+        failed,
+        search_harness,
+        additional_clients=[unused],
+    )
+    harness.signal_trigger = signals.trigger
+
+    assert cli_module.main(arguments(max_chunks=None)) == 0
+
+    assert harness.reconnect_delays == [1.0]
+    assert failed.close_calls == 1
+    assert unused.handshake_calls == 0
+    assert unused.close_calls == 0
+    assert harness.search_calls == []
+    output = capsys.readouterr().out
+    assert "Result: stopped_by_user" in output
+    assert "Reconnect attempts: 0" in output
+    assert "Sessions established: 0" in output
+
+
+def test_reconnect_exhaustion_is_sanitized_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "exhausted.jsonl"
+    clients = [
+        FakeClient(handshake_failure=StratumConnectionError(f"private failure {index}"))
+        for index in range(3)
+    ]
+    harness, _ = install_fakes(
+        monkeypatch,
+        clients[0],
+        deterministic_log=True,
+        additional_clients=clients[1:],
+    )
+
+    assert (
+        cli_module.main(
+            arguments(
+                max_chunks="1",
+                max_reconnect_attempts="2",
+                log_file=path,
+            )
+        )
+        == 1
+    )
+
+    assert harness.reconnect_delays == [1.0, 2.0]
+    assert [client.close_calls for client in clients] == [1, 1, 1]
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Stratum reconnect attempts exhausted.\n"
+    text = path.read_text(encoding="utf-8")
+    assert "private failure" not in text
+    records = read_events(path)
+    assert records[-2]["event"] == "stratum_reconnect_exhausted"
+    assert records[-1]["event"] == "command_failed"
+    assert records[-1]["attempts"] == 2
+    assert records[-1]["recovery_stage"] == "handshake"
 
 
 def test_signal_returned_candidate_is_submitted_before_controlled_stop(
@@ -559,7 +804,7 @@ def test_signal_returned_candidate_is_submitted_before_controlled_stop(
     assert cli_module.main(arguments(max_chunks=None)) == 0
 
     assert client.submit_calls == [("initial-job", "abababab", "65f04abc", 0)]
-    assert client.poll_timeouts == [0.25, 0.25]
+    assert client.poll_timeouts == [0.25, 0.25, 0.0]
 
 
 @pytest.mark.parametrize("accepted", [True, False])
@@ -592,6 +837,27 @@ def test_network_only_candidate_is_submitted(
     assert len(client.submit_calls) == 1
 
 
+def test_submission_connection_failure_is_terminal_without_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient(submission_failure=StratumConnectionError("private uncertain submission"))
+    harness, _ = install_fakes(
+        monkeypatch,
+        client,
+        SearchHarness(match_call=1),
+    )
+
+    assert cli_module.main(arguments(max_chunks=None)) == 1
+
+    assert len(client.submit_calls) == 1
+    assert harness.reconnect_delays == []
+    assert client.close_calls == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "private uncertain submission" not in captured.err
+
+
 @pytest.mark.parametrize(
     ("failure_location", "failure"),
     [
@@ -620,7 +886,15 @@ def test_runtime_failures_are_sanitized_close_and_restore_signals(
     )
     _, signals = install_fakes(monkeypatch, client, harness)
 
-    assert cli_module.main(arguments(max_chunks="1")) == 1
+    assert (
+        cli_module.main(
+            arguments(
+                max_chunks="1",
+                max_reconnect_attempts=("0" if failure_location == "handshake" else None),
+            )
+        )
+        == 1
+    )
 
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -752,6 +1026,7 @@ def test_pool_replacement_precedes_local_progression_events(
         notifications=[
             difficulty(),
             job(),
+            None,
             job("replacement"),
             None,
         ]

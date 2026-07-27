@@ -161,9 +161,9 @@ class ContinuousMiningResult:
             raise ContinuousMiningValidationError(
                 "failed_reconnect_attempts cannot exceed reconnect_attempts"
             )
-        if self.successful_reconnects >= self.sessions_established:
+        if self.successful_reconnects > self.sessions_established:
             raise ContinuousMiningValidationError(
-                "successful_reconnects must be fewer than sessions_established"
+                "successful_reconnects cannot exceed sessions_established"
             )
 
         submitted_outcome = self.outcome in {

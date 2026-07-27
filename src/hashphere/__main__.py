@@ -12,6 +12,7 @@ from types import FrameType
 
 from hashphere.config import Settings
 from hashphere.mining import (
+    MAX_RECONNECT_ATTEMPTS,
     BlockHeaderError,
     ChunkedMiningError,
     ChunkedMiningPlan,
@@ -30,12 +31,19 @@ from hashphere.mining import (
     NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
+    ReconnectPolicy,
+    SessionRecoveryError,
+    SessionRecoveryExhaustedError,
     StopController,
+    StratumRecoveryStage,
+    StratumRecoveryStatistics,
+    StratumSessionRecovery,
     TargetError,
     prepare_mining_work,
     run_chunked_mining,
     run_continuous_mining,
     search_nonce_range,
+    wait_for_reconnect_delay,
 )
 from hashphere.network.stratum import (
     MiningNotifyNotification,
@@ -64,7 +72,6 @@ _LIVE_MINING_FLAG = "HASHPHERE_ENABLE_LIVE_MINING"
 _STRATUM_USER_AGENT = "Hashphere/0.1"
 _NONCE_LIMIT = 1 << 32
 _MAX_NONCE = _NONCE_LIMIT - 1
-_CONTINUOUS_NOTIFICATION_WAIT_SECONDS = 0.25
 _KNOWN_LOG_COMMANDS = (
     "stratum-handshake",
     "stratum-observe",
@@ -267,11 +274,126 @@ class _ChunkedEventObserver:
 class _ContinuousEventObserver(_ChunkedEventObserver):
     """Translate continuous lifecycle callbacks into sanitized stable events."""
 
-    __slots__ = ("_stop_emitted",)
+    __slots__ = ("_settings", "_stop_emitted")
 
-    def __init__(self, events: EventSink) -> None:
+    def __init__(self, events: EventSink, settings: Settings) -> None:
         super().__init__(events)
+        self._settings = settings
         self._stop_emitted = False
+
+    def session_authorized(self, subscription: SubscribeResult) -> None:
+        """Emit sanitized metadata for every newly authorized session."""
+
+        _emit_stratum_authorized(self._events, self._settings, subscription)
+
+    def connection_lost(
+        self,
+        stage: StratumRecoveryStage,
+        error_category: str,
+    ) -> None:
+        """Emit one sanitized recoverable connection-loss event."""
+
+        self._events.emit(
+            "stratum_connection_lost",
+            level="WARNING",
+            fields={
+                "recovery_stage": stage.value,
+                "error_category": error_category,
+            },
+        )
+
+    def reconnect_scheduled(
+        self,
+        attempt: int,
+        maximum_attempts: int,
+        delay_seconds: float,
+        stage: StratumRecoveryStage,
+    ) -> None:
+        """Emit one deterministic scheduled reconnect delay."""
+
+        self._events.emit(
+            "stratum_reconnect_scheduled",
+            fields={
+                "attempt": attempt,
+                "maximum_attempts": maximum_attempts,
+                "delay_seconds": delay_seconds,
+                "recovery_stage": stage.value,
+            },
+        )
+
+    def reconnect_attempted(
+        self,
+        attempt: int,
+        maximum_attempts: int,
+        stage: StratumRecoveryStage,
+    ) -> None:
+        """Emit one reconnect client-creation attempt."""
+
+        self._events.emit(
+            "stratum_reconnect_attempted",
+            fields={
+                "attempt": attempt,
+                "maximum_attempts": maximum_attempts,
+                "recovery_stage": stage.value,
+            },
+        )
+
+    def reconnect_succeeded(
+        self,
+        attempt: int,
+        successful_reconnect_count: int,
+        session_index: int,
+    ) -> None:
+        """Emit success only after fresh authorized usable work exists."""
+
+        self._events.emit(
+            "stratum_reconnect_succeeded",
+            fields={
+                "attempt": attempt,
+                "successful_reconnect_count": successful_reconnect_count,
+                "session_index": session_index,
+            },
+        )
+
+    def reconnect_failed(
+        self,
+        attempt: int,
+        maximum_attempts: int,
+        stage: StratumRecoveryStage,
+        error_category: str,
+    ) -> None:
+        """Emit one sanitized failed reconnect attempt."""
+
+        self._events.emit(
+            "stratum_reconnect_failed",
+            level="WARNING",
+            fields={
+                "attempt": attempt,
+                "maximum_attempts": maximum_attempts,
+                "recovery_stage": stage.value,
+                "error_category": error_category,
+            },
+        )
+
+    def reconnect_exhausted(
+        self,
+        attempts: int,
+        maximum_attempts: int,
+        stage: StratumRecoveryStage,
+        error_category: str,
+    ) -> None:
+        """Emit terminal sanitized reconnect exhaustion metadata."""
+
+        self._events.emit(
+            "stratum_reconnect_exhausted",
+            level="ERROR",
+            fields={
+                "attempts": attempts,
+                "maximum_attempts": maximum_attempts,
+                "recovery_stage": stage.value,
+                "error_category": error_category,
+            },
+        )
 
     def stop_requested(self) -> None:
         """Emit one controlled stop event without signal details."""
@@ -405,7 +527,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if arguments and arguments[0] == "stratum-mine":
         try:
-            continuous_plan, log_file = _parse_continuous_mining_arguments(arguments[1:])
+            continuous_plan, reconnect_policy, log_file = _parse_continuous_mining_arguments(
+                arguments[1:]
+            )
         except ValueError as exc:
             print(f"Argument error: {exc}", file=sys.stderr)
             print(_USAGE, file=sys.stderr)
@@ -413,7 +537,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_with_event_sink(
             "stratum-mine",
             log_file,
-            lambda events: _run_stratum_mine(continuous_plan, events),
+            lambda events: _run_stratum_mine(
+                continuous_plan,
+                reconnect_policy,
+                events,
+            ),
         )
 
     print(_USAGE, file=sys.stderr)
@@ -473,6 +601,11 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
     print(f"  Extra nonce 2 cycles: {summary.extra_nonce_2_cycle_count}")
     print(f"  Network-time rolls: {summary.network_time_roll_count}")
     print(f"  Duplicate work ignored: {summary.duplicate_work_ignored_count}")
+    print(f"  Connection losses: {summary.connection_loss_count}")
+    print(f"  Reconnect attempts: {summary.reconnect_attempt_count}")
+    print(f"  Reconnect successes: {summary.reconnect_success_count}")
+    print(f"  Reconnect failures: {summary.reconnect_failure_count}")
+    print(f"  Reconnect exhausted events: {summary.reconnect_exhausted_count}")
     print(f"  Nonce ranges completed: {summary.completed_nonce_range_count}")
     print(f"  Hashes checked: {summary.total_hashes_checked}")
     print(f"  Mining elapsed: {summary.total_mining_elapsed_ns} ns")
@@ -815,6 +948,7 @@ def _run_stratum_mine_chunks(
 
 def _run_stratum_mine(
     plan: ContinuousMiningPlan,
+    reconnect_policy: ReconnectPolicy,
     events: EventSink,
 ) -> int:
     """Run one explicitly enabled continuous Stratum mining session."""
@@ -826,8 +960,8 @@ def _run_stratum_mine(
 
     controller = StopController()
     signal_scope = _StopSignalScope(controller)
-    observer = _ContinuousEventObserver(events)
-    client: StratumClient | None = None
+    observer = _ContinuousEventObserver(events, settings)
+    recovery: StratumSessionRecovery | None = None
     subscription: SubscribeResult | None = None
     result: ContinuousMiningResult | None = None
     stopped_before_work = False
@@ -836,30 +970,28 @@ def _run_stratum_mine(
     cleanup_failure_reported = False
     try:
         signal_scope.install()
-        client = StratumClient(settings, _STRATUM_USER_AGENT)
-        subscription = client.handshake()
-        _emit_stratum_authorized(events, settings, subscription)
-        assembler = MiningJobAssembler(subscription)
-        extra_nonce_2 = _generate_extra_nonce_2(subscription.extra_nonce_2_size)
-        initial_job = _receive_initial_continuous_job(
-            client,
-            assembler,
+        recovery = StratumSessionRecovery(
+            reconnect_policy,
             controller,
-            observer,
+            client_factory=lambda: StratumClient(settings, _STRATUM_USER_AGENT),
+            seed_factory=_generate_extra_nonce_2,
+            observer=observer,
+            backoff_waiter=wait_for_reconnect_delay,
         )
-        if initial_job is None:
+        session = recovery.establish_initial_session()
+        if session is None:
             stopped_before_work = True
+            observer.stop_requested()
         else:
+            subscription = session.subscription
             result = run_continuous_mining(
                 plan,
-                assembler,
-                initial_job,
-                extra_nonce_2,
+                session.assembler,
+                session.initial_job,
+                session.extra_nonce_2_seed,
                 controller,
-                receive_notification=lambda timeout: client.poll_notification(
-                    timeout_seconds=timeout
-                ),
-                submit_share=lambda work, match: client.submit_share(
+                receive_notification=session.receive_notification,
+                submit_share=lambda work, match: session.submit_share(
                     work.job_id,
                     work.extra_nonce_2,
                     work.network_time,
@@ -868,7 +1000,11 @@ def _run_stratum_mine(
                 observer=observer,
                 prepare_work=prepare_mining_work,
                 search_range=search_nonce_range,
+                recover_session=recovery.recover_session,
+                recovery_statistics=lambda: recovery.statistics,
             )
+            if recovery.current_session is not None:
+                subscription = recovery.current_session.subscription
     except StratumAuthorizationError as exc:
         pending_failure = exc
         print("Stratum authorization failed.", file=sys.stderr)
@@ -879,6 +1015,17 @@ def _run_stratum_mine(
         print("Could not connect to the configured Stratum endpoint.", file=sys.stderr)
         status = 1
         _emit_command_failed(events, "continuous_mining", _error_category(exc))
+    except SessionRecoveryExhaustedError as exc:
+        pending_failure = exc
+        print("Stratum reconnect attempts exhausted.", file=sys.stderr)
+        status = 1
+        _emit_command_failed(
+            events,
+            "session_recovery",
+            _error_category(exc),
+            attempts=exc.attempts,
+            recovery_stage=exc.recovery_stage.value,
+        )
     except (
         StratumTransportError,
         StratumMessageError,
@@ -890,6 +1037,7 @@ def _run_stratum_mine(
         TargetError,
         NonceSearchError,
         MiningWorkProgressionError,
+        SessionRecoveryError,
         ContinuousMiningError,
         _SignalLifecycleError,
         OSError,
@@ -913,9 +1061,9 @@ def _run_stratum_mine(
             pass
         raise
     finally:
-        if client is not None:
+        if recovery is not None:
             try:
-                client.close()
+                recovery.close()
             except BaseException:
                 if pending_failure is None and status == 0:
                     print("Could not close the Stratum connection cleanly.", file=sys.stderr)
@@ -932,8 +1080,6 @@ def _run_stratum_mine(
 
     if status != 0:
         return status
-    if subscription is None:
-        raise RuntimeError("continuous mining completed without a subscription")
     if stopped_before_work:
         outcome = ContinuousMiningOutcome.STOPPED_BY_USER
     elif result is not None:
@@ -951,6 +1097,8 @@ def _run_stratum_mine(
         settings,
         subscription,
         plan,
+        reconnect_policy,
+        recovery.statistics if recovery is not None else StratumRecoveryStatistics(0, 0, 0, 0),
         outcome,
         result,
     )
@@ -1066,12 +1214,18 @@ def _parse_chunked_mining_plan(arguments: Sequence[str]) -> ChunkedMiningPlan:
 
 def _parse_continuous_mining_arguments(
     arguments: Sequence[str],
-) -> tuple[ContinuousMiningPlan, str | None]:
+) -> tuple[ContinuousMiningPlan, ReconnectPolicy, str | None]:
     """Parse continuous mining options and an optional structured-log path."""
 
     option_values = _parse_option_values(
         arguments,
-        {"--start-nonce", "--chunk-size", "--max-chunks", "--log-file"},
+        {
+            "--start-nonce",
+            "--chunk-size",
+            "--max-chunks",
+            "--max-reconnect-attempts",
+            "--log-file",
+        },
         unsupported_message="unsupported stratum-mine argument",
     )
     log_file = (
@@ -1079,7 +1233,11 @@ def _parse_continuous_mining_arguments(
         if "--log-file" in option_values
         else None
     )
-    return _continuous_plan_from_options(option_values), log_file
+    return (
+        _continuous_plan_from_options(option_values),
+        _reconnect_policy_from_options(option_values),
+        log_file,
+    )
 
 
 def _parse_continuous_mining_plan(arguments: Sequence[str]) -> ContinuousMiningPlan:
@@ -1087,10 +1245,27 @@ def _parse_continuous_mining_plan(arguments: Sequence[str]) -> ContinuousMiningP
 
     option_values = _parse_option_values(
         arguments,
-        {"--start-nonce", "--chunk-size", "--max-chunks"},
+        {
+            "--start-nonce",
+            "--chunk-size",
+            "--max-chunks",
+            "--max-reconnect-attempts",
+        },
         unsupported_message="unsupported stratum-mine argument",
     )
     return _continuous_plan_from_options(option_values)
+
+
+def _reconnect_policy_from_options(option_values: dict[str, str]) -> ReconnectPolicy:
+    """Build the bounded reconnect policy from continuous command options."""
+
+    maximum_attempts = _parse_unpadded_decimal_option(
+        "--max-reconnect-attempts",
+        option_values.get("--max-reconnect-attempts", "5"),
+        minimum=0,
+        maximum=MAX_RECONNECT_ATTEMPTS,
+    )
+    return ReconnectPolicy(maximum_attempts=maximum_attempts)
 
 
 def _continuous_plan_from_options(
@@ -1355,37 +1530,6 @@ def _receive_buildable_job(
         return assembler.build_job(notification)
 
 
-def _receive_initial_continuous_job(
-    client: StratumClient,
-    assembler: MiningJobAssembler,
-    stop_controller: StopController,
-    observer: _ContinuousEventObserver,
-) -> MiningJob | None:
-    """Wait responsively for the first job announced after known difficulty."""
-
-    while not stop_controller.stop_requested:
-        notification = client.poll_notification(
-            timeout_seconds=_CONTINUOUS_NOTIFICATION_WAIT_SECONDS
-        )
-        if notification is None:
-            continue
-        if not isinstance(
-            notification,
-            (SetDifficultyNotification, MiningNotifyNotification),
-        ):
-            raise StratumClientError("unsupported parsed Stratum notification")
-        observer.notification_received(notification)
-        if isinstance(notification, SetDifficultyNotification):
-            assembler.apply_difficulty(notification)
-            continue
-        if assembler.current_difficulty is None:
-            continue
-        return assembler.build_job(notification)
-
-    observer.stop_requested()
-    return None
-
-
 def _generate_extra_nonce_2(byte_size: int) -> str:
     """Generate one lowercase hexadecimal second extra nonce."""
 
@@ -1477,16 +1621,24 @@ def _emit_command_failed(
     events: EventSink,
     stage: str,
     error_category: str,
+    *,
+    attempts: int | None = None,
+    recovery_stage: str | None = None,
 ) -> None:
     """Emit a controlled failure category without arbitrary exception text."""
 
+    fields: dict[str, int | str] = {
+        "stage": stage,
+        "error_category": error_category,
+    }
+    if attempts is not None:
+        fields["attempts"] = attempts
+    if recovery_stage is not None:
+        fields["recovery_stage"] = recovery_stage
     events.emit(
         "command_failed",
         level="ERROR",
-        fields={
-            "stage": stage,
-            "error_category": error_category,
-        },
+        fields=fields,
     )
 
 
@@ -1506,6 +1658,8 @@ def _error_category(error: BaseException) -> str:
         (TargetError, "TargetError"),
         (NonceSearchError, "NonceSearchError"),
         (MiningWorkProgressionError, "MiningWorkProgressionError"),
+        (SessionRecoveryExhaustedError, "SessionRecoveryExhaustedError"),
+        (SessionRecoveryError, "SessionRecoveryError"),
         (ChunkedMiningError, "ChunkedMiningError"),
         (ContinuousMiningError, "ContinuousMiningError"),
         (_SignalLifecycleError, "SignalLifecycleError"),
@@ -1649,8 +1803,10 @@ def _print_chunked_mining_outcome(
 
 def _print_continuous_mining_outcome(
     settings: Settings,
-    subscription: SubscribeResult,
+    subscription: SubscribeResult | None,
     plan: ContinuousMiningPlan,
+    reconnect_policy: ReconnectPolicy,
+    recovery_statistics: StratumRecoveryStatistics,
     outcome: ContinuousMiningOutcome,
     result: ContinuousMiningResult | None,
 ) -> None:
@@ -1665,10 +1821,14 @@ def _print_continuous_mining_outcome(
     else:
         print(f"Final difficulty: {result.final_job.difficulty}")
         print(f"Network bits: {result.final_job.network_bits}")
-    print(f"Extra nonce 2 size: {subscription.extra_nonce_2_size}")
+    print(
+        "Extra nonce 2 size: "
+        f"{subscription.extra_nonce_2_size if subscription is not None else 'unavailable'}"
+    )
     print(f"Start nonce: {plan.start_nonce}")
     print(f"Chunk size: {plan.chunk_size}")
     print(f"Maximum chunks: {plan.max_chunks if plan.max_chunks is not None else 'unlimited'}")
+    print(f"Maximum reconnect attempts: {reconnect_policy.maximum_attempts}")
     print(f"Chunks completed: {result.chunks_completed if result is not None else 0}")
     print(f"Jobs used: {result.jobs_used if result is not None else 0}")
     print(f"Job replacements: {result.job_replacements if result is not None else 0}")
@@ -1680,6 +1840,10 @@ def _print_continuous_mining_outcome(
     )
     print(f"Network-time rolls: {result.network_time_rolls if result is not None else 0}")
     print(f"Duplicate work ignored: {result.duplicate_work_ignored if result is not None else 0}")
+    print(f"Reconnect attempts: {recovery_statistics.reconnect_attempts}")
+    print(f"Successful reconnects: {recovery_statistics.successful_reconnects}")
+    print(f"Failed reconnect attempts: {recovery_statistics.failed_reconnect_attempts}")
+    print(f"Sessions established: {recovery_statistics.sessions_established}")
     print(f"Candidates found: {result.candidates_found if result is not None else 0}")
     print(f"Submissions performed: {result.submissions_performed if result is not None else 0}")
     print(f"Hashes checked: {result.total_hashes_checked if result is not None else 0}")

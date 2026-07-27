@@ -50,6 +50,11 @@ class LogSummary:
     extra_nonce_2_cycle_count: int
     network_time_roll_count: int
     duplicate_work_ignored_count: int
+    connection_loss_count: int
+    reconnect_attempt_count: int
+    reconnect_success_count: int
+    reconnect_failure_count: int
+    reconnect_exhausted_count: int
     completed_nonce_range_count: int
     total_hashes_checked: int
     total_mining_elapsed_ns: int
@@ -84,6 +89,11 @@ class _Accumulator:
     extra_nonce_2_cycle_count: int = 0
     network_time_roll_count: int = 0
     duplicate_work_ignored_count: int = 0
+    connection_loss_count: int = 0
+    reconnect_attempt_count: int = 0
+    reconnect_success_count: int = 0
+    reconnect_failure_count: int = 0
+    reconnect_exhausted_count: int = 0
     completed_nonce_range_count: int = 0
     total_hashes_checked: int = 0
     total_mining_elapsed_ns: int = 0
@@ -302,6 +312,40 @@ def _aggregate_known_event(
         _positive_int(_required(record, "duplicate_count"), "duplicate_count")
         _nonblank_string(_required(record, "reason"), "reason")
         accumulator.duplicate_work_ignored_count += 1
+    elif event == "stratum_connection_lost":
+        _nonblank_string(_required(record, "recovery_stage"), "recovery_stage")
+        _nonblank_string(_required(record, "error_category"), "error_category")
+        accumulator.connection_loss_count += 1
+    elif event == "stratum_reconnect_scheduled":
+        _positive_int(_required(record, "attempt"), "attempt")
+        _nonnegative_int(_required(record, "maximum_attempts"), "maximum_attempts")
+        _nonnegative_number(_required(record, "delay_seconds"), "delay_seconds")
+        _nonblank_string(_required(record, "recovery_stage"), "recovery_stage")
+    elif event == "stratum_reconnect_attempted":
+        _positive_int(_required(record, "attempt"), "attempt")
+        _positive_int(_required(record, "maximum_attempts"), "maximum_attempts")
+        _nonblank_string(_required(record, "recovery_stage"), "recovery_stage")
+        accumulator.reconnect_attempt_count += 1
+    elif event == "stratum_reconnect_succeeded":
+        _positive_int(_required(record, "attempt"), "attempt")
+        _positive_int(
+            _required(record, "successful_reconnect_count"),
+            "successful_reconnect_count",
+        )
+        _positive_int(_required(record, "session_index"), "session_index")
+        accumulator.reconnect_success_count += 1
+    elif event == "stratum_reconnect_failed":
+        _positive_int(_required(record, "attempt"), "attempt")
+        _positive_int(_required(record, "maximum_attempts"), "maximum_attempts")
+        _nonblank_string(_required(record, "recovery_stage"), "recovery_stage")
+        _nonblank_string(_required(record, "error_category"), "error_category")
+        accumulator.reconnect_failure_count += 1
+    elif event == "stratum_reconnect_exhausted":
+        _nonnegative_int(_required(record, "attempts"), "attempts")
+        _nonnegative_int(_required(record, "maximum_attempts"), "maximum_attempts")
+        _nonblank_string(_required(record, "recovery_stage"), "recovery_stage")
+        _nonblank_string(_required(record, "error_category"), "error_category")
+        accumulator.reconnect_exhausted_count += 1
     elif event == "nonce_range_completed":
         hashes_checked = _nonnegative_int(_required(record, "hashes_checked"), "hashes_checked")
         elapsed_ns = _nonnegative_int(_required(record, "elapsed_ns"), "elapsed_ns")
@@ -379,6 +423,13 @@ def _optional_nonnegative_number(value: object, name: str) -> int | float | None
     return value
 
 
+def _nonnegative_number(value: object, name: str) -> int | float:
+    parsed = _optional_nonnegative_number(value, name)
+    if parsed is None:
+        raise _RecordValidationError(f"{name} must be a number")
+    return parsed
+
+
 def _parse_timestamp(value: object) -> datetime:
     if not isinstance(value, str) or _UTC_TIMESTAMP.fullmatch(value) is None:
         raise _RecordValidationError("timestamp must be a UTC RFC3339 Z string")
@@ -424,6 +475,11 @@ def _build_summary(accumulator: _Accumulator) -> LogSummary:
         extra_nonce_2_cycle_count=accumulator.extra_nonce_2_cycle_count,
         network_time_roll_count=accumulator.network_time_roll_count,
         duplicate_work_ignored_count=accumulator.duplicate_work_ignored_count,
+        connection_loss_count=accumulator.connection_loss_count,
+        reconnect_attempt_count=accumulator.reconnect_attempt_count,
+        reconnect_success_count=accumulator.reconnect_success_count,
+        reconnect_failure_count=accumulator.reconnect_failure_count,
+        reconnect_exhausted_count=accumulator.reconnect_exhausted_count,
         completed_nonce_range_count=accumulator.completed_nonce_range_count,
         total_hashes_checked=accumulator.total_hashes_checked,
         total_mining_elapsed_ns=accumulator.total_mining_elapsed_ns,

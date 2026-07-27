@@ -22,7 +22,7 @@ type MiningNotification = SetDifficultyNotification | MiningNotifyNotification
 type ExtraNonceSeedFactory = Callable[[int], str]
 
 _DEFAULT_MAX_RECONNECT_ATTEMPTS = 5
-_MAX_RECONNECT_ATTEMPTS = 100
+MAX_RECONNECT_ATTEMPTS = 100
 _DEFAULT_BASE_DELAY_SECONDS = 1.0
 _DEFAULT_MAX_DELAY_SECONDS = 30.0
 _DEFAULT_NOTIFICATION_TIMEOUT_SECONDS = 0.25
@@ -86,9 +86,9 @@ class ReconnectPolicy:
 
         if isinstance(self.maximum_attempts, bool) or not isinstance(self.maximum_attempts, int):
             raise SessionRecoveryValidationError("maximum_attempts must be an integer")
-        if not 0 <= self.maximum_attempts <= _MAX_RECONNECT_ATTEMPTS:
+        if not 0 <= self.maximum_attempts <= MAX_RECONNECT_ATTEMPTS:
             raise SessionRecoveryValidationError(
-                f"maximum_attempts must be between 0 and {_MAX_RECONNECT_ATTEMPTS}"
+                f"maximum_attempts must be between 0 and {MAX_RECONNECT_ATTEMPTS}"
             )
         _validate_positive_number(self.base_delay_seconds, "base_delay_seconds")
         _validate_positive_number(self.maximum_delay_seconds, "maximum_delay_seconds")
@@ -450,9 +450,12 @@ class StratumSessionRecovery:
         return self._retry(_RecoverableSessionFailure(error=error, stage=stage))
 
     def close(self) -> None:
-        """Close the current client best-effort and clear session ownership."""
+        """Close the current client and clear ownership; repeated calls are safe."""
 
-        self._close_current_best_effort()
+        session = self._current_session
+        self._current_session = None
+        if session is not None:
+            session.client.close()
 
     def _retry(
         self,

@@ -58,6 +58,7 @@ from hashphere.mining.progression import (
     prepare_work_variant,
 )
 from hashphere.mining.recovery import (
+    MAX_RECONNECT_ATTEMPTS,
     BackoffWaiter,
     ExtraNonceSeedFactory,
     NullStratumSessionRecoveryObserver,
@@ -111,6 +112,7 @@ __all__ = [
     "ContinuousMiningResult",
     "ContinuousMiningValidationError",
     "ExtraNonceSeedFactory",
+    "MAX_RECONNECT_ATTEMPTS",
     "MiningJob",
     "MiningJobAssembler",
     "MiningJobContextIdentity",

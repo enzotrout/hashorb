@@ -94,6 +94,11 @@ def test_empty_file_returns_immutable_zero_summary(tmp_path: Path) -> None:
         extra_nonce_2_cycle_count=0,
         network_time_roll_count=0,
         duplicate_work_ignored_count=0,
+        connection_loss_count=0,
+        reconnect_attempt_count=0,
+        reconnect_success_count=0,
+        reconnect_failure_count=0,
+        reconnect_exhausted_count=0,
         completed_nonce_range_count=0,
         total_hashes_checked=0,
         total_mining_elapsed_ns=0,
@@ -366,6 +371,113 @@ def test_progression_events_are_aggregated_without_affecting_weighted_rate(
     assert summary.weighted_hashes_per_second is None
 
 
+def test_recovery_events_are_aggregated_without_affecting_weighted_rate(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recovery.jsonl"
+    records = [
+        event_record("mine", 1, "command_started", command="stratum-mine"),
+        event_record(
+            "mine",
+            2,
+            "stratum_connection_lost",
+            command="stratum-mine",
+            level="WARNING",
+            recovery_stage="notification_poll",
+            error_category="StratumConnectionError",
+        ),
+        event_record(
+            "mine",
+            3,
+            "stratum_reconnect_scheduled",
+            command="stratum-mine",
+            attempt=1,
+            maximum_attempts=5,
+            delay_seconds=1.0,
+            recovery_stage="notification_poll",
+        ),
+        event_record(
+            "mine",
+            4,
+            "stratum_reconnect_attempted",
+            command="stratum-mine",
+            attempt=1,
+            maximum_attempts=5,
+            recovery_stage="notification_poll",
+        ),
+        event_record(
+            "mine",
+            5,
+            "stratum_reconnect_failed",
+            command="stratum-mine",
+            level="WARNING",
+            attempt=1,
+            maximum_attempts=5,
+            recovery_stage="notification_poll",
+            error_category="StratumConnectionError",
+        ),
+        event_record(
+            "mine",
+            6,
+            "stratum_reconnect_scheduled",
+            command="stratum-mine",
+            attempt=2,
+            maximum_attempts=5,
+            delay_seconds=2,
+            recovery_stage="notification_poll",
+        ),
+        event_record(
+            "mine",
+            7,
+            "stratum_reconnect_attempted",
+            command="stratum-mine",
+            attempt=2,
+            maximum_attempts=5,
+            recovery_stage="notification_poll",
+        ),
+        event_record(
+            "mine",
+            8,
+            "stratum_reconnect_succeeded",
+            command="stratum-mine",
+            attempt=2,
+            successful_reconnect_count=1,
+            session_index=2,
+        ),
+        event_record(
+            "mine",
+            9,
+            "stratum_connection_lost",
+            command="stratum-mine",
+            level="WARNING",
+            recovery_stage="replacement_wait",
+            error_category="StratumConnectionError",
+        ),
+        event_record(
+            "mine",
+            10,
+            "stratum_reconnect_exhausted",
+            command="stratum-mine",
+            level="ERROR",
+            attempts=0,
+            maximum_attempts=0,
+            recovery_stage="replacement_wait",
+            error_category="StratumConnectionError",
+        ),
+    ]
+    write_records(path, records)
+
+    summary = summarize_jsonl(path)
+
+    assert summary.connection_loss_count == 2
+    assert summary.reconnect_attempt_count == 2
+    assert summary.reconnect_success_count == 1
+    assert summary.reconnect_failure_count == 1
+    assert summary.reconnect_exhausted_count == 1
+    assert summary.completed_nonce_range_count == 0
+    assert summary.weighted_hashes_per_second is None
+
+
 @pytest.mark.parametrize("with_range", [False, True])
 def test_weighted_rate_is_unavailable_without_positive_elapsed_time(
     tmp_path: Path,
@@ -563,6 +675,45 @@ def test_invalid_utf8_is_rejected(tmp_path: Path) -> None:
         (
             "duplicate_work_ignored",
             {"duplicate_count": 1, "reason": ""},
+        ),
+        (
+            "stratum_connection_lost",
+            {"recovery_stage": "", "error_category": "StratumConnectionError"},
+        ),
+        (
+            "stratum_reconnect_scheduled",
+            {
+                "attempt": 1,
+                "maximum_attempts": 5,
+                "delay_seconds": -1,
+                "recovery_stage": "handshake",
+            },
+        ),
+        (
+            "stratum_reconnect_attempted",
+            {"attempt": True, "maximum_attempts": 5, "recovery_stage": "handshake"},
+        ),
+        (
+            "stratum_reconnect_succeeded",
+            {"attempt": 1, "successful_reconnect_count": 0, "session_index": 1},
+        ),
+        (
+            "stratum_reconnect_failed",
+            {
+                "attempt": 1,
+                "maximum_attempts": 5,
+                "recovery_stage": "handshake",
+                "error_category": "",
+            },
+        ),
+        (
+            "stratum_reconnect_exhausted",
+            {
+                "attempts": -1,
+                "maximum_attempts": 5,
+                "recovery_stage": "handshake",
+                "error_category": "StratumConnectionError",
+            },
         ),
     ],
 )
