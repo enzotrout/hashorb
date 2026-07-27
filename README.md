@@ -1,9 +1,9 @@
 # Hashphere
 
 Hashphere is an experimental Python Bitcoin mining project. Live operations are
-explicitly opt-in and include Stratum inspection plus one bounded, synchronous
-mining range that may submit at most one returned match. Hashphere is not yet a
-continuous miner.
+explicitly opt-in and include Stratum inspection, bounded mining, and a
+synchronous continuous lifecycle that searches one Python nonce chunk at a
+time. Search-space progression and reconnect behavior are not implemented yet.
 
 ## Configure the environment
 
@@ -217,12 +217,74 @@ outcomes. The command does not continue indefinitely, roll time or extra nonce
 values, reconnect, retry, or schedule background work. It is a bounded
 engineering step, not yet the unlimited continuous miner.
 
+## Run continuous live Stratum mining
+
+The continuous command repeats bounded nonce chunks, handles new difficulty and
+job notifications between chunks, and stops cleanly on Ctrl-C. It requires the
+same two exact live-mining opt-ins:
+
+```bash
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine \
+  --start-nonce 0 \
+  --chunk-size 100000 \
+  --log-file logs/hashphere.jsonl
+```
+
+`--chunk-size` is required. `--start-nonce` defaults to `0`. Both use strict,
+unpadded ASCII decimal syntax and the unsigned 32-bit nonce range. With no
+`--max-chunks`, the command continues until Ctrl-C, a candidate is submitted,
+or an unrecoverable error occurs. There is no hidden chunk limit.
+
+For a controlled live validation, cap the number of actual searches:
+
+```bash
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine \
+  --start-nonce 0 \
+  --chunk-size 100000 \
+  --max-chunks 3 \
+  --log-file logs/hashphere.jsonl
+```
+
+`--max-chunks` is an optional positive, unpadded ASCII decimal integer. Idle
+notification waits and job replacements do not consume it. Reaching the limit
+is a successful `chunk_limit_reached` outcome, and the final permitted chunk
+may still submit its candidate.
+
+Chunks for unchanged work are adjacent half-open ranges with no skipped or
+repeated nonce. Difficulty notifications affect later jobs only. When several
+jobs are available between chunks, only the final newest job is prepared and
+searched. Both `clean_jobs=true` and `clean_jobs=false` select the newest job
+under Hashphere's freshness policy, and replacement work restarts at the
+configured start nonce without resetting cumulative counters.
+
+Ctrl-C and supported termination signals request cooperative shutdown. The
+current Python chunk may finish, but no later chunk or replacement poll starts;
+a candidate returned by that exact completed search is still submitted once.
+This milestone does not cancel a chunk mid-search.
+
+If one job exhausts the remaining 32-bit nonce space, Hashphere does not wrap
+or repeat it. The command waits with bounded notification polls until a newer
+job arrives or shutdown is requested. The invocation's one generated
+`extra_nonce_2` is reused across all jobs and is never displayed. Future
+`extra_nonce_2` progression and network-time rolling will remove this idle
+state. Reconnect, retry, multiprocessing, native backends, and GPU execution
+are also not implemented by this command.
+
+Final output reports sanitized aggregate counters and weighted hash rate.
+Controlled stop, chunk-limit, accepted-share, and rejected-share outcomes exit
+with status `0`; syntax or opt-in failures return `2`, and runtime or cleanup
+failures return `1` without printing arbitrary exception details.
+
 ## Write structured JSONL event logs
 
 The `--log-file PATH` option is available on `stratum-handshake`,
-`stratum-observe`, `stratum-mine-once`, and `stratum-mine-chunks`. It is
-optional: when omitted, no log file is created and the existing console output
-is unchanged.
+`stratum-observe`, `stratum-mine-once`, `stratum-mine-chunks`, and
+`stratum-mine`. It is optional: when omitted, no log file is created and the
+existing console output is unchanged.
 
 When requested, Hashphere creates missing parent directories and appends
 sanitized events to the UTF-8 file without truncating existing records. Each
@@ -290,6 +352,7 @@ Commands:
   stratum-observe: 0
   stratum-mine-once: 0
   stratum-mine-chunks: 0
+  stratum-mine: 0
 
 Completion outcomes:
   handshake_succeeded: 2
@@ -320,4 +383,4 @@ records.
 The direct `tail`, `jq`, and PowerShell inspection commands above remain useful
 when record-level access is explicitly wanted. Machine-readable summary output,
 log rotation, and Prometheus/Grafana-compatible metrics remain deferred future
-observability options and do not block continued mining orchestration work.
+observability options.

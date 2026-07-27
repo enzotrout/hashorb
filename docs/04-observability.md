@@ -71,9 +71,32 @@ the final newest job selected for the next range. Superseded intermediate jobs
 still emit `mining_job_received`, but do not emit misleading replacement
 events.
 
+Continuous mining reuses those range, notification, replacement, candidate,
+and submission events across an open-ended number of chunks. Each actual
+search still has exactly one ordered `nonce_range_started` and
+`nonce_range_completed` pair whose bounds match the invoked half-open range.
+The analyzer therefore aggregates continuous hashes, elapsed nanoseconds, and
+weighted rate without a new range schema.
+
+Three stable lifecycle events describe controlled state without exposing
+signals or raw work:
+
+- `mining_stop_requested` records one idempotent cooperative stop request and
+  contains no signal number, signal name, frame, or exception text.
+- `nonce_space_exhausted` records the safe current job ID after its remaining
+  unsigned 32-bit nonce range has been searched.
+- `mining_waiting_for_job` records entry into bounded replacement-job waiting.
+
+For exhaustion, `nonce_space_exhausted` follows the completed final range.
+`mining_waiting_for_job` is emitted only when immediately queued notifications
+do not provide replacement work. A later `mining_job_replaced` precedes the
+next range start. Controlled stop emits `mining_stop_requested` before terminal
+`command_completed`; no event follows that terminal record.
+
 An exhausted range emits no share events. The completion outcome is one of
 `handshake_succeeded`, `observation_succeeded`, `range_exhausted`,
-`hash_budget_exhausted`, `share_accepted`, or `share_rejected`.
+`hash_budget_exhausted`, `stopped_by_user`, `chunk_limit_reached`,
+`share_accepted`, or `share_rejected`.
 
 ## Safe Field Policy
 
@@ -170,13 +193,13 @@ first and last UTC timestamps, sorted command and completion-outcome counts,
 known mining event counts, range totals, accepted and rejected submission
 counts, and sorted controlled failure-stage/category counts. Command counts
 are per distinct run ID rather than per record. The human-readable CLI always
-shows the four currently known commands in a stable order, including zero
+shows the five currently known commands in a stable order, including zero
 counts, followed by any future command names in sorted order.
 
-The schema-version-1 analyzer accepts `mining_job_replaced` through its existing
-unknown-event forward-compatibility rule. Replacement records participate in
-record and run-integrity validation but deliberately add no new log-summary
-aggregate in this slice.
+The schema-version-1 analyzer accepts `mining_job_replaced` and the continuous
+lifecycle events through its existing unknown-event forward-compatibility
+rule. These records participate in record and run-integrity validation but do
+not add high-cardinality log-summary aggregates.
 
 Aggregate mining rate is weighted from the integer totals:
 
@@ -194,5 +217,4 @@ user-supplied path may be displayed.
 
 Machine-readable summary output, file rotation and retention, compression,
 remote export, background delivery, and Prometheus/Grafana-compatible metrics
-remain deferred. These observability additions do not block chunked or
-continuous mining orchestration.
+remain deferred.

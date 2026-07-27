@@ -118,9 +118,38 @@ orchestration.
 
 Observability passively records callbacks selected by CLI orchestration. It
 does not choose ranges, apply difficulty, replace work, submit shares, or
-control mining progress. This keeps a future continuous lifecycle above the
-same finite chunk primitive without moving application state into protocol or
-compute layers.
+control mining progress.
+
+---
+
+# Continuous Mining Application Boundary
+
+`hashphere.mining.continuous` owns repeated half-open chunk scheduling, the
+current per-job nonce position, cumulative session accounting, ordered
+notification draining, newest-job replacement, nonce-space exhaustion waits,
+cooperative stop checks, and the one terminal submission. It composes the same
+deterministic preparation and range-search primitives through injected
+callbacks. It owns no sockets, settings, signal registration, console output,
+event files, or cleanup.
+
+The read-only `StopToken` protocol is the orchestration boundary for graceful
+shutdown; `StopController` supplies an idempotent implementation. The CLI owns
+installation and restoration of portable Ctrl-C and termination handlers.
+Those handlers only request stop. A current synchronous Python range may
+finish, while the orchestrator prevents another search or replacement poll.
+
+The CLI acquires initial authorized work through bounded 0.25-second client
+polls so shutdown remains responsive before mining begins. `StratumClient`
+continues to own protocol state and queues. After nonce-space exhaustion, the
+orchestrator uses the same bounded client polling boundary while waiting for a
+newer job; it does not wrap nonces or create another extra nonce.
+
+Continuous observers remain passive adapters into `EventSink`. The CLI still
+owns opt-ins, configuration, client and sink construction, one invocation-
+scoped extra nonce, sanitized output, client closure, sink closure, and signal
+restoration. Search-space progression and reconnect recovery remain higher-
+level future responsibilities rather than leaking into transport or hashing
+primitives.
 
 ---
 

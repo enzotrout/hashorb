@@ -300,11 +300,11 @@ monotonic elapsed nanoseconds, and an optional first match. Exhausted ranges
 contain no match. Local hashes per second are derived from the count and elapsed
 time; a zero-duration measurement has no reported rate.
 
-This is deliberately a bounded synchronous search and performs no submission.
-Continuous mining, `extra_nonce_2` generation or rollover, network-time rolling,
-`clean_jobs` cancellation, worker partitioning, threads, multiprocessing, GPU
-execution, orbiting-bit search, live Stratum integration, and share submission
-remain deferred.
+This primitive remains a bounded synchronous search and performs no submission.
+Higher-level bounded and continuous orchestration may call and submit its typed
+result. `extra_nonce_2` rollover, network-time rolling, mid-chunk `clean_jobs`
+cancellation, worker partitioning, threads, multiprocessing, GPU execution,
+and orbiting-bit search remain outside this primitive and deferred.
 
 ## Stratum Share-Submission Message Boundary
 
@@ -355,9 +355,9 @@ client authorized. Send, receive, validation, and protocol failures propagate
 without automatically closing, reconnecting, retrying, or resubmitting; the
 caller remains responsible for `close`.
 
-The explicitly opt-in one-shot runner described below owns the first complete
-bounded live integration. Continuous mining, submission counters, stale- or
-duplicate-share classification, and automatic retry remain deferred.
+The explicitly opt-in runners described below own bounded and continuous live
+integration. Stale- or duplicate-share classification and automatic retry
+remain deferred.
 
 ## Bounded Notification Polling
 
@@ -378,8 +378,8 @@ notifications continue to raise their existing errors. Polling does not close,
 reconnect, retry, change request IDs, or discard messages.
 
 Bounded chunked mining uses this check between exhausted nonfinal searches.
-Mid-chunk cancellation, time rolling, and the unlimited continuous lifecycle
-remain deferred.
+Continuous mining also uses a 0.25-second bounded poll while waiting for initial
+or replacement work. Mid-chunk cancellation and time rolling remain deferred.
 
 ## One-Shot Live Mining Orchestration
 
@@ -454,15 +454,78 @@ immediately with its exact work, without polling or job switching first.
 Network-target-only candidates are also submitted. Acceptance and rejection
 are terminal successful outcomes, with no retry or continuation.
 
-Unlimited lifecycle control, mid-chunk `clean_jobs` cancellation,
-`extra_nonce_2` progression, network-time rolling, nonce-space rollover,
-reconnects, telemetry aggregation, multiprocessing, GPU scheduling, and
-orbiting-bit search remain deferred.
+Mid-chunk `clean_jobs` cancellation, `extra_nonce_2` progression, network-time
+rolling, reconnects, telemetry aggregation, multiprocessing, GPU scheduling,
+and orbiting-bit search remain deferred.
+
+## Continuous Mining Lifecycle
+
+`ContinuousMiningPlan` defines a configured start nonce, positive chunk size,
+and optional positive maximum searched-chunk count. Omitting `max_chunks`
+creates no hidden limit: the synchronous session continues until cooperative
+stop, a submission result, or failure. Supplying it provides a controlled live-
+validation boundary. Idle polls and notifications do not consume the limit,
+and replacement work does not reset it.
+
+The CLI handshakes and creates `MiningJobAssembler`, one `StopController`, and
+one invocation-scoped `extra_nonce_2`. Initial work is acquired with repeated
+0.25-second `StratumClient.poll_notification` calls rather than an indefinite
+blocking read. A normal timeout returns control for another stop check. A job
+received before the first difficulty is observed and discarded; it is never
+retained for later reuse. The first job arriving after known difficulty starts
+the mining lifecycle.
+
+For unchanged prepared work, `run_continuous_mining` searches adjacent half-
+open ranges. The first begins at the configured start, every later range begins
+at the previous exclusive stop, and a range approaching `2**32` is shortened.
+Each actual chunk invokes `search_nonce_range` exactly once. Preparation occurs
+once until selected work changes. Integer hash and elapsed-nanosecond totals
+span the whole session, and weighted rate is derived from those totals rather
+than averaged per-chunk rates.
+
+After an exhausted chunk, a stop request and optional chunk limit are checked
+before any further poll or search. When continuing, nonblocking polls drain all
+immediately available notifications in order. Difficulty changes affect only
+jobs announced later. Each job snapshots the difficulty at its arrival
+position. Only the final newest job in one drain is prepared and searched;
+superseded intermediate jobs remain observed but do not count as used work or
+replacement transitions. Both `clean_jobs` values switch work under the
+documented freshness policy. A replacement reuses the same `extra_nonce_2`,
+restarts at the configured nonce, and preserves all session counters.
+
+`StopToken` is a read-only cooperative boundary. The CLI maps Ctrl-C and
+supported termination signals to idempotent stop requests, then restores every
+previous handler during cleanup. A stop never starts another chunk or polls for
+replacement work. The current Python search is not interrupted mid-chunk. If
+that completed call returns a candidate, the exact candidate is still
+submitted once before the session terminates; mid-chunk cancellation remains a
+future compute-backend capability.
+
+If the current work reaches the exclusive stop `2**32`, it emits nonce-space
+exhaustion and does not wrap, clamp, or repeat nonces. Immediately queued
+notifications are drained first. Without a newer job, the lifecycle enters
+bounded 0.25-second waits, continues applying difficulty updates, and resumes
+at the configured start only after a later job arrives. Stop requests remain
+responsive, and optional chunk limits count searches rather than waits. Future
+`extra_nonce_2` progression and network-time rolling will replace this idle
+state and must include duplicate-work prevention.
+
+The first share-target or network-target match ends searching. No notification
+is polled between discovery and submission. Exact prepared-work job ID, extra
+nonce, network time, and matched nonce are submitted at most once. Pool
+acceptance and rejection are both terminal completed outcomes; submission
+failure is not retried.
+
+Controlled outcomes are `stopped_by_user`, `chunk_limit_reached`,
+`share_accepted`, and `share_rejected`. The CLI returns zero for each, two for
+syntax or opt-in failure, and one for runtime or cleanup failure. Reconnect,
+retry, extra-nonce progression, network-time rolling, native and parallel CPU
+backends, GPU execution, and alternative search strategies remain deferred.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not
 write log files directly. The event schema, safe-field policy, persistence
-lifecycle, and deferred analysis features are documented in
+lifecycle, and read-only analysis behavior are documented in
 [`04-observability.md`](04-observability.md).
 
 ## Compute Backend and Compute Profile

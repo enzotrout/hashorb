@@ -49,7 +49,9 @@ Progress:
 - ✅ Sanitized structured JSONL event logging
 - ✅ Built-in structured-log summary command
 - ✅ Bounded chunked mining and notification handling between chunks
-- ⬜ Continuous CPU mining and worker scheduling
+- ✅ Continuous synchronous mining lifecycle and controlled shutdown
+- ⬜ Search-space expansion with extra-nonce and network-time progression
+- ⬜ Continuous worker scheduling and recovery
 - ⬜ Multiprocess CPU backend
 
 ---
@@ -84,7 +86,8 @@ Progress:
 - ✅ Sanitized structured JSONL event logging
 - ✅ Built-in structured-log analysis
 - ✅ Bounded chunked mining
-- ⬜ Continuous mining lifecycle
+- ✅ Continuous mining lifecycle
+- ⬜ Extra-nonce progression, network-time rolling, and duplicate-work prevention
 - ⬜ Multi-process mining
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -150,18 +153,25 @@ Planned:
 
 # Current Milestone
 
-**Bounded Chunked Live Stratum Mining — Complete**
+**Continuous Live Stratum Mining Lifecycle — Complete**
 
 Objective:
 
-Search a finite global nonce budget in sequential chunks, using nonblocking
-Stratum polling between chunks to apply ordered difficulty updates and switch
-to the newest announced job before the next search.
+Search sequential bounded nonce chunks until controlled shutdown, an optional
+chunk limit, one submission result, or an unrecoverable failure. Maintain
+ordered difficulty and job semantics, responsive bounded notification waits,
+accurate cumulative metrics, and portable signal restoration.
 
-JSONL writing and native analysis remain complete. The continuous mining
-lifecycle is next. Extra-nonce progression, network-time rolling, reconnects,
-multiprocessing, GPU support, orbiting-bit search, and Prometheus/Grafana-
-compatible metrics remain deferred and do not block lifecycle design.
+Bounded chunking, JSONL writing, and native analysis remain complete. Search-
+space expansion through `extra_nonce_2` progression, network-time rolling, and
+duplicate-work prevention is next. Reconnects and pool failover follow that.
+A compute-backend abstraction then precedes native and parallel CPU backends.
+Sequential, partitioned, strided, and orbiting-bit strategies precede CUDA,
+DGX Spark/GB10, multi-GPU, and host-side verification. Lite/Auto/Max/Custom
+operating profiles, macOS/Windows/Linux/Docker packaging, broader Stratum pool
+support, Bitcoin Core true solo mining, distributed workers, adaptive tuning,
+and Prometheus/Grafana-compatible metrics remain deferred in that dependency
+order.
 
 ---
 
@@ -169,5 +179,5 @@ compatible metrics remain deferred and do not block lifecycle design.
 
 Continue with:
 
-**Design the continuous mining lifecycle around bounded chunks, explicit job
-freshness, and controlled shutdown.**
+**Expand search space safely with extra-nonce progression, network-time rolling,
+and duplicate-work prevention.**
