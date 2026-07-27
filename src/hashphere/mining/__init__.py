@@ -13,6 +13,11 @@ from hashphere.mining.job import (
     MiningJobStateError,
     MiningJobValidationError,
 )
+from hashphere.mining.merkle import (
+    MerkleError,
+    MerkleValidationError,
+    calculate_merkle_root,
+)
 
 __all__ = [
     "CoinbaseError",
@@ -22,6 +27,9 @@ __all__ = [
     "MiningJobError",
     "MiningJobStateError",
     "MiningJobValidationError",
+    "MerkleError",
+    "MerkleValidationError",
     "build_coinbase_transaction",
+    "calculate_merkle_root",
     "hash_coinbase_transaction",
 ]

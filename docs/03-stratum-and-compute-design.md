@@ -116,16 +116,33 @@ transaction. Hashing is a separate operation described below.
 `double_sha256` applies SHA-256 twice to immutable bytes and returns the raw
 32-byte digest. `hash_coinbase_transaction` validates that assembled coinbase
 transaction bytes are nonempty and delegates to that single cryptographic
-primitive. The raw coinbase digest is intended to be the first hash in the
-upcoming Merkle-tree calculation.
+primitive. The raw coinbase digest is the first value in the Merkle-root
+calculation described below.
 
 The raw internal digest is not byte-reversed or formatted as a displayed
 transaction identifier. Human-readable transaction-ID display order is a
 separate conversion and remains deferred.
 
 This boundary does not calculate a Merkle root or target, construct a block
-header, iterate nonces, mine, perform networking, or submit shares. Merkle-tree
-calculation is the next deferred stage.
+header, iterate nonces, mine, perform networking, or submit shares.
+
+## Merkle Root Boundary
+
+`calculate_merkle_root` starts with the raw coinbase transaction hash and
+reduces the ordered Stratum Merkle branches iteratively. For each branch, it
+decodes the branch hexadecimal directly and applies `double_sha256` to:
+
+    current_hash || branch_bytes
+
+The resulting raw digest becomes `current_hash` for the next branch. Branches
+are processed exactly in their supplied order; an empty branch tuple returns
+the original raw coinbase hash. Neither operands, intermediate hashes, nor the
+final 32-byte root are reversed or converted to display order.
+
+This boundary does not serialize a block header or perform header-specific byte
+ordering. Block-header serialization is the next deferred stage. Target
+calculation, nonce generation and search, mining loops, networking, and share
+submission also remain deferred.
 
 ## Compute Backend and Compute Profile
 
@@ -197,6 +214,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
     src/hashphere/mining/
     ├── coinbase.py
     ├── job.py
+    ├── merkle.py
     ├── engine.py
     ├── profiles.py
     ├── scheduler.py
@@ -209,6 +227,7 @@ Responsibilities:
 
 - `coinbase.py`: assemble and hash raw coinbase transaction bytes
 - `job.py`: validate and assemble immutable mining-job snapshots
+- `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
 - `engine.py`: coordinate mining jobs and search operations
 - `profiles.py`: define Lite, Auto, and Max policies
 - `scheduler.py`: control worker allocation and duty cycles
