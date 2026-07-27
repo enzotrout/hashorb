@@ -417,6 +417,12 @@ replacement, `extra_nonce_2` progression, network-time rolling, reconnects,
 telemetry aggregation, multiprocessing, GPU execution, and orbiting-bit search
 remain deferred.
 
+The live command orchestration may emit explicitly sanitized structured events
+through the observability boundary. Networking and mining-domain modules do not
+write log files directly. The event schema, safe-field policy, persistence
+lifecycle, and deferred analysis features are documented in
+[`04-observability.md`](04-observability.md).
+
 ## Compute Backend and Compute Profile
 
 Compute backend and compute profile are separate settings.

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -213,13 +215,25 @@ def install_mining_fakes(
     return configured
 
 
-def mining_arguments(hash_count: str = "3", start_nonce: str | None = None) -> list[str]:
+def mining_arguments(
+    hash_count: str = "3",
+    start_nonce: str | None = None,
+    log_file: str | Path | None = None,
+) -> list[str]:
     """Build command arguments for a bounded mining invocation."""
 
     arguments = ["stratum-mine-once", "--hash-count", hash_count]
     if start_nonce is not None:
         arguments.extend(["--start-nonce", start_nonce])
+    if log_file is not None:
+        arguments.extend(["--log-file", str(log_file)])
     return arguments
+
+
+def read_event_log(path: Path) -> list[dict[str, object]]:
+    """Read independently parseable mining JSONL events."""
+
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_mining_command_appears_in_usage(capsys: pytest.CaptureFixture[str]) -> None:
@@ -243,6 +257,34 @@ def test_malformed_mining_arguments_fail(
 ) -> None:
     assert cli_module.main(arguments) == 2
 
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Argument error:" in captured.err
+    assert "Usage:" in captured.err
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["stratum-mine-once", "--hash-count", "1", "--log-file"],
+        ["stratum-mine-once", "--hash-count", "1", "--log-file", ""],
+        ["stratum-mine-once", "--hash-count", "1", "--log-file", "   "],
+        [
+            "stratum-mine-once",
+            "--hash-count",
+            "1",
+            "--log-file",
+            "one",
+            "--log-file",
+            "two",
+        ],
+    ],
+)
+def test_mining_log_file_argument_errors_are_rejected(
+    arguments: list[str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli_module.main(arguments) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Argument error:" in captured.err
@@ -461,6 +503,38 @@ def test_exhausted_range_reports_metrics_without_submission(
     assert client.close_calls == 1
 
 
+def test_exhausted_mining_jsonl_event_order_and_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "mining-exhausted.jsonl"
+    client = FakeClient([difficulty_notification(), mining_notification()])
+    install_mining_fakes(monkeypatch, client, MiningHarness(elapsed_ns=1_000_000))
+
+    assert cli_module.main(mining_arguments("3", "7", path)) == 0
+
+    records = read_event_log(path)
+    assert [record["event"] for record in records] == [
+        "command_started",
+        "stratum_authorized",
+        "difficulty_received",
+        "mining_job_received",
+        "nonce_range_started",
+        "nonce_range_completed",
+        "command_completed",
+    ]
+    assert records[4]["start_nonce"] == 7
+    assert records[4]["stop_nonce"] == 10
+    assert records[5]["hashes_checked"] == 3
+    assert records[5]["elapsed_ns"] == 1_000_000
+    assert records[5]["hashes_per_second"] == 3000.0
+    assert records[5]["match_found"] is False
+    assert records[-1]["outcome"] == "range_exhausted"
+    assert all(not record["event"].startswith("share_") for record in records)
+    assert client.submit_calls == []
+    assert client.close_calls == 1
+
+
 @pytest.mark.parametrize(
     ("flags", "pool_result", "expected_pool_text"),
     [
@@ -492,6 +566,50 @@ def test_matches_are_submitted_once_and_reported(
     assert f"Meets share target: {str(flags[0]).lower()}" in captured.out
     assert f"Meets network target: {str(flags[1]).lower()}" in captured.out
     assert f"Pool result: {expected_pool_text}" in captured.out
+    assert len(client.submit_calls) == 1
+    assert client.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("pool_result", "expected_outcome", "expected_level"),
+    [
+        (True, "share_accepted", "INFO"),
+        (False, "share_rejected", "WARNING"),
+    ],
+)
+def test_matched_mining_jsonl_event_order_and_submission_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    pool_result: bool,
+    expected_outcome: str,
+    expected_level: str,
+) -> None:
+    path = tmp_path / f"mining-{expected_outcome}.jsonl"
+    client = FakeClient(
+        [difficulty_notification(), mining_notification()],
+        submission_result=pool_result,
+    )
+    install_mining_fakes(monkeypatch, client, MiningHarness(match_flags=(True, False)))
+
+    assert cli_module.main(mining_arguments("1", "305419896", path)) == 0
+
+    records = read_event_log(path)
+    assert [record["event"] for record in records] == [
+        "command_started",
+        "stratum_authorized",
+        "difficulty_received",
+        "mining_job_received",
+        "nonce_range_started",
+        "nonce_range_completed",
+        "share_candidate_found",
+        "share_submission_completed",
+        "command_completed",
+    ]
+    assert records[6]["nonce"] == 305419896
+    assert records[6]["abbreviated_block_hash"] == "12345678…00000000"
+    assert records[7]["accepted"] is pool_result
+    assert records[-1]["outcome"] == expected_outcome
+    assert records[-1]["level"] == expected_level
     assert len(client.submit_calls) == 1
     assert client.close_calls == 1
 
@@ -533,6 +651,32 @@ def test_runtime_failures_are_sanitized_nonzero_and_close(
     assert client.close_calls == 1
     if stage == "submit":
         assert len(client.submit_calls) == 1
+
+
+def test_mining_failure_writes_sanitized_command_failed_event(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "mining-failed.jsonl"
+    sensitive_detail = "synthetic-password.bc1qminingtestaddress.abababab"
+    client = FakeClient(
+        [difficulty_notification(), mining_notification()],
+        receive_failure=StratumClientError(sensitive_detail),
+    )
+    install_mining_fakes(monkeypatch, client)
+
+    assert cli_module.main(mining_arguments(log_file=path)) == 1
+
+    records = read_event_log(path)
+    assert [record["event"] for record in records] == [
+        "command_started",
+        "stratum_authorized",
+        "command_failed",
+    ]
+    assert records[-1]["stage"] == "bounded_mining"
+    assert records[-1]["error_category"] == "StratumClientError"
+    assert sensitive_detail not in path.read_text(encoding="utf-8")
+    assert client.close_calls == 1
 
 
 def test_configuration_failure_is_nonzero_without_client(
@@ -610,3 +754,35 @@ def test_output_omits_credentials_coinbase_and_raw_requests(
     assert job.coinbase_part_2 not in output
     assert "mining.submit" not in output
     assert "params" not in output
+
+
+def test_mining_event_log_omits_credentials_nonces_coinbase_and_raw_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sanitized.jsonl"
+    job = mining_notification()
+    client = FakeClient(
+        [difficulty_notification(), job],
+        submission_result=True,
+    )
+    harness = install_mining_fakes(
+        monkeypatch,
+        client,
+        MiningHarness(match_flags=(True, False)),
+    )
+    settings = make_settings()
+
+    assert cli_module.main(mining_arguments("1", log_file=path)) == 0
+
+    log_text = path.read_text(encoding="utf-8")
+    assert settings.stratum_password not in log_text
+    assert settings.bitcoin_address not in log_text
+    assert settings.stratum_username not in log_text
+    assert "08000002" not in log_text
+    assert harness.generated_extra_nonce_2 not in log_text
+    assert job.coinbase_part_1 not in log_text
+    assert job.coinbase_part_2 not in log_text
+    assert "mining.authorize" not in log_text
+    assert "mining.submit" not in log_text
+    assert '"params"' not in log_text

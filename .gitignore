@@ -25,6 +25,7 @@ dist/
 
 # Misc
 .cache/
+logs/
 
 # Environment files
 .env

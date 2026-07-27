@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +22,7 @@ from hashphere.network.stratum import (
     StratumProtocolError,
     SubscribeResult,
 )
+from hashphere.observability import EventLogError
 
 
 def make_settings() -> Settings:
@@ -124,6 +127,12 @@ def configure_command(
     return created_with
 
 
+def read_event_log(path: Path) -> list[dict[str, object]]:
+    """Read independently parseable JSONL event records."""
+
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
 def test_success_prints_sanitized_summary_and_closes(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -147,6 +156,87 @@ def test_success_prints_sanitized_summary_and_closes(
     assert settings.stratum_password not in captured.out
     assert created_with == [(settings, "Hashphere/0.1")]
     assert client.close_calls == 1
+
+
+def test_handshake_jsonl_events_are_ordered_and_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "logs" / "handshake.jsonl"
+    client = FakeClient()
+    configure_command(monkeypatch, client)
+    settings = make_settings()
+
+    assert cli_module.main(["stratum-handshake", "--log-file", str(path)]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "Stratum handshake succeeded." in captured.out
+    records = read_event_log(path)
+    assert [record["event"] for record in records] == [
+        "command_started",
+        "stratum_authorized",
+        "command_completed",
+    ]
+    assert [record["sequence"] for record in records] == [1, 2, 3]
+    assert {record["command"] for record in records} == {"stratum-handshake"}
+    assert len({record["run_id"] for record in records}) == 1
+    assert records[1]["endpoint"] == "pool.example.com:3333"
+    assert records[1]["extra_nonce_2_size"] == 4
+    assert records[2]["outcome"] == "handshake_succeeded"
+
+    log_text = path.read_text(encoding="utf-8")
+    assert settings.stratum_password not in log_text
+    assert settings.bitcoin_address not in log_text
+    assert settings.stratum_username not in log_text
+    assert "08000002" not in log_text
+    assert client.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["stratum-handshake", "--log-file"],
+        ["stratum-handshake", "--log-file", ""],
+        ["stratum-handshake", "--log-file", "   "],
+        ["stratum-handshake", "--log-file", "one", "--log-file", "two"],
+        ["stratum-observe", "--log-file"],
+        ["stratum-observe", "--log-file", ""],
+        ["stratum-observe", "--log-file", "one", "--log-file", "two"],
+    ],
+)
+def test_non_mining_log_file_argument_errors_are_rejected(
+    arguments: list[str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli_module.main(arguments) == 2
+    assert capsys.readouterr().err == (
+        "Usage: python -m hashphere "
+        "{stratum-handshake,stratum-observe,stratum-mine-once} [options]\n"
+    )
+
+
+def test_explicit_log_initialization_failure_is_visible_without_network_client(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    blocking_file = tmp_path / "not-a-directory"
+    blocking_file.write_text("content", encoding="utf-8")
+    client = FakeClient()
+    configure_command(monkeypatch, client)
+
+    status = cli_module.main(
+        ["stratum-handshake", "--log-file", str(blocking_file / "events.jsonl")]
+    )
+
+    assert status == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Could not initialize structured event logging.\n"
+    assert client.state is StratumClientState.DISCONNECTED
+    assert client.close_calls == 0
 
 
 @pytest.mark.parametrize(
@@ -206,6 +296,27 @@ def test_invalid_configuration_returns_nonzero_without_creating_client(
     assert client_created is False
 
 
+def test_configuration_failure_event_omits_arbitrary_error_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "configuration-failed.jsonl"
+    sensitive_detail = "bc1qexampleaddress.test-password-not-real"
+    monkeypatch.setattr(
+        cli_module.Settings,
+        "from_env",
+        classmethod(lambda cls: (_ for _ in ()).throw(ValueError(f"invalid {sensitive_detail}"))),
+    )
+
+    assert cli_module.main(["stratum-handshake", "--log-file", str(path)]) == 2
+
+    records = read_event_log(path)
+    assert [record["event"] for record in records] == ["command_started", "command_failed"]
+    assert records[-1]["stage"] == "configuration"
+    assert records[-1]["error_category"] == "ConfigurationOrOptInError"
+    assert sensitive_detail not in path.read_text(encoding="utf-8")
+
+
 def test_live_handshake_requires_explicit_environment_flag(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -263,6 +374,180 @@ def test_observer_handles_either_notification_order_and_queued_values(
     captured = capsys.readouterr()
     assert f"Arrival order: {expected_order}" in captured.out
     assert client.receive_calls == 2
+    assert client.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("notifications", "expected_events"),
+    [
+        (
+            [difficulty_notification(), mining_notification()],
+            ["difficulty_received", "mining_job_received"],
+        ),
+        (
+            [mining_notification(), difficulty_notification()],
+            ["mining_job_received", "difficulty_received"],
+        ),
+    ],
+)
+def test_observer_jsonl_events_preserve_notification_order(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    notifications: list[SetDifficultyNotification | MiningNotifyNotification],
+    expected_events: list[str],
+) -> None:
+    path = tmp_path / "observer.jsonl"
+    client = FakeClient(notifications=notifications)
+    configure_command(monkeypatch, client)
+
+    assert cli_module.main(["stratum-observe", "--log-file", str(path)]) == 0
+
+    records = read_event_log(path)
+    assert [record["event"] for record in records] == [
+        "command_started",
+        "stratum_authorized",
+        *expected_events,
+        "notification_observation_completed",
+        "command_completed",
+    ]
+    assert records[-1]["outcome"] == "observation_succeeded"
+    assert client.close_calls == 1
+
+
+def test_failed_command_writes_sanitized_failure_event_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "failed.jsonl"
+    sensitive_detail = "test-password-not-real.bc1qexampleaddress"
+    client = FakeClient(StratumClientError(sensitive_detail))
+    configure_command(monkeypatch, client)
+
+    assert cli_module.main(["stratum-handshake", "--log-file", str(path)]) == 1
+
+    records = read_event_log(path)
+    assert [record["event"] for record in records] == ["command_started", "command_failed"]
+    assert records[-1]["level"] == "ERROR"
+    assert records[-1]["stage"] == "handshake"
+    assert records[-1]["error_category"] == "StratumClientError"
+    assert sensitive_detail not in path.read_text(encoding="utf-8")
+    assert client.close_calls == 1
+
+
+class FailingEventSink:
+    """CLI sink double that fails after command startup."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.close_calls = 0
+
+    def emit(
+        self,
+        event: str,
+        *,
+        level: str = "INFO",
+        fields: object = None,
+    ) -> None:
+        self.events.append(event)
+        if event == "stratum_authorized":
+            raise EventLogError("sensitive write failure")
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+def test_logging_write_failure_is_visible_and_client_still_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient()
+    configure_command(monkeypatch, client)
+    sink = FailingEventSink()
+    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command: sink)
+
+    assert cli_module.main(["stratum-handshake", "--log-file", "events.jsonl"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Structured event logging failed.\n"
+    assert sink.events == ["command_started", "stratum_authorized"]
+    assert sink.close_calls == 1
+    assert client.close_calls == 1
+
+
+class CloseFailingEventSink:
+    """CLI sink double whose deterministic close fails."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.close_calls = 0
+
+    def emit(
+        self,
+        event: str,
+        *,
+        level: str = "INFO",
+        fields: object = None,
+    ) -> None:
+        self.events.append(event)
+
+    def close(self) -> None:
+        self.close_calls += 1
+        raise EventLogError("sensitive close failure")
+
+
+def test_log_close_failure_after_success_is_visible_and_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient()
+    configure_command(monkeypatch, client)
+    sink = CloseFailingEventSink()
+    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command: sink)
+
+    assert cli_module.main(["stratum-handshake", "--log-file", "events.jsonl"]) == 1
+
+    captured = capsys.readouterr()
+    assert "Stratum handshake succeeded." in captured.out
+    assert captured.err == "Could not close structured event logging cleanly.\n"
+    assert sink.events == ["command_started", "stratum_authorized", "command_completed"]
+    assert sink.close_calls == 1
+    assert client.close_calls == 1
+
+
+def test_log_close_failure_does_not_hide_earlier_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient(StratumClientError("sensitive original failure"))
+    configure_command(monkeypatch, client)
+    sink = CloseFailingEventSink()
+    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command: sink)
+
+    assert cli_module.main(["stratum-handshake", "--log-file", "events.jsonl"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Stratum protocol handshake failed.\n"
+    assert sink.events == ["command_started", "command_failed"]
+    assert sink.close_calls == 1
+    assert client.close_calls == 1
+
+
+def test_logging_disabled_does_not_initialize_jsonl_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient()
+    configure_command(monkeypatch, client)
+
+    def unexpected_jsonl_sink(path: str, command: str) -> None:
+        raise AssertionError("JSONL sink must remain disabled")
+
+    monkeypatch.setattr(cli_module, "JsonlEventSink", unexpected_jsonl_sink)
+
+    assert cli_module.main(["stratum-handshake"]) == 0
+    assert "Stratum handshake succeeded." in capsys.readouterr().out
     assert client.close_calls == 1
 
 

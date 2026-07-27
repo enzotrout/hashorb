@@ -45,7 +45,9 @@ Progress:
 - ✅ Double-SHA256, target calculation, and proof-of-work comparison
 - ✅ Prepared mining work and bounded sequential nonce search
 - ✅ Opt-in bounded live Stratum mining with at most one submission
-- 🚧 Timeout-aware Stratum notification polling
+- ✅ Timeout-aware Stratum notification polling
+- ✅ Sanitized structured JSONL event logging
+- ⬜ Built-in structured-log summary command
 - ⬜ Chunked mining orchestration and notification handling between chunks
 - ⬜ Continuous CPU mining and worker scheduling
 - ⬜ Multiprocess CPU backend
@@ -78,7 +80,9 @@ Progress:
 - ✅ Bounded nonce search
 - ✅ Stratum share submission
 - ✅ One bounded live mining range
-- 🚧 Timeout-aware notification polling
+- ✅ Timeout-aware notification polling
+- ✅ Sanitized structured JSONL event logging
+- ⬜ Built-in structured-log analysis
 - ⬜ Chunked and continuous mining
 - ⬜ Multi-process mining
 - ⬜ Direct block submission
@@ -145,18 +149,19 @@ Planned:
 
 # Current Milestone
 
-**Timeout-Aware Stratum Notification Polling**
+**Sanitized Structured JSONL Event Logging — Complete**
 
 Objective:
 
-Allow an authorized synchronous Stratum client to check for supported mining
-notifications for a caller-bounded duration while preserving queued messages,
-newline framing, connection errors, and the transport's configured timeout.
+Preserve existing human-readable console output while optionally appending
+sanitized, versioned, machine-readable events for each live Stratum command.
+The logging boundary must be synchronous, injectable, immediately flushed, and
+unable to accept secret-bearing fields or raw protocol payloads.
 
-This milestone creates the receive boundary needed before mining can be split
-into bounded nonce chunks. It does not introduce chunk scheduling, job
-replacement, `clean_jobs` cancellation, retries, reconnects, or continuous
-mining.
+Timeout-aware notification polling and structured logging are complete. A
+small built-in log-summary command is the next slice; chunked orchestration
+remains deferred until basic analysis is available. This milestone does not
+introduce chunk scheduling, retries, reconnects, or continuous mining.
 
 ---
 
@@ -164,5 +169,5 @@ mining.
 
 Continue with:
 
-**Complete and review timeout-aware notification polling, then design bounded
-nonce-chunk orchestration.**
+**Complete structured event logging, then add a small built-in log-summary
+command before designing bounded nonce-chunk orchestration.**

@@ -24,7 +24,9 @@ or wallet password is needed or should be placed in `.env`.
 Live network access is opt-in. Run exactly:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 uv run python -m hashphere stratum-handshake
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+uv run python -m hashphere stratum-handshake \
+  --log-file logs/hashphere.jsonl
 ```
 
 The command loads `.env` through `Settings.from_env()`, connects to the
@@ -56,7 +58,9 @@ To complete a handshake and wait for both supported mining notification types,
 run exactly:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 uv run python -m hashphere stratum-observe
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+uv run python -m hashphere stratum-observe \
+  --log-file logs/hashphere.jsonl
 ```
 
 The observer consumes parsed notifications through `StratumClient` until it
@@ -106,7 +110,8 @@ HASHPHERE_ENABLE_LIVE_STRATUM=1 \
 HASHPHERE_ENABLE_LIVE_MINING=1 \
 uv run python -m hashphere stratum-mine-once \
   --start-nonce 0 \
-  --hash-count 100000
+  --hash-count 100000 \
+  --log-file logs/hashphere.jsonl
 ```
 
 `--hash-count` is required and must be a positive ASCII decimal integer no
@@ -168,3 +173,42 @@ Output includes a masked username and abbreviated block hash. It never includes
 the password, complete payout address or username, complete coinbase
 transaction, raw job JSON, authorization request, or complete submission
 request.
+
+## Write structured JSONL event logs
+
+The `--log-file PATH` option is available on `stratum-handshake`,
+`stratum-observe`, and `stratum-mine-once`. It is optional: when omitted, no log
+file is created and the existing console output is unchanged.
+
+When requested, Hashphere creates missing parent directories and appends
+sanitized events to the UTF-8 file without truncating existing records. Each
+event is one compact JSON object on one line and is flushed immediately, so the
+file can be tailed while a command runs. Separate command invocations receive
+separate nonsecret run IDs, and event sequences restart at one. The local
+`logs/` directory is ignored by Git.
+
+Structured logs omit passwords, payout addresses, complete usernames, both
+extra nonces, coinbase data, raw jobs, request payloads, response payloads, and
+arbitrary exception messages. The human-readable console summary remains the
+primary interactive output; JSONL provides stable machine-readable events.
+
+On macOS and Linux:
+
+```bash
+tail -f logs/hashphere.jsonl
+jq . logs/hashphere.jsonl
+jq 'select(.level == "ERROR")' logs/hashphere.jsonl
+jq 'select(.event == "nonce_range_completed")' logs/hashphere.jsonl
+```
+
+On Windows PowerShell:
+
+```powershell
+Get-Content .\logs\hashphere.jsonl -Wait
+Get-Content .\logs\hashphere.jsonl |
+  ForEach-Object { $_ | ConvertFrom-Json }
+```
+
+Failure to initialize, write, or close an explicitly requested event log is
+reported with a nonzero exit status; logging is never silently disabled. A
+built-in Hashphere log-summary command remains deferred.

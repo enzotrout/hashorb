@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import secrets
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from hashphere.config import Settings
@@ -35,6 +35,12 @@ from hashphere.network.stratum import (
     StratumTransportError,
     SubscribeResult,
 )
+from hashphere.observability import (
+    EventLogError,
+    EventSink,
+    JsonlEventSink,
+    NullEventSink,
+)
 
 _LIVE_STRATUM_FLAG = "HASHPHERE_ENABLE_LIVE_STRATUM"
 _LIVE_MINING_FLAG = "HASHPHERE_ENABLE_LIVE_MINING"
@@ -60,28 +66,92 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected Hashphere command and return its process status."""
 
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments == ["stratum-handshake"]:
-        return _run_stratum_handshake()
-    if arguments == ["stratum-observe"]:
-        return _run_stratum_observer()
+    if arguments and arguments[0] == "stratum-handshake":
+        try:
+            log_file = _parse_log_file(arguments[1:])
+        except ValueError:
+            print(_USAGE, file=sys.stderr)
+            return 2
+        return _run_with_event_sink(
+            "stratum-handshake",
+            log_file,
+            _run_stratum_handshake,
+        )
+    if arguments and arguments[0] == "stratum-observe":
+        try:
+            log_file = _parse_log_file(arguments[1:])
+        except ValueError:
+            print(_USAGE, file=sys.stderr)
+            return 2
+        return _run_with_event_sink(
+            "stratum-observe",
+            log_file,
+            _run_stratum_observer,
+        )
     if arguments and arguments[0] == "stratum-mine-once":
         try:
-            start_nonce, stop_nonce = _parse_mining_range(arguments[1:])
+            start_nonce, stop_nonce, log_file = _parse_mining_command_arguments(arguments[1:])
         except ValueError as exc:
             print(f"Argument error: {exc}", file=sys.stderr)
             print(_USAGE, file=sys.stderr)
             return 2
-        return _run_stratum_mine_once(start_nonce, stop_nonce)
+        return _run_with_event_sink(
+            "stratum-mine-once",
+            log_file,
+            lambda events: _run_stratum_mine_once(
+                start_nonce,
+                stop_nonce,
+                events,
+            ),
+        )
 
     print(_USAGE, file=sys.stderr)
     return 2
 
 
-def _run_stratum_handshake() -> int:
+def _run_with_event_sink(
+    command: str,
+    log_file: str | None,
+    operation: Callable[[EventSink], int],
+) -> int:
+    """Run one command with an initialized sink and deterministic cleanup."""
+
+    try:
+        events: EventSink = (
+            NullEventSink() if log_file is None else JsonlEventSink(log_file, command)
+        )
+    except (EventLogError, TypeError, ValueError):
+        print("Could not initialize structured event logging.", file=sys.stderr)
+        return 2
+
+    status = 1
+    raised = False
+    try:
+        events.emit("command_started")
+        status = operation(events)
+    except EventLogError:
+        print("Structured event logging failed.", file=sys.stderr)
+        status = 1
+    except BaseException:
+        raised = True
+        raise
+    finally:
+        try:
+            events.close()
+        except EventLogError:
+            if not raised and status == 0:
+                print("Could not close structured event logging cleanly.", file=sys.stderr)
+                status = 1
+
+    return status
+
+
+def _run_stratum_handshake(events: EventSink) -> int:
     """Run one explicitly enabled live Stratum handshake."""
 
     settings = _load_live_settings("handshake")
     if settings is None:
+        _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
         return 2
 
     client: StratumClient | None = None
@@ -89,55 +159,68 @@ def _run_stratum_handshake() -> int:
         client = StratumClient(settings, _STRATUM_USER_AGENT)
         result = client.handshake()
         final_state = client.state
-    except StratumAuthorizationError:
+        _emit_stratum_authorized(events, settings, result)
+    except StratumAuthorizationError as exc:
+        _emit_command_failed(events, "handshake", _error_category(exc))
         print("Stratum authorization failed.", file=sys.stderr)
         return 1
-    except StratumConnectionError:
+    except StratumConnectionError as exc:
+        _emit_command_failed(events, "handshake", _error_category(exc))
         print("Could not connect to the configured Stratum endpoint.", file=sys.stderr)
         return 1
-    except (StratumTransportError, StratumMessageError, StratumClientError):
+    except (StratumTransportError, StratumMessageError, StratumClientError) as exc:
+        _emit_command_failed(events, "handshake", _error_category(exc))
         print("Stratum protocol handshake failed.", file=sys.stderr)
         return 1
     except (TypeError, ValueError) as exc:
+        _emit_command_failed(events, "configuration", _error_category(exc))
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
     finally:
         if client is not None:
             client.close()
 
+    events.emit("command_completed", fields={"outcome": "handshake_succeeded"})
     _print_success(settings, result.extra_nonce_1, result.extra_nonce_2_size, final_state)
     return 0
 
 
-def _run_stratum_observer() -> int:
+def _run_stratum_observer(events: EventSink) -> int:
     """Handshake and observe one difficulty and one mining job notification."""
 
     settings = _load_live_settings("notification observation")
     if settings is None:
+        _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
         return 2
 
     client: StratumClient | None = None
     try:
         client = StratumClient(settings, _STRATUM_USER_AGENT)
         subscription = client.handshake()
-        difficulty, job, arrival_order = _observe_required_notifications(client)
+        _emit_stratum_authorized(events, settings, subscription)
+        difficulty, job, arrival_order = _observe_required_notifications(client, events)
         final_state = client.state
-    except StratumAuthorizationError:
+    except StratumAuthorizationError as exc:
+        _emit_command_failed(events, "handshake", _error_category(exc))
         print("Stratum authorization failed.", file=sys.stderr)
         return 1
-    except StratumConnectionError:
+    except StratumConnectionError as exc:
+        _emit_command_failed(events, "handshake", _error_category(exc))
         print("Could not connect to the configured Stratum endpoint.", file=sys.stderr)
         return 1
-    except (StratumTransportError, StratumMessageError, StratumClientError):
+    except (StratumTransportError, StratumMessageError, StratumClientError) as exc:
+        _emit_command_failed(events, "notification_observation", _error_category(exc))
         print("Stratum notification observation failed.", file=sys.stderr)
         return 1
     except (TypeError, ValueError) as exc:
+        _emit_command_failed(events, "configuration", _error_category(exc))
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
     finally:
         if client is not None:
             client.close()
 
+    events.emit("command_completed", fields={"outcome": "observation_succeeded"})
     _print_observation_success(
         settings,
         subscription.extra_nonce_1,
@@ -150,11 +233,16 @@ def _run_stratum_observer() -> int:
     return 0
 
 
-def _run_stratum_mine_once(start_nonce: int, stop_nonce: int) -> int:
+def _run_stratum_mine_once(
+    start_nonce: int,
+    stop_nonce: int,
+    events: EventSink,
+) -> int:
     """Run one explicitly enabled, bounded live Stratum mining range."""
 
     settings = _load_live_mining_settings()
     if settings is None:
+        _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
         return 2
 
     client: StratumClient | None = None
@@ -164,15 +252,24 @@ def _run_stratum_mine_once(start_nonce: int, stop_nonce: int) -> int:
     try:
         client = StratumClient(settings, _STRATUM_USER_AGENT)
         subscription = client.handshake()
-        outcome = _mine_one_range(client, subscription, start_nonce, stop_nonce)
+        _emit_stratum_authorized(events, settings, subscription)
+        outcome = _mine_one_range(
+            client,
+            subscription,
+            start_nonce,
+            stop_nonce,
+            events,
+        )
     except StratumAuthorizationError as exc:
         pending_failure = exc
         print("Stratum authorization failed.", file=sys.stderr)
         status = 1
+        _emit_command_failed(events, "handshake", _error_category(exc))
     except StratumConnectionError as exc:
         pending_failure = exc
         print("Could not connect to the configured Stratum endpoint.", file=sys.stderr)
         status = 1
+        _emit_command_failed(events, "handshake", _error_category(exc))
     except (
         StratumTransportError,
         StratumMessageError,
@@ -189,8 +286,13 @@ def _run_stratum_mine_once(start_nonce: int, stop_nonce: int) -> int:
         pending_failure = exc
         print("Bounded Stratum mining failed.", file=sys.stderr)
         status = 1
+        _emit_command_failed(events, "bounded_mining", _error_category(exc))
     except BaseException as exc:
         pending_failure = exc
+        try:
+            _emit_command_failed(events, "bounded_mining", "UnexpectedError")
+        except EventLogError:
+            pass
         raise
     finally:
         if client is not None:
@@ -200,12 +302,27 @@ def _run_stratum_mine_once(start_nonce: int, stop_nonce: int) -> int:
                 if pending_failure is None:
                     print("Could not close the Stratum connection cleanly.", file=sys.stderr)
                     status = 1
+                    _emit_command_failed(events, "cleanup", "ClientCloseError")
 
     if status != 0:
         return status
     if outcome is None:
         raise RuntimeError("bounded mining completed without an outcome")
 
+    if outcome.result.match is None:
+        completion_level = "INFO"
+        completion_outcome = "range_exhausted"
+    elif outcome.pool_accepted:
+        completion_level = "INFO"
+        completion_outcome = "share_accepted"
+    else:
+        completion_level = "WARNING"
+        completion_outcome = "share_rejected"
+    events.emit(
+        "command_completed",
+        level=completion_level,
+        fields={"outcome": completion_outcome},
+    )
     _print_mining_outcome(settings, start_nonce, stop_nonce, outcome)
     return 0
 
@@ -244,21 +361,71 @@ def _load_live_mining_settings() -> Settings | None:
     return settings
 
 
+def _parse_log_file(arguments: Sequence[str]) -> str | None:
+    """Parse the optional structured-log path for a non-mining live command."""
+
+    if not arguments:
+        return None
+    if len(arguments) != 2 or arguments[0] != "--log-file":
+        raise ValueError("unsupported live-command argument")
+    return _validate_log_file_path(arguments[1])
+
+
+def _parse_mining_command_arguments(
+    arguments: Sequence[str],
+) -> tuple[int, int, str | None]:
+    """Parse bounded mining and optional structured-log arguments."""
+
+    option_values = _parse_option_values(
+        arguments,
+        {"--start-nonce", "--hash-count", "--log-file"},
+        unsupported_message="unsupported stratum-mine-once argument",
+    )
+    log_file = (
+        _validate_log_file_path(option_values["--log-file"])
+        if "--log-file" in option_values
+        else None
+    )
+    start_nonce, stop_nonce = _mining_range_from_options(option_values)
+    return start_nonce, stop_nonce, log_file
+
+
 def _parse_mining_range(arguments: Sequence[str]) -> tuple[int, int]:
     """Parse strict decimal options into one validated half-open nonce range."""
+
+    option_values = _parse_option_values(
+        arguments,
+        {"--start-nonce", "--hash-count"},
+        unsupported_message="unsupported stratum-mine-once argument",
+    )
+    return _mining_range_from_options(option_values)
+
+
+def _parse_option_values(
+    arguments: Sequence[str],
+    supported_options: set[str],
+    *,
+    unsupported_message: str,
+) -> dict[str, str]:
+    """Parse unique name-value CLI options from a flat argument sequence."""
 
     option_values: dict[str, str] = {}
     index = 0
     while index < len(arguments):
         option = arguments[index]
-        if option not in {"--start-nonce", "--hash-count"}:
-            raise ValueError("unsupported stratum-mine-once argument")
+        if option not in supported_options:
+            raise ValueError(unsupported_message)
         if option in option_values:
             raise ValueError(f"{option} may be supplied only once")
         if index + 1 >= len(arguments):
             raise ValueError(f"{option} requires a value")
         option_values[option] = arguments[index + 1]
         index += 2
+    return option_values
+
+
+def _mining_range_from_options(option_values: dict[str, str]) -> tuple[int, int]:
+    """Validate parsed options into one half-open nonce range."""
 
     if "--hash-count" not in option_values:
         raise ValueError("--hash-count is required")
@@ -279,6 +446,14 @@ def _parse_mining_range(arguments: Sequence[str]) -> tuple[int, int]:
     if stop_nonce > _NONCE_LIMIT:
         raise ValueError("the requested nonce range exceeds 2**32")
     return start_nonce, stop_nonce
+
+
+def _validate_log_file_path(value: str) -> str:
+    """Require one nonblank log path without altering its representation."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("--log-file requires a nonblank path")
+    return value
 
 
 def _parse_decimal_option(
@@ -303,22 +478,62 @@ def _mine_one_range(
     subscription: SubscribeResult,
     start_nonce: int,
     stop_nonce: int,
+    events: EventSink,
 ) -> _MiningOutcome:
     """Assemble one current job, search once, and conditionally submit once."""
 
     assembler = MiningJobAssembler(subscription)
-    job = _receive_buildable_job(client, assembler)
+    job = _receive_buildable_job(client, assembler, events)
     extra_nonce_2 = _generate_extra_nonce_2(subscription.extra_nonce_2_size)
     work = prepare_mining_work(job, extra_nonce_2)
+    events.emit(
+        "nonce_range_started",
+        fields={
+            "job_id": work.job_id,
+            "start_nonce": start_nonce,
+            "stop_nonce": stop_nonce,
+        },
+    )
     result = search_nonce_range(work, start_nonce, stop_nonce)
+    events.emit(
+        "nonce_range_completed",
+        fields={
+            "job_id": work.job_id,
+            "start_nonce": start_nonce,
+            "stop_nonce": stop_nonce,
+            "hashes_checked": result.hashes_checked,
+            "elapsed_ns": result.elapsed_ns,
+            "hashes_per_second": result.hashes_per_second,
+            "match_found": result.match is not None,
+        },
+    )
 
     pool_accepted: bool | None = None
     if result.match is not None:
+        events.emit(
+            "share_candidate_found",
+            fields={
+                "job_id": work.job_id,
+                "nonce": result.match.nonce,
+                "abbreviated_block_hash": _abbreviate_hex(result.match.block_hash.hex()),
+                "meets_share_target": result.match.meets_share_target,
+                "meets_network_target": result.match.meets_network_target,
+            },
+        )
         pool_accepted = client.submit_share(
             work.job_id,
             work.extra_nonce_2,
             work.network_time,
             result.match.nonce,
+        )
+        events.emit(
+            "share_submission_completed",
+            level="INFO" if pool_accepted else "WARNING",
+            fields={
+                "job_id": work.job_id,
+                "nonce": result.match.nonce,
+                "accepted": pool_accepted,
+            },
         )
 
     return _MiningOutcome(
@@ -332,16 +547,19 @@ def _mine_one_range(
 def _receive_buildable_job(
     client: StratumClient,
     assembler: MiningJobAssembler,
+    events: EventSink,
 ) -> MiningJob:
     """Return the first valid job arriving after a current difficulty exists."""
 
     while True:
         notification = client.receive_notification()
         if isinstance(notification, SetDifficultyNotification):
+            _emit_difficulty_received(events, notification)
             assembler.apply_difficulty(notification)
             continue
         if not isinstance(notification, MiningNotifyNotification):
             raise StratumClientError("unsupported parsed Stratum notification")
+        _emit_mining_job_received(events, notification)
         if assembler.current_difficulty is None:
             continue
         return assembler.build_job(notification)
@@ -355,6 +573,7 @@ def _generate_extra_nonce_2(byte_size: int) -> str:
 
 def _observe_required_notifications(
     client: StratumClient,
+    events: EventSink,
 ) -> tuple[
     SetDifficultyNotification,
     MiningNotifyNotification,
@@ -369,15 +588,109 @@ def _observe_required_notifications(
     while difficulty is None or job is None:
         notification = client.receive_notification()
         if isinstance(notification, SetDifficultyNotification):
+            _emit_difficulty_received(events, notification)
             arrival_order.append("mining.set_difficulty")
             if difficulty is None:
                 difficulty = notification
-        else:
-            arrival_order.append("mining.notify")
-            if job is None:
-                job = notification
+            continue
+        if not isinstance(notification, MiningNotifyNotification):
+            raise StratumClientError("unsupported parsed Stratum notification")
+        _emit_mining_job_received(events, notification)
+        arrival_order.append("mining.notify")
+        if job is None:
+            job = notification
 
+    events.emit(
+        "notification_observation_completed",
+        fields={"arrival_order": arrival_order},
+    )
     return difficulty, job, tuple(arrival_order)
+
+
+def _emit_stratum_authorized(
+    events: EventSink,
+    settings: Settings,
+    subscription: SubscribeResult,
+) -> None:
+    """Emit sanitized subscription metadata after authorization."""
+
+    events.emit(
+        "stratum_authorized",
+        fields={
+            "endpoint": f"{settings.stratum_host}:{settings.stratum_port}",
+            "extra_nonce_2_size": subscription.extra_nonce_2_size,
+        },
+    )
+
+
+def _emit_difficulty_received(
+    events: EventSink,
+    notification: SetDifficultyNotification,
+) -> None:
+    """Emit one validated difficulty value."""
+
+    events.emit(
+        "difficulty_received",
+        fields={"difficulty": notification.difficulty},
+    )
+
+
+def _emit_mining_job_received(
+    events: EventSink,
+    notification: MiningNotifyNotification,
+) -> None:
+    """Emit sanitized identifiers and structural metadata for one job."""
+
+    events.emit(
+        "mining_job_received",
+        fields={
+            "job_id": notification.job_id,
+            "network_bits": notification.network_bits,
+            "clean_jobs": notification.clean_jobs,
+            "merkle_branch_count": len(notification.merkle_branches),
+        },
+    )
+
+
+def _emit_command_failed(
+    events: EventSink,
+    stage: str,
+    error_category: str,
+) -> None:
+    """Emit a controlled failure category without arbitrary exception text."""
+
+    events.emit(
+        "command_failed",
+        level="ERROR",
+        fields={
+            "stage": stage,
+            "error_category": error_category,
+        },
+    )
+
+
+def _error_category(error: BaseException) -> str:
+    """Map expected failures to stable categories without using arbitrary text."""
+
+    categories: tuple[tuple[type[BaseException], str], ...] = (
+        (StratumAuthorizationError, "StratumAuthorizationError"),
+        (StratumConnectionError, "StratumConnectionError"),
+        (StratumMessageError, "StratumMessageError"),
+        (StratumClientError, "StratumClientError"),
+        (StratumTransportError, "StratumTransportError"),
+        (MiningJobError, "MiningJobError"),
+        (CoinbaseError, "CoinbaseError"),
+        (MerkleError, "MerkleError"),
+        (BlockHeaderError, "BlockHeaderError"),
+        (TargetError, "TargetError"),
+        (NonceSearchError, "NonceSearchError"),
+        (TypeError, "TypeError"),
+        (ValueError, "ValueError"),
+    )
+    for error_type, category in categories:
+        if isinstance(error, error_type):
+            return category
+    return "UnexpectedError"
 
 
 def _print_success(

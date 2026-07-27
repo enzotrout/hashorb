@@ -30,6 +30,7 @@ Major packages:
 - `crypto`
 - `mining`
 - `network`
+- `observability`
 - `protocol`
 - `rpc`
 - `telemetry`
@@ -96,6 +97,27 @@ The client does not close, retry, or reconnect automatically after a poll.
 This split keeps socket mechanics out of mining orchestration and keeps
 protocol state out of the transport. Both layers remain synchronous and expose
 small injectable boundaries for deterministic tests.
+
+---
+
+# Observability Boundary
+
+`hashphere.observability` owns structured event validation and persistent JSON
+Lines storage. An `EventSink` abstraction lets CLI orchestration emit the same
+sanitized event catalog whether persistence is enabled or disabled. The no-op
+sink avoids conditional logging branches throughout command and mining flows;
+the JSONL sink owns directory creation, append mode, UTF-8 encoding, event
+envelopes, sequencing, flushing, and file closure.
+
+Networking, cryptographic, and mining-domain components do not open or write
+log files. The CLI observes their typed results and emits explicitly selected
+safe fields through an injected sink. Raw protocol messages, credentials,
+extra nonces, complete coinbase data, and arbitrary exception messages do not
+cross the observability boundary.
+
+JSONL is the first local persistence format. Log summarization, aggregation,
+rotation, retention, and external telemetry exporters remain separate future
+components.
 
 ---
 
