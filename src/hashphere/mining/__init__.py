@@ -9,6 +9,7 @@ from hashphere.mining.coinbase import (
 from hashphere.mining.header import (
     BlockHeaderError,
     BlockHeaderValidationError,
+    hash_block_header,
     serialize_block_header,
 )
 from hashphere.mining.job import (
@@ -38,6 +39,7 @@ __all__ = [
     "MerkleValidationError",
     "build_coinbase_transaction",
     "calculate_merkle_root",
+    "hash_block_header",
     "hash_coinbase_transaction",
     "serialize_block_header",
 ]

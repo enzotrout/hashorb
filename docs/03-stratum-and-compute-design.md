@@ -174,9 +174,24 @@ Protocol hexadecimal, raw digest bytes, serialized header order, and reversed
 human-readable hash display order are distinct representations. Display-order
 conversion is not part of the serializer.
 
-This slice does not hash headers, decode compact targets, compare targets,
-generate or iterate nonces, mine, perform networking, or submit shares. Header
-hashing and target comparison remain deferred stages.
+Serialization itself does not hash headers, decode compact targets, compare
+targets, generate or iterate nonces, mine, perform networking, or submit shares.
+
+## Block Header Hashing Boundary
+
+`hash_block_header` validates one serialized 80-byte header and delegates to the
+generic `double_sha256` primitive to produce one raw 32-byte digest. The header
+bytes are neither mutated nor reinterpreted.
+
+The returned digest remains in the raw order produced by double-SHA256. Bitcoin
+block hashes are conventionally displayed by reversing those raw bytes for
+presentation, but this boundary performs no reversal and provides no display or
+hexadecimal formatting API. It also does not interpret the digest as an integer.
+
+This slice does not decode compact targets, convert pool difficulty, compare a
+hash with a target, generate or iterate nonces, mine, perform networking, or
+submit shares. Compact-target decoding and proof-of-work integer comparison are
+the next deferred stage.
 
 ## Compute Backend and Compute Profile
 
@@ -261,7 +276,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
 Responsibilities:
 
 - `coinbase.py`: assemble and hash raw coinbase transaction bytes
-- `header.py`: serialize validated jobs and raw Merkle roots into 80-byte headers
+- `header.py`: serialize and hash raw 80-byte block headers
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
 - `engine.py`: coordinate mining jobs and search operations

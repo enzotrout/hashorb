@@ -1,7 +1,8 @@
-"""Deterministic serialization of Bitcoin block headers from Stratum jobs."""
+"""Deterministic serialization and hashing of Bitcoin block headers."""
 
 from __future__ import annotations
 
+from hashphere.crypto import double_sha256
 from hashphere.mining.job import MiningJob
 
 _UINT32_MAX = 0xFFFFFFFF
@@ -11,11 +12,11 @@ _HEADER_BYTE_LENGTH = 80
 
 
 class BlockHeaderError(Exception):
-    """Base error for block-header serialization failures."""
+    """Base error for block-header domain failures."""
 
 
 class BlockHeaderValidationError(BlockHeaderError, ValueError):
-    """Raised when block-header input violates the public contract."""
+    """Raised when block-header data violates a public contract."""
 
 
 def serialize_block_header(
@@ -48,6 +49,16 @@ def serialize_block_header(
     if len(header) != _HEADER_BYTE_LENGTH:
         raise BlockHeaderError("serialized block header must contain exactly 80 bytes")
     return header
+
+
+def hash_block_header(header: bytes) -> bytes:
+    """Return the unchanged raw double-SHA256 digest of an 80-byte header."""
+
+    if not isinstance(header, bytes):
+        raise BlockHeaderValidationError("header must be bytes")
+    if len(header) != _HEADER_BYTE_LENGTH:
+        raise BlockHeaderValidationError("header must contain exactly 80 bytes")
+    return double_sha256(header)
 
 
 def _validate_merkle_root(value: object) -> None:
