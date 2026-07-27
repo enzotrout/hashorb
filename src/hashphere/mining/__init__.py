@@ -24,6 +24,15 @@ from hashphere.mining.merkle import (
     MerkleValidationError,
     calculate_merkle_root,
 )
+from hashphere.mining.search import (
+    NonceSearchError,
+    NonceSearchMatch,
+    NonceSearchResult,
+    NonceSearchValidationError,
+    PreparedMiningWork,
+    prepare_mining_work,
+    search_nonce_range,
+)
 from hashphere.mining.target import (
     TargetError,
     TargetValidationError,
@@ -45,6 +54,11 @@ __all__ = [
     "MiningJobValidationError",
     "MerkleError",
     "MerkleValidationError",
+    "NonceSearchError",
+    "NonceSearchMatch",
+    "NonceSearchResult",
+    "NonceSearchValidationError",
+    "PreparedMiningWork",
     "TargetError",
     "TargetValidationError",
     "block_hash_to_int",
@@ -55,5 +69,7 @@ __all__ = [
     "hash_block_header",
     "hash_coinbase_transaction",
     "hash_meets_target",
+    "prepare_mining_work",
+    "search_nonce_range",
     "serialize_block_header",
 ]

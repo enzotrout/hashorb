@@ -269,9 +269,42 @@ and [cgminer](https://github.com/ckolivas/cgminer/blob/b8491c66e7e22f23a9edf095d
 The network target still comes independently from `network_bits`; the share
 target comes from the current difficulty snapshot. Both use the existing
 inclusive `hash_meets_target` comparison without duplicating comparison logic.
-Nonce search is the next deferred stage. Block-candidate handling, share
-submission, networking, work cancellation, multiprocessing, and GPU execution
-also remain deferred.
+
+## Prepared Work and Bounded Nonce Search
+
+`prepare_mining_work` performs the fixed mining pipeline once for each
+immutable `MiningJob` and caller-supplied `extra_nonce_2`: coinbase assembly,
+coinbase hashing, Merkle reduction, nonce-zero header serialization, network
+target decoding, and share-target calculation. It retains the job ID, unchanged
+extra nonce and network time, both targets, and the first 76 bytes of the
+validated serialized header. Those bytes contain every header field except the
+four-byte nonce.
+
+`search_nonce_range` searches a bounded half-open range: `start_nonce` is
+inclusive and `stop_nonce` is exclusive. It visits nonces sequentially in
+ascending order. A stop value of `2**32` allows the final unsigned 32-bit nonce,
+`0xffffffff`, to be included. Within the loop, the only changing data is the
+nonce serialized explicitly as four little-endian bytes and appended to the
+prepared prefix. Coinbase data, Merkle roots, header prefixes, and targets are
+not recalculated.
+
+Each raw header digest is interpreted once in the existing unsigned
+little-endian representation and compared independently with the share and
+network targets. Search stops at the first digest meeting either target. A
+share match records separately whether it is also a network candidate, and a
+network candidate remains valid even if an unusual target configuration means
+it does not meet the share target.
+
+The immutable result records the requested range, exact number of hashes,
+monotonic elapsed nanoseconds, and an optional first match. Exhausted ranges
+contain no match. Local hashes per second are derived from the count and elapsed
+time; a zero-duration measurement has no reported rate.
+
+This is deliberately a bounded synchronous search and performs no submission.
+Continuous mining, `extra_nonce_2` generation or rollover, network-time rolling,
+`clean_jobs` cancellation, worker partitioning, threads, multiprocessing, GPU
+execution, orbiting-bit search, live Stratum integration, and share submission
+remain deferred.
 
 ## Compute Backend and Compute Profile
 
@@ -345,6 +378,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
     ├── header.py
     ├── job.py
     ├── merkle.py
+    ├── search.py
     ├── target.py
     ├── engine.py
     ├── profiles.py
@@ -360,6 +394,7 @@ Responsibilities:
 - `header.py`: serialize and hash raw 80-byte block headers
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
+- `search.py`: prepare fixed mining work and search bounded sequential nonce ranges
 - `target.py`: calculate targets and compare raw block-hash integers
 - `engine.py`: coordinate mining jobs and search operations
 - `profiles.py`: define Lite, Auto, and Max policies
