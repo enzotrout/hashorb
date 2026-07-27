@@ -232,11 +232,13 @@ def install_fakes(
         configured.prepare_calls.append((received_job, extra_nonce_2))
         if configured.prepare_failure is not None:
             raise configured.prepare_failure
+        marker = bytes.fromhex(received_job.network_time + extra_nonce_2)
+        job_marker = received_job.job_id.encode("ascii")
         return PreparedMiningWork(
             job_id=received_job.job_id,
             extra_nonce_2=extra_nonce_2,
             network_time=received_job.network_time,
-            header_prefix=bytes(range(76)),
+            header_prefix=(marker + job_marker + bytes(76))[:76],
             network_target=1,
             share_target=2,
         )
@@ -661,15 +663,16 @@ def test_logged_stop_is_ordered_sanitized_and_summary_compatible(
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
+        "mining_work_advanced",
         "nonce_range_started",
         "nonce_range_completed",
         "mining_stop_requested",
         "command_completed",
     ]
     assert records[-1]["outcome"] == "stopped_by_user"
-    assert records[4]["start_nonce"] == 0
-    assert records[4]["stop_nonce"] == 2
-    assert records[5]["hashes_checked"] == 2
+    assert records[5]["start_nonce"] == 0
+    assert records[5]["stop_nonce"] == 2
+    assert records[6]["hashes_checked"] == 2
     summary = summarize_jsonl(path)
     assert summary.command_counts == (("stratum-mine", 1),)
     assert summary.completed_nonce_range_count == 1
@@ -687,7 +690,7 @@ def test_logged_stop_is_ordered_sanitized_and_summary_compatible(
         assert forbidden not in text
 
 
-def test_nonce_space_waiting_and_replacement_events_are_ordered(
+def test_pool_replacement_precedes_local_progression_events(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -696,9 +699,6 @@ def test_nonce_space_waiting_and_replacement_events_are_ordered(
         notifications=[
             difficulty(),
             job(),
-            None,
-            difficulty(20000),
-            None,
             job("replacement"),
             None,
         ]
@@ -723,10 +723,11 @@ def test_nonce_space_waiting_and_replacement_events_are_ordered(
     ]
     events = [record["event"] for record in read_events(path)]
     exhausted = events.index("nonce_space_exhausted")
-    waiting = events.index("mining_waiting_for_job")
     replacement = events.index("mining_job_replaced")
+    next_work = events.index("mining_work_advanced", replacement)
     next_range = events.index("nonce_range_started", replacement)
-    assert exhausted < waiting < replacement < next_range
+    assert exhausted < replacement < next_work < next_range
+    assert "mining_waiting_for_job" not in events
 
 
 @pytest.mark.parametrize(

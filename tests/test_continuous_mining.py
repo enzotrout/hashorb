@@ -50,14 +50,18 @@ def notification(
     )
 
 
-def make_assembler(difficulty: int | float = 100) -> MiningJobAssembler:
+def make_assembler(
+    difficulty: int | float = 100,
+    *,
+    extra_nonce_2_size: int = 4,
+) -> MiningJobAssembler:
     """Build an assembler with an established difficulty."""
 
     assembler = MiningJobAssembler(
         SubscribeResult(
             subscriptions=(("mining.notify", "subscription-id"),),
             extra_nonce_1="08000002",
-            extra_nonce_2_size=4,
+            extra_nonce_2_size=extra_nonce_2_size,
         )
     )
     assembler.apply_difficulty(SetDifficultyNotification(difficulty=difficulty))
@@ -67,13 +71,16 @@ def make_assembler(difficulty: int | float = 100) -> MiningJobAssembler:
 def make_work(job: MiningJob, extra_nonce_2: str) -> PreparedMiningWork:
     """Build deterministic prepared work without cryptographic calculations."""
 
+    marker = bytes.fromhex(job.network_time + extra_nonce_2)
+    job_marker = job.job_id.encode("ascii")
+    header_prefix = (marker + job_marker + bytes(76))[:76]
     return PreparedMiningWork(
         job_id=job.job_id,
         extra_nonce_2=extra_nonce_2,
         network_time=job.network_time,
-        header_prefix=bytes(range(76)),
+        header_prefix=header_prefix,
         network_target=1,
-        share_target=2,
+        share_target=int(job.difficulty),
     )
 
 
@@ -83,12 +90,14 @@ class Harness:
 
     controller: StopController = field(default_factory=StopController)
     notifications: deque[object] = field(default_factory=deque)
+    timed_notifications: deque[object] = field(default_factory=deque)
     elapsed_values: deque[int] = field(default_factory=deque)
     match_call: int | None = None
     match_flags: tuple[bool, bool] = (True, False)
     accepted: bool = True
     stop_during_search_call: int | None = None
     stop_during_receive_call: int | None = None
+    stop_during_wait: bool = False
     stop_during_prepare_call: int | None = None
     prepare_calls: list[tuple[MiningJob, str]] = field(default_factory=list)
     search_calls: list[tuple[PreparedMiningWork, int, int]] = field(default_factory=list)
@@ -136,9 +145,12 @@ class Harness:
         self.receive_timeouts.append(timeout_seconds)
         if self.stop_during_receive_call == len(self.receive_timeouts):
             self.controller.request_stop()
-        if not self.notifications:
+        if timeout_seconds > 0.0 and self.stop_during_wait:
+            self.controller.request_stop()
+        values = self.timed_notifications if timeout_seconds > 0.0 else self.notifications
+        if not values:
             return None
-        value = self.notifications.popleft()
+        value = values.popleft()
         return value  # type: ignore[return-value]
 
     def submit(self, work: PreparedMiningWork, match: NonceSearchMatch) -> bool:
@@ -200,22 +212,54 @@ class Harness:
     def waiting_for_job(self, work: PreparedMiningWork) -> None:
         self.observations.append(("waiting", work.job_id))
 
+    def work_advanced(
+        self,
+        reason: str,
+        work_variant_index: int,
+        extra_nonce_2_advance_count: int,
+        network_time_roll_count: int,
+    ) -> None:
+        self.observations.append(
+            (
+                "work",
+                reason,
+                work_variant_index,
+                extra_nonce_2_advance_count,
+                network_time_roll_count,
+            )
+        )
+
+    def extra_nonce_2_cycle_completed(self, cycle_count: int) -> None:
+        self.observations.append(("extra-cycle", cycle_count))
+
+    def network_time_rolled(self, roll_count: int) -> None:
+        self.observations.append(("time-roll", roll_count))
+
+    def duplicate_work_ignored(self, duplicate_count: int, reason: str) -> None:
+        self.observations.append(("duplicate", duplicate_count, reason))
+
 
 def run_with_harness(
     plan: ContinuousMiningPlan,
     harness: Harness,
     *,
     difficulty: int | float = 100,
+    extra_nonce_2_size: int = 4,
+    extra_nonce_2: str | None = None,
+    network_time: str = "65f04abc",
 ) -> tuple[MiningJobAssembler, MiningJob, ContinuousMiningResult]:
     """Run continuous orchestration against one synthetic initial job."""
 
-    assembler = make_assembler(difficulty)
-    initial_job = assembler.build_job(notification("initial-job"))
+    assembler = make_assembler(
+        difficulty,
+        extra_nonce_2_size=extra_nonce_2_size,
+    )
+    initial_job = assembler.build_job(notification("initial-job", network_time=network_time))
     result = run_continuous_mining(
         plan,
         assembler,
         initial_job,
-        "abababab",
+        "ab" * extra_nonce_2_size if extra_nonce_2 is None else extra_nonce_2,
         harness.controller,
         receive_notification=harness.receive,
         submit_share=harness.submit,
@@ -429,32 +473,33 @@ def test_arrival_order_snapshots_difficulty_and_only_final_job_is_prepared() -> 
 
 def test_nonce_space_exhaustion_waits_and_new_job_resumes_at_start() -> None:
     harness = Harness(
-        notifications=deque(
+        timed_notifications=deque(
             [
-                None,
                 SetDifficultyNotification(difficulty=250),
                 None,
                 notification("later-job"),
-                None,
             ]
         )
     )
 
     _, _, result = run_with_harness(
-        ContinuousMiningPlan(0xFFFFFFFF, 5, 2),
+        ContinuousMiningPlan(0xFFFFFFFF, 5, 257),
         harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="00",
+        network_time="ffffffff",
     )
 
-    assert [(work.job_id, start, stop) for work, start, stop in harness.search_calls] == [
-        ("initial-job", 0xFFFFFFFF, 2**32),
-        ("later-job", 0xFFFFFFFF, 2**32),
-    ]
-    assert harness.receive_timeouts == [0.0, 0.25, 0.0, 0.25, 0.0]
+    assert len(harness.search_calls) == 257
+    assert all((start, stop) == (0xFFFFFFFF, 2**32) for _, start, stop in harness.search_calls)
+    assert harness.search_calls[-1][0].job_id == "later-job"
+    assert harness.receive_timeouts.count(0.25) == 3
     assert ("exhausted", "initial-job") in harness.observations
     assert ("waiting", "initial-job") in harness.observations
     assert result.final_job.difficulty == 250
-    assert result.chunks_completed == 2
-    assert result.total_hashes_checked == 2
+    assert result.chunks_completed == 257
+    assert result.total_hashes_checked == 257
+    assert result.extra_nonce_2_cycles_completed == 1
 
 
 def test_immediately_available_replacement_still_reports_nonce_exhaustion() -> None:
@@ -470,20 +515,204 @@ def test_immediately_available_replacement_still_reports_nonce_exhaustion() -> N
     assert result.final_job.job_id == "ready-job"
 
 
-def test_stop_while_waiting_for_new_job_is_controlled_and_does_not_busy_continue() -> None:
-    harness = Harness(
-        notifications=deque([None]),
-        stop_during_receive_call=2,
+def test_nonce_boundary_advances_extra_nonce_and_restarts_configured_range() -> None:
+    harness = Harness(elapsed_values=deque([10, 20, 30]))
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0xFFFFFFFF, 1, 3),
+        harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="fe",
     )
+
+    assert [extra for _, extra in harness.prepare_calls] == ["fe", "ff", "00"]
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (0xFFFFFFFF, 2**32),
+        (0xFFFFFFFF, 2**32),
+        (0xFFFFFFFF, 2**32),
+    ]
+    assert len({work.header_prefix for work, _, _ in harness.search_calls}) == 3
+    assert result.work_variants_used == 3
+    assert result.extra_nonce_2_advances == 2
+    assert result.extra_nonce_2_cycles_completed == 0
+    assert result.network_time_rolls == 0
+    assert result.jobs_used == 1
+    assert result.total_hashes_checked == 3
+    assert result.total_elapsed_ns == 60
+    assert [item[1] for item in harness.observations if item[0] == "work"] == [
+        "initial_job",
+        "extra_nonce_2",
+        "extra_nonce_2",
+    ]
+
+
+def test_identical_pool_job_is_ignored_without_restarting_completed_work() -> None:
+    harness = Harness(
+        notifications=deque([notification("initial-job"), None]),
+    )
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0xFFFFFFFF, 1, 2),
+        harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="10",
+    )
+
+    assert [extra for _, extra in harness.prepare_calls] == ["10", "11"]
+    searched = [(work.header_prefix, start, stop) for work, start, stop in harness.search_calls]
+    assert len(searched) == len(set(searched)) == 2
+    assert result.job_replacements == 0
+    assert result.duplicate_work_ignored == 1
+    assert ("duplicate", 1, "pool_context") in harness.observations
+
+
+def test_clean_jobs_only_change_is_duplicate_but_target_change_is_new_context() -> None:
+    duplicate_harness = Harness(
+        notifications=deque([notification("initial-job", clean_jobs=False), None])
+    )
+
+    _, _, duplicate_result = run_with_harness(
+        ContinuousMiningPlan(0, 1, 2),
+        duplicate_harness,
+    )
+
+    assert duplicate_result.duplicate_work_ignored == 1
+    assert duplicate_result.job_replacements == 0
+
+    target_harness = Harness(
+        notifications=deque(
+            [
+                SetDifficultyNotification(difficulty=200),
+                notification("initial-job"),
+                None,
+            ]
+        )
+    )
+    _, _, target_result = run_with_harness(
+        ContinuousMiningPlan(0, 1, 2),
+        target_harness,
+    )
+
+    assert [job.difficulty for job, _ in target_harness.prepare_calls] == [100, 200]
+    assert target_result.job_replacements == 1
+    assert target_result.duplicate_work_ignored == 0
+
+
+def test_pool_job_has_priority_over_local_extra_nonce_advancement() -> None:
+    harness = Harness(
+        notifications=deque(
+            [
+                notification("intermediate"),
+                notification("newest"),
+                None,
+            ]
+        )
+    )
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0xFFFFFFFF, 1, 2),
+        harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="7f",
+    )
+
+    assert [(job.job_id, extra) for job, extra in harness.prepare_calls] == [
+        ("initial-job", "7f"),
+        ("newest", "7f"),
+    ]
+    assert [work.job_id for work, _, _ in harness.search_calls] == [
+        "initial-job",
+        "newest",
+    ]
+    assert result.extra_nonce_2_advances == 0
+    assert result.job_replacements == 1
+
+
+def test_network_time_roll_reuses_seed_and_exact_variant_is_submitted() -> None:
+    harness = Harness(match_call=257)
+
+    _, initial_job, result = run_with_harness(
+        ContinuousMiningPlan(0xFFFFFFFF, 1),
+        harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="80",
+        network_time="0000000a",
+    )
+
+    submitted_work, submitted_match = harness.submit_calls[0]
+    assert initial_job.network_time == "0000000a"
+    assert submitted_work.extra_nonce_2 == "80"
+    assert submitted_work.network_time == "0000000b"
+    assert submitted_match.nonce == 0xFFFFFFFF
+    assert result.chunks_completed == 257
+    assert result.work_variants_used == 257
+    assert result.extra_nonce_2_advances == 256
+    assert result.extra_nonce_2_cycles_completed == 1
+    assert result.network_time_rolls == 1
+    assert harness.observations.index(("extra-cycle", 1)) < harness.observations.index(
+        ("time-roll", 1)
+    )
+    assert harness.receive_timeouts == [0.0] * 256
+
+
+def test_new_pool_job_resets_seed_and_does_not_carry_local_network_time() -> None:
+    harness = Harness(
+        notifications=deque(
+            [
+                *([None] * 256),
+                notification("new-pool-job", network_time="00000005"),
+                None,
+            ]
+        )
+    )
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0xFFFFFFFF, 1, 258),
+        harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="01",
+        network_time="00000001",
+    )
+
+    assert harness.prepare_calls[-2][0].network_time == "00000002"
+    replacement_job, replacement_extra_nonce = harness.prepare_calls[-1]
+    assert replacement_job.job_id == "new-pool-job"
+    assert replacement_job.network_time == "00000005"
+    assert replacement_extra_nonce == "01"
+    assert harness.search_calls[-1][1:] == (0xFFFFFFFF, 2**32)
+    assert result.job_replacements == 1
+    assert result.network_time_rolls == 1
+
+
+def test_stop_after_boundary_prevents_successor_preparation() -> None:
+    harness = Harness(stop_during_search_call=1)
 
     _, _, result = run_with_harness(
         ContinuousMiningPlan(0xFFFFFFFF, 1),
         harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="20",
     )
 
     assert result.outcome is ContinuousMiningOutcome.STOPPED_BY_USER
-    assert len(harness.search_calls) == 1
-    assert harness.receive_timeouts == [0.0, 0.25]
+    assert [extra for _, extra in harness.prepare_calls] == ["20"]
+    assert result.extra_nonce_2_advances == 0
+
+
+def test_stop_while_waiting_for_new_job_is_controlled_and_does_not_busy_continue() -> None:
+    harness = Harness(stop_during_wait=True)
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0xFFFFFFFF, 1),
+        harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="00",
+        network_time="ffffffff",
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.STOPPED_BY_USER
+    assert len(harness.search_calls) == 256
+    assert harness.receive_timeouts[-1] == 0.25
     assert harness.observations[-1] == ("stopped",)
 
 

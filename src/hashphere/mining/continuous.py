@@ -8,6 +8,13 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from hashphere.mining.job import MiningJob, MiningJobAssembler
+from hashphere.mining.progression import (
+    MiningJobContextIdentity,
+    MiningWorkCursor,
+    mining_job_context_identity,
+    mining_work_identity,
+    prepare_work_variant,
+)
 from hashphere.mining.search import (
     NonceSearchMatch,
     NonceSearchResult,
@@ -85,6 +92,11 @@ class ContinuousMiningResult:
     chunks_completed: int
     jobs_used: int
     job_replacements: int
+    work_variants_used: int
+    extra_nonce_2_advances: int
+    extra_nonce_2_cycles_completed: int
+    network_time_rolls: int
+    duplicate_work_ignored: int
     total_hashes_checked: int
     total_elapsed_ns: int
 
@@ -101,12 +113,21 @@ class ContinuousMiningResult:
             ("chunks_completed", self.chunks_completed),
             ("jobs_used", self.jobs_used),
             ("job_replacements", self.job_replacements),
+            ("work_variants_used", self.work_variants_used),
+            ("extra_nonce_2_advances", self.extra_nonce_2_advances),
+            ("extra_nonce_2_cycles_completed", self.extra_nonce_2_cycles_completed),
+            ("network_time_rolls", self.network_time_rolls),
+            ("duplicate_work_ignored", self.duplicate_work_ignored),
             ("total_hashes_checked", self.total_hashes_checked),
             ("total_elapsed_ns", self.total_elapsed_ns),
         ):
             _validate_nonnegative_integer(value, name)
         if self.jobs_used > self.chunks_completed:
             raise ContinuousMiningValidationError("jobs_used cannot exceed chunks_completed")
+        if self.work_variants_used > self.chunks_completed:
+            raise ContinuousMiningValidationError(
+                "work_variants_used cannot exceed chunks_completed"
+            )
         if self.job_replacements > self.chunks_completed:
             raise ContinuousMiningValidationError(
                 "job_replacements cannot exceed completed chunk boundaries"
@@ -234,6 +255,24 @@ class ContinuousMiningObserver(Protocol):
     def waiting_for_job(self, work: PreparedMiningWork) -> None:
         """Observe entry into bounded waiting for replacement work."""
 
+    def work_advanced(
+        self,
+        reason: str,
+        work_variant_index: int,
+        extra_nonce_2_advance_count: int,
+        network_time_roll_count: int,
+    ) -> None:
+        """Observe a prepared variant immediately before its first search."""
+
+    def extra_nonce_2_cycle_completed(self, cycle_count: int) -> None:
+        """Observe completion of one negotiated extra-nonce cycle."""
+
+    def network_time_rolled(self, roll_count: int) -> None:
+        """Observe one safe one-second local network-time advance."""
+
+    def duplicate_work_ignored(self, duplicate_count: int, reason: str) -> None:
+        """Observe pool work ignored because it repeats effective work."""
+
 
 class NullContinuousMiningObserver:
     """No-op observer for callers that do not need lifecycle events."""
@@ -288,6 +327,24 @@ class NullContinuousMiningObserver:
     def waiting_for_job(self, work: PreparedMiningWork) -> None:
         """Discard a waiting-state observation."""
 
+    def work_advanced(
+        self,
+        reason: str,
+        work_variant_index: int,
+        extra_nonce_2_advance_count: int,
+        network_time_roll_count: int,
+    ) -> None:
+        """Discard a work-variant observation."""
+
+    def extra_nonce_2_cycle_completed(self, cycle_count: int) -> None:
+        """Discard an extra-nonce cycle observation."""
+
+    def network_time_rolled(self, roll_count: int) -> None:
+        """Discard a network-time roll observation."""
+
+    def duplicate_work_ignored(self, duplicate_count: int, reason: str) -> None:
+        """Discard a duplicate-work observation."""
+
 
 def run_continuous_mining(
     plan: ContinuousMiningPlan,
@@ -329,16 +386,35 @@ def run_continuous_mining(
             chunks_completed=0,
             jobs_used=0,
             job_replacements=0,
+            work_variants_used=0,
+            extra_nonce_2_advances=0,
+            extra_nonce_2_cycles_completed=0,
+            network_time_rolls=0,
+            duplicate_work_ignored=0,
             total_hashes_checked=0,
             total_elapsed_ns=0,
         )
     current_job = initial_job
-    current_work = prepare_work(current_job, extra_nonce_2)
+    current_cursor = MiningWorkCursor.start(current_job, extra_nonce_2)
+    current_work = prepare_work_variant(
+        current_cursor.current_variant,
+        prepare_work=prepare_work,
+    )
+    current_work_identity = mining_work_identity(current_work)
+    current_pool_identity = mining_job_context_identity(current_job)
+    last_ignored_pool_identity: MiningJobContextIdentity | None = None
+    current_variant_reason = "initial_job"
     next_nonce = plan.start_nonce
     current_work_searched = False
+    current_job_searched = False
     chunks_completed = 0
     jobs_used = 0
     replacements = 0
+    work_variants = 0
+    extra_nonce_2_advances = 0
+    extra_nonce_2_cycles = 0
+    network_time_rolls = 0
+    duplicates = 0
     total_hashes = 0
     total_elapsed_ns = 0
     stop_observed = False
@@ -358,6 +434,11 @@ def run_continuous_mining(
             chunks_completed=chunks_completed,
             jobs_used=jobs_used,
             job_replacements=replacements,
+            work_variants_used=work_variants,
+            extra_nonce_2_advances=extra_nonce_2_advances,
+            extra_nonce_2_cycles_completed=extra_nonce_2_cycles,
+            network_time_rolls=network_time_rolls,
+            duplicate_work_ignored=duplicates,
             total_hashes_checked=total_hashes,
             total_elapsed_ns=total_elapsed_ns,
         )
@@ -373,6 +454,54 @@ def run_continuous_mining(
         observe_stop()
         return finish(ContinuousMiningOutcome.STOPPED_BY_USER)
 
+    def ignore_duplicate(reason: str) -> None:
+        nonlocal duplicates
+        duplicates += 1
+        event_observer.duplicate_work_ignored(duplicates, reason)
+
+    def select_pool_job(selected_job: MiningJob) -> bool:
+        nonlocal current_cursor
+        nonlocal current_job
+        nonlocal current_job_searched
+        nonlocal current_pool_identity
+        nonlocal current_variant_reason
+        nonlocal current_work
+        nonlocal current_work_identity
+        nonlocal current_work_searched
+        nonlocal last_ignored_pool_identity
+        nonlocal next_nonce
+        nonlocal replacements
+
+        selected_identity = mining_job_context_identity(selected_job)
+        if selected_identity in {current_pool_identity, last_ignored_pool_identity}:
+            ignore_duplicate("pool_context")
+            return False
+
+        selected_cursor = MiningWorkCursor.start(selected_job, extra_nonce_2)
+        selected_work = prepare_work_variant(
+            selected_cursor.current_variant,
+            prepare_work=prepare_work,
+        )
+        selected_work_identity = mining_work_identity(selected_work)
+        if selected_work_identity == current_work_identity:
+            last_ignored_pool_identity = selected_identity
+            ignore_duplicate("effective_work")
+            return False
+
+        replacements += 1
+        event_observer.job_replaced(current_job, selected_job, replacements)
+        current_job = selected_job
+        current_cursor = selected_cursor
+        current_work = selected_work
+        current_work_identity = selected_work_identity
+        current_pool_identity = selected_identity
+        last_ignored_pool_identity = None
+        current_variant_reason = "pool_job"
+        next_nonce = plan.start_nonce
+        current_work_searched = False
+        current_job_searched = False
+        return True
+
     while True:
         if stop_token.stop_requested:
             return finish_stopped()
@@ -381,8 +510,17 @@ def run_continuous_mining(
 
         stop_nonce = min(next_nonce + plan.chunk_size, _NONCE_LIMIT)
         if not current_work_searched:
-            jobs_used += 1
+            work_variants += 1
+            event_observer.work_advanced(
+                current_variant_reason,
+                current_cursor.variant_index,
+                current_cursor.extra_nonce_2_advance_count,
+                current_cursor.network_time_roll_count,
+            )
             current_work_searched = True
+        if not current_job_searched:
+            jobs_used += 1
+            current_job_searched = True
         event_observer.chunk_started(current_work, next_nonce, stop_nonce)
         chunk_result = search_range(current_work, next_nonce, stop_nonce)
         _validate_search_result(chunk_result, next_nonce, stop_nonce)
@@ -430,51 +568,64 @@ def run_continuous_mining(
         )
         if stop_token.stop_requested:
             return finish_stopped()
-        if selected_job is None and next_nonce == _NONCE_LIMIT:
-            event_observer.waiting_for_job(current_work)
-            selected_job = _wait_for_replacement(
+        if selected_job is not None:
+            if select_pool_job(selected_job):
+                continue
+
+        if next_nonce < _NONCE_LIMIT:
+            continue
+
+        progress = current_cursor.advance()
+        if progress.extra_nonce_2_cycle_completed:
+            extra_nonce_2_cycles += 1
+            event_observer.extra_nonce_2_cycle_completed(extra_nonce_2_cycles)
+        if progress.network_time_rolled:
+            network_time_rolls += 1
+            event_observer.network_time_rolled(network_time_rolls)
+
+        if progress.cursor is not None:
+            if progress.extra_nonce_2_advanced:
+                extra_nonce_2_advances += 1
+            successor_cursor = progress.cursor
+            successor_work = prepare_work_variant(
+                successor_cursor.current_variant,
+                prepare_work=prepare_work,
+            )
+            successor_identity = mining_work_identity(successor_work)
+            if successor_identity == current_work_identity:
+                raise ContinuousMiningError(
+                    "deterministic progression produced duplicate effective work"
+                )
+            current_cursor = successor_cursor
+            current_work = successor_work
+            current_work_identity = successor_identity
+            current_variant_reason = (
+                "network_time" if progress.network_time_rolled else "extra_nonce_2"
+            )
+            current_work_searched = False
+            next_nonce = plan.start_nonce
+            continue
+
+        event_observer.waiting_for_job(current_work)
+        while True:
+            if stop_token.stop_requested:
+                return finish_stopped()
+            notification = receive_notification(_NOTIFICATION_WAIT_SECONDS)
+            if notification is None:
+                continue
+            waiting_job = _apply_notification(assembler, notification, event_observer)
+            drained_job = _drain_notifications(
                 assembler,
                 stop_token,
                 receive_notification,
                 event_observer,
             )
-            if selected_job is None:
+            if stop_token.stop_requested:
                 return finish_stopped()
-        if selected_job is not None:
-            replacement_work = prepare_work(selected_job, extra_nonce_2)
-            replacements += 1
-            event_observer.job_replaced(current_job, selected_job, replacements)
-            current_job = selected_job
-            current_work = replacement_work
-            next_nonce = plan.start_nonce
-            current_work_searched = False
-
-
-def _wait_for_replacement(
-    assembler: MiningJobAssembler,
-    stop_token: StopToken,
-    receive_notification: NotificationReceiver,
-    observer: ContinuousMiningObserver,
-) -> MiningJob | None:
-    selected_job: MiningJob | None = None
-    while selected_job is None:
-        if stop_token.stop_requested:
-            return None
-        notification = receive_notification(_NOTIFICATION_WAIT_SECONDS)
-        if notification is None:
-            continue
-        selected_job = _apply_notification(assembler, notification, observer)
-        drained_job = _drain_notifications(
-            assembler,
-            stop_token,
-            receive_notification,
-            observer,
-        )
-        if drained_job is not None:
-            selected_job = drained_job
-    if stop_token.stop_requested:
-        return None
-    return selected_job
+            if drained_job is not None:
+                waiting_job = drained_job
+            if waiting_job is not None and select_pool_job(waiting_job):
+                break
 
 
 def _drain_notifications(

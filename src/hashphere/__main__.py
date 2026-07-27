@@ -296,6 +296,49 @@ class _ContinuousEventObserver(_ChunkedEventObserver):
             fields={"job_id": work.job_id},
         )
 
+    def work_advanced(
+        self,
+        reason: str,
+        work_variant_index: int,
+        extra_nonce_2_advance_count: int,
+        network_time_roll_count: int,
+    ) -> None:
+        """Emit safe counters when a prepared variant reaches its first search."""
+
+        self._events.emit(
+            "mining_work_advanced",
+            fields={
+                "reason": reason,
+                "work_variant_index": work_variant_index,
+                "extra_nonce_2_advance_count": extra_nonce_2_advance_count,
+                "network_time_roll_count": network_time_roll_count,
+            },
+        )
+
+    def extra_nonce_2_cycle_completed(self, cycle_count: int) -> None:
+        """Emit a safe cumulative extra-nonce cycle count."""
+
+        self._events.emit(
+            "extra_nonce_2_cycle_completed",
+            fields={"cycle_count": cycle_count},
+        )
+
+    def network_time_rolled(self, roll_count: int) -> None:
+        """Emit a safe cumulative network-time roll count."""
+
+        self._events.emit(
+            "network_time_rolled",
+            fields={"roll_count": roll_count},
+        )
+
+    def duplicate_work_ignored(self, duplicate_count: int, reason: str) -> None:
+        """Emit safe metadata for one ignored duplicate pool context."""
+
+        self._events.emit(
+            "duplicate_work_ignored",
+            fields={"duplicate_count": duplicate_count, "reason": reason},
+        )
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected Hashphere command and return its process status."""
