@@ -331,9 +331,34 @@ pool accepted the share and `false` means it rejected the share. A rejection is
 a valid parsed response, while non-null Stratum errors remain the responsibility
 of the request-response routing layer.
 
-Request transmission, a `StratumClient` submission operation, live pool
-submission, retries, stale- or duplicate-share handling, and result counters
-remain deferred. This slice performs no network activity.
+The message helper itself performs no network activity. Authenticated
+transmission is owned separately by `StratumClient`.
+
+## Authenticated Share-Transmission Boundary
+
+`StratumClient.submit_share` is available only in the `AUTHORIZED` state. It
+allocates the next internal request ID, uses the authenticated
+`Settings.stratum_username`, builds the request through `build_submit_request`,
+and sends it through the existing synchronous transport abstraction. The
+caller supplies the job ID, `extra_nonce_2`, network time, and nonce produced by
+the prepared-work and bounded-search boundary.
+
+Submission responses use the existing request-routing path. Supported
+notifications received before the matching response are parsed and queued in
+arrival order for later `receive_notification` calls. Malformed or mismatched
+response IDs and non-null Stratum errors retain their existing client error
+behavior.
+
+A Boolean `true` response means accepted; `false` means rejected and remains a
+normal result rather than a protocol exception. Either result leaves the
+client authorized. Send, receive, validation, and protocol failures propagate
+without automatically closing, reconnecting, retrying, or resubmitting; the
+caller remains responsible for `close`.
+
+An explicitly opt-in live mining runner remains deferred, along with continuous
+mining, submission counters, stale- or duplicate-share classification,
+`clean_jobs` cancellation, extra-nonce generation, network-time rolling,
+multiprocessing, GPU execution, and orbiting-bit search.
 
 ## Compute Backend and Compute Profile
 

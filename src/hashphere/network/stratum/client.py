@@ -14,11 +14,13 @@ from hashphere.network.stratum.messages import (
     StratumError,
     SubscribeResult,
     build_authorize_request,
+    build_submit_request,
     build_subscribe_request,
     parse_authorize_result,
     parse_mining_notify,
     parse_set_difficulty,
     parse_stratum_error,
+    parse_submit_result,
     parse_subscribe_result,
 )
 from hashphere.network.stratum.transport import StratumTransport
@@ -79,7 +81,7 @@ class _StratumTransport(Protocol):
 
 
 class StratumClient:
-    """Perform a synchronous Stratum subscription and authorization handshake."""
+    """Perform a synchronous Stratum handshake and authenticated requests."""
 
     def __init__(
         self,
@@ -157,6 +159,29 @@ class StratumClient:
             )
 
         self._state = StratumClientState.AUTHORIZED
+
+    def submit_share(
+        self,
+        job_id: str,
+        extra_nonce_2: str,
+        network_time: str,
+        nonce: int,
+    ) -> bool:
+        """Submit one share while authorized and return the pool's Boolean result."""
+
+        self._require_state(StratumClientState.AUTHORIZED, "submit_share")
+        request_id = self._allocate_request_id()
+        request = build_submit_request(
+            request_id,
+            self._settings.stratum_username,
+            job_id,
+            extra_nonce_2,
+            network_time,
+            nonce,
+        )
+        self._transport.send_message(request)
+        response = self._wait_for_response(request_id)
+        return parse_submit_result(response)
 
     def handshake(self) -> SubscribeResult:
         """Connect, subscribe, and authorize; clean up fully on failure."""
