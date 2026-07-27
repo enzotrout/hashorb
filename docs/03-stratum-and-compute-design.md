@@ -76,6 +76,25 @@ Hashphere separates the mining engine from the source of mining work.
 The mining engine receives normalized mining jobs. It must not depend
 directly on CKPool, Stratum socket handling, or Bitcoin Core RPC.
 
+## Mining Job Domain Boundary
+
+`MiningJobAssembler` bridges parsed Stratum notifications into the mining
+domain. It retains the subscription's extra-nonce parameters, tracks the most
+recent difficulty notification, and snapshots that difficulty into each new
+immutable `MiningJob`. A job cannot be assembled until a difficulty has been
+received. Later difficulty changes affect only later jobs, and `clean_jobs` is
+retained without managing an active-job registry or invalidation policy.
+
+The domain validates identifiers, hexadecimal byte structure, fixed protocol
+field sizes, difficulty, and extra-nonce sizes independently of the networking
+parser. Protocol hexadecimal strings remain unchanged; byte-order conversion
+is deferred to serialization.
+
+This boundary does not calculate share or network targets, build coinbase
+transactions, calculate Merkle roots, serialize headers, generate
+`extra_nonce_2`, hash, mine, or submit shares. Those responsibilities remain
+deferred to later slices.
+
 ## Compute Backend and Compute Profile
 
 Compute backend and compute profile are separate settings.
@@ -144,6 +163,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
 ## Proposed Mining Components
 
     src/hashphere/mining/
+    ├── job.py
     ├── engine.py
     ├── profiles.py
     ├── scheduler.py
@@ -154,6 +174,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
 
 Responsibilities:
 
+- `job.py`: validate and assemble immutable mining-job snapshots
 - `engine.py`: coordinate mining jobs and search operations
 - `profiles.py`: define Lite, Auto, and Max policies
 - `scheduler.py`: control worker allocation and duty cycles
