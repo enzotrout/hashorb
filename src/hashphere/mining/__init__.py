@@ -1,4 +1,4 @@
-"""Mining-domain models, deterministic primitives, and bounded orchestration."""
+"""Mining-domain models, deterministic primitives, and mining orchestration."""
 
 from hashphere.mining.chunks import (
     ChunkedMiningError,
@@ -14,6 +14,18 @@ from hashphere.mining.coinbase import (
     CoinbaseValidationError,
     build_coinbase_transaction,
     hash_coinbase_transaction,
+)
+from hashphere.mining.continuous import (
+    ContinuousMiningError,
+    ContinuousMiningObserver,
+    ContinuousMiningOutcome,
+    ContinuousMiningPlan,
+    ContinuousMiningResult,
+    ContinuousMiningValidationError,
+    NullContinuousMiningObserver,
+    StopController,
+    StopToken,
+    run_continuous_mining,
 )
 from hashphere.mining.header import (
     BlockHeaderError,
@@ -61,6 +73,12 @@ __all__ = [
     "ChunkedMiningPlan",
     "ChunkedMiningResult",
     "ChunkedMiningValidationError",
+    "ContinuousMiningError",
+    "ContinuousMiningObserver",
+    "ContinuousMiningOutcome",
+    "ContinuousMiningPlan",
+    "ContinuousMiningResult",
+    "ContinuousMiningValidationError",
     "MiningJob",
     "MiningJobAssembler",
     "MiningJobError",
@@ -73,7 +91,10 @@ __all__ = [
     "NonceSearchResult",
     "NonceSearchValidationError",
     "NullChunkedMiningObserver",
+    "NullContinuousMiningObserver",
     "PreparedMiningWork",
+    "StopController",
+    "StopToken",
     "TargetError",
     "TargetValidationError",
     "block_hash_to_int",
@@ -86,6 +107,7 @@ __all__ = [
     "hash_meets_target",
     "prepare_mining_work",
     "run_chunked_mining",
+    "run_continuous_mining",
     "search_nonce_range",
     "serialize_block_header",
 ]
