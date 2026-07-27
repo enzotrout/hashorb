@@ -140,9 +140,43 @@ the original raw coinbase hash. Neither operands, intermediate hashes, nor the
 final 32-byte root are reversed or converted to display order.
 
 This boundary does not serialize a block header or perform header-specific byte
-ordering. Block-header serialization is the next deferred stage. Target
+ordering. That conversion belongs to the block-header boundary below. Target
 calculation, nonce generation and search, mining loops, networking, and share
-submission also remain deferred.
+submission remain deferred.
+
+## Block Header Serialization Boundary
+
+`serialize_block_header` produces the consensus 80-byte header layout:
+
+    version (4) || previous block hash (32) || Merkle root (32) ||
+    network time (4) || network bits (4) || nonce (4)
+
+Bitcoin's numeric header fields use little-endian serialization. The Stratum
+`version`, `network_time`, and `network_bits` strings are parsed as unsigned
+32-bit hexadecimal values and serialized explicitly in little-endian order. The
+caller-supplied nonce follows the same unsigned 32-bit little-endian rule. This
+preserves every 32-bit pattern without relying on native machine endianness.
+
+CKPool supplies the Stratum `previous_block_hash` in 32-bit-word-swapped form.
+Conversion to the header's internal hash order reverses the bytes within each
+successive four-byte chunk while leaving the eight chunks in place; it is not a
+whole-hash reversal. By contrast, the raw Merkle root returned by
+`calculate_merkle_root` is already in the internal byte order used by the
+serialized header and is copied unchanged.
+
+These rules were verified against the [Bitcoin block-header
+reference](https://developer.bitcoin.org/reference/block_chain.html#block-headers),
+Bitcoin Core's [genesis block
+constants](https://github.com/bitcoin/bitcoin/blob/e75b76b12c5dcaf1c3b9f02d8739b1f551dcf421/src/kernel/chainparams.cpp),
+and CKPool's [Stratum/header conversion
+code](https://github.com/ckolivas/ckpool/blob/308410ddf321349704f252f36b82d77f2ae007fc/src/stratifier.c#L1594-L1610).
+Protocol hexadecimal, raw digest bytes, serialized header order, and reversed
+human-readable hash display order are distinct representations. Display-order
+conversion is not part of the serializer.
+
+This slice does not hash headers, decode compact targets, compare targets,
+generate or iterate nonces, mine, perform networking, or submit shares. Header
+hashing and target comparison remain deferred stages.
 
 ## Compute Backend and Compute Profile
 
@@ -213,6 +247,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
 
     src/hashphere/mining/
     ├── coinbase.py
+    ├── header.py
     ├── job.py
     ├── merkle.py
     ├── engine.py
@@ -226,6 +261,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
 Responsibilities:
 
 - `coinbase.py`: assemble and hash raw coinbase transaction bytes
+- `header.py`: serialize validated jobs and raw Merkle roots into 80-byte headers
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
 - `engine.py`: coordinate mining jobs and search operations
