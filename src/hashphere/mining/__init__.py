@@ -29,6 +29,7 @@ from hashphere.mining.target import (
     TargetValidationError,
     block_hash_to_int,
     decode_compact_target,
+    difficulty_to_share_target,
     hash_meets_target,
 )
 
@@ -50,6 +51,7 @@ __all__ = [
     "build_coinbase_transaction",
     "calculate_merkle_root",
     "decode_compact_target",
+    "difficulty_to_share_target",
     "hash_block_header",
     "hash_coinbase_transaction",
     "hash_meets_target",

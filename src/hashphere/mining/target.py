@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import math
 import string
+from fractions import Fraction
 
 _HEX_DIGITS = frozenset(string.hexdigits)
 _COMPACT_HEX_LENGTH = 8
 _HASH_BYTE_LENGTH = 32
 _MAX_UINT256 = (1 << 256) - 1
+_DIFFICULTY_1_TARGET = 0x00000000FFFF0000000000000000000000000000000000000000000000000000
 
 
 class TargetError(Exception):
@@ -72,6 +75,18 @@ def hash_meets_target(block_hash: bytes, target: int) -> bool:
     return hash_value <= target
 
 
+def difficulty_to_share_target(difficulty: int | float) -> int:
+    """Convert a Stratum difficulty to an exact, floor-rounded share target."""
+
+    ratio = _difficulty_as_fraction(difficulty)
+    target = (_DIFFICULTY_1_TARGET * ratio.denominator) // ratio.numerator
+    if target == 0:
+        raise TargetValidationError("difficulty produces a zero share target")
+    if target > _MAX_UINT256:
+        raise TargetValidationError("difficulty produces a share target above 2**256 - 1")
+    return target
+
+
 def _validate_network_bits(value: object) -> None:
     if not isinstance(value, str):
         raise TargetValidationError("network_bits must be a string")
@@ -81,3 +96,15 @@ def _validate_network_bits(value: object) -> None:
         raise TargetValidationError("network_bits must contain exactly 8 hexadecimal characters")
     if any(character not in _HEX_DIGITS for character in value):
         raise TargetValidationError("network_bits must contain only hexadecimal characters")
+
+
+def _difficulty_as_fraction(value: object) -> Fraction:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TargetValidationError("difficulty must be an integer or float")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise TargetValidationError("difficulty must be finite")
+    if value <= 0:
+        raise TargetValidationError("difficulty must be greater than zero")
+    if isinstance(value, int):
+        return Fraction(value, 1)
+    return Fraction(str(value))

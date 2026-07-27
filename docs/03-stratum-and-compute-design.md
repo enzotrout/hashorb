@@ -235,9 +235,43 @@ The usual displayed block-hash string is a separate presentation convention and
 is not used in production comparison.
 
 Meeting the network target identifies a block candidate; it is distinct from
-meeting CKPool's easier share target. CKPool share-target calculation,
-difficulty conversion, block-candidate handling, nonce generation and
-iteration, mining loops, networking, and share submission remain deferred.
+meeting CKPool's easier share target. Share-target calculation belongs to the
+boundary below.
+
+## Stratum Share Target Boundary
+
+`difficulty_to_share_target` converts the positive integer or decimal float
+from `mining.set_difficulty` into a full share target. Stratum difficulty uses
+this exact difficulty-1 target:
+
+    00000000ffff0000000000000000000000000000000000000000000000000000
+
+The conversion is the mathematical floor of:
+
+    difficulty-1 target / difficulty
+
+Integer difficulties become `Fraction(difficulty, 1)`. Finite floats first use
+their decimal string representation through `Fraction(str(difficulty))`. The
+target is then calculated with integer multiplication and floor division:
+
+    (difficulty-1 target * ratio.denominator) // ratio.numerator
+
+This avoids binary floating-point target division and makes decimal Stratum
+values such as `0.01` deterministic. Results must remain within the inclusive
+unsigned 256-bit range; the implementation rejects rather than clamps zero or
+overflowing targets.
+
+The difficulty-1 convention is documented by the [Stratum V1 protocol
+reference](https://reference.cash/mining/stratum-protocol#mining-set-difficulty)
+and matches the constant and division used by [CKPool](https://github.com/ckolivas/ckpool/blob/308410ddf321349704f252f36b82d77f2ae007fc/src/libckpool.c#L2089-L2095)
+and [cgminer](https://github.com/ckolivas/cgminer/blob/b8491c66e7e22f23a9edf095dd1337ee581e88bd/cgminer.c#L4276-L4282).
+
+The network target still comes independently from `network_bits`; the share
+target comes from the current difficulty snapshot. Both use the existing
+inclusive `hash_meets_target` comparison without duplicating comparison logic.
+Nonce search is the next deferred stage. Block-candidate handling, share
+submission, networking, work cancellation, multiprocessing, and GPU execution
+also remain deferred.
 
 ## Compute Backend and Compute Profile
 
@@ -326,7 +360,7 @@ Responsibilities:
 - `header.py`: serialize and hash raw 80-byte block headers
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
-- `target.py`: decode network targets and compare raw block-hash integers
+- `target.py`: calculate targets and compare raw block-hash integers
 - `engine.py`: coordinate mining jobs and search operations
 - `profiles.py`: define Lite, Auto, and Max policies
 - `scheduler.py`: control worker allocation and duty cycles
