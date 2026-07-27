@@ -107,9 +107,9 @@ class ContinuousMiningResult:
             _validate_nonnegative_integer(value, name)
         if self.jobs_used > self.chunks_completed:
             raise ContinuousMiningValidationError("jobs_used cannot exceed chunks_completed")
-        if self.job_replacements > max(0, self.jobs_used - 1):
+        if self.job_replacements > self.chunks_completed:
             raise ContinuousMiningValidationError(
-                "job_replacements cannot exceed searched job transitions"
+                "job_replacements cannot exceed completed chunk boundaries"
             )
 
         submitted_outcome = self.outcome in {

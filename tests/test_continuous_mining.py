@@ -89,6 +89,7 @@ class Harness:
     accepted: bool = True
     stop_during_search_call: int | None = None
     stop_during_receive_call: int | None = None
+    stop_during_prepare_call: int | None = None
     prepare_calls: list[tuple[MiningJob, str]] = field(default_factory=list)
     search_calls: list[tuple[PreparedMiningWork, int, int]] = field(default_factory=list)
     receive_timeouts: list[float] = field(default_factory=list)
@@ -97,6 +98,8 @@ class Harness:
 
     def prepare(self, job: MiningJob, extra_nonce_2: str) -> PreparedMiningWork:
         self.prepare_calls.append((job, extra_nonce_2))
+        if self.stop_during_prepare_call == len(self.prepare_calls):
+            self.controller.request_stop()
         return make_work(job, extra_nonce_2)
 
     def search(
@@ -334,6 +337,22 @@ def test_repeated_stop_requests_are_safe() -> None:
     controller.request_stop()
 
     assert controller.stop_requested is True
+
+
+def test_stop_during_replacement_preparation_prevents_next_search() -> None:
+    harness = Harness(
+        notifications=deque([notification("replacement"), None]),
+        stop_during_prepare_call=2,
+    )
+
+    _, _, result = run_with_harness(ContinuousMiningPlan(0, 1), harness)
+
+    assert result.outcome is ContinuousMiningOutcome.STOPPED_BY_USER
+    assert [work.job_id for work, _, _ in harness.search_calls] == ["initial-job"]
+    assert result.jobs_used == 1
+    assert result.job_replacements == 1
+    assert result.final_job.job_id == "replacement"
+    assert harness.receive_timeouts == [0.0, 0.0]
 
 
 @pytest.mark.parametrize("clean_jobs", [True, False])
