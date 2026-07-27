@@ -15,6 +15,11 @@ from hashphere.mining.progression import (
     mining_work_identity,
     prepare_work_variant,
 )
+from hashphere.mining.recovery import (
+    StratumMiningSession,
+    StratumRecoveryStage,
+    StratumRecoveryStatistics,
+)
 from hashphere.mining.search import (
     NonceSearchMatch,
     NonceSearchResult,
@@ -26,12 +31,18 @@ from hashphere.network.stratum.messages import (
     MiningNotifyNotification,
     SetDifficultyNotification,
 )
+from hashphere.network.stratum.transport import StratumConnectionError
 
 type MiningNotification = SetDifficultyNotification | MiningNotifyNotification
 type NotificationReceiver = Callable[[float], MiningNotification | None]
 type WorkPreparer = Callable[[MiningJob, str], PreparedMiningWork]
 type RangeSearcher = Callable[[PreparedMiningWork, int, int], NonceSearchResult]
 type ShareSubmitter = Callable[[PreparedMiningWork, NonceSearchMatch], bool]
+type SessionRecoverer = Callable[
+    [StratumConnectionError, StratumRecoveryStage],
+    StratumMiningSession | None,
+]
+type RecoveryStatisticsProvider = Callable[[], StratumRecoveryStatistics]
 
 _NONCE_LIMIT = 1 << 32
 _MAX_NONCE = _NONCE_LIMIT - 1
@@ -97,6 +108,10 @@ class ContinuousMiningResult:
     extra_nonce_2_cycles_completed: int
     network_time_rolls: int
     duplicate_work_ignored: int
+    reconnect_attempts: int
+    successful_reconnects: int
+    failed_reconnect_attempts: int
+    sessions_established: int
     total_hashes_checked: int
     total_elapsed_ns: int
 
@@ -118,6 +133,10 @@ class ContinuousMiningResult:
             ("extra_nonce_2_cycles_completed", self.extra_nonce_2_cycles_completed),
             ("network_time_rolls", self.network_time_rolls),
             ("duplicate_work_ignored", self.duplicate_work_ignored),
+            ("reconnect_attempts", self.reconnect_attempts),
+            ("successful_reconnects", self.successful_reconnects),
+            ("failed_reconnect_attempts", self.failed_reconnect_attempts),
+            ("sessions_established", self.sessions_established),
             ("total_hashes_checked", self.total_hashes_checked),
             ("total_elapsed_ns", self.total_elapsed_ns),
         ):
@@ -131,6 +150,20 @@ class ContinuousMiningResult:
         if self.job_replacements > self.chunks_completed:
             raise ContinuousMiningValidationError(
                 "job_replacements cannot exceed completed chunk boundaries"
+            )
+        if self.sessions_established <= 0:
+            raise ContinuousMiningValidationError("sessions_established must be positive")
+        if self.successful_reconnects > self.reconnect_attempts:
+            raise ContinuousMiningValidationError(
+                "successful_reconnects cannot exceed reconnect_attempts"
+            )
+        if self.failed_reconnect_attempts > self.reconnect_attempts:
+            raise ContinuousMiningValidationError(
+                "failed_reconnect_attempts cannot exceed reconnect_attempts"
+            )
+        if self.successful_reconnects >= self.sessions_established:
+            raise ContinuousMiningValidationError(
+                "successful_reconnects must be fewer than sessions_established"
             )
 
         submitted_outcome = self.outcome in {
@@ -358,6 +391,8 @@ def run_continuous_mining(
     observer: ContinuousMiningObserver | None = None,
     prepare_work: WorkPreparer = prepare_mining_work,
     search_range: RangeSearcher = search_nonce_range,
+    recover_session: SessionRecoverer | None = None,
+    recovery_statistics: RecoveryStatisticsProvider | None = None,
 ) -> ContinuousMiningResult:
     """Mine sequential chunks until a controlled terminal outcome occurs."""
 
@@ -371,6 +406,8 @@ def run_continuous_mining(
         submit_share,
         prepare_work,
         search_range,
+        recover_session,
+        recovery_statistics,
     )
     event_observer: ContinuousMiningObserver = (
         NullContinuousMiningObserver() if observer is None else observer
@@ -391,10 +428,18 @@ def run_continuous_mining(
             extra_nonce_2_cycles_completed=0,
             network_time_rolls=0,
             duplicate_work_ignored=0,
+            reconnect_attempts=0,
+            successful_reconnects=0,
+            failed_reconnect_attempts=0,
+            sessions_established=1,
             total_hashes_checked=0,
             total_elapsed_ns=0,
         )
     current_job = initial_job
+    current_assembler = assembler
+    current_receive_notification = receive_notification
+    current_submit_share = submit_share
+    current_extra_nonce_2_seed = extra_nonce_2
     current_cursor = MiningWorkCursor.start(current_job, extra_nonce_2)
     current_work = prepare_work_variant(
         current_cursor.current_variant,
@@ -425,6 +470,20 @@ def run_continuous_mining(
         match: NonceSearchMatch | None = None,
         pool_accepted: bool | None = None,
     ) -> ContinuousMiningResult:
+        statistics = (
+            StratumRecoveryStatistics(
+                reconnect_attempts=0,
+                successful_reconnects=0,
+                failed_reconnect_attempts=0,
+                sessions_established=1,
+            )
+            if recovery_statistics is None
+            else recovery_statistics()
+        )
+        if not isinstance(statistics, StratumRecoveryStatistics):
+            raise ContinuousMiningValidationError(
+                "recovery_statistics must return StratumRecoveryStatistics"
+            )
         return ContinuousMiningResult(
             outcome=outcome,
             initial_job=initial_job,
@@ -439,6 +498,10 @@ def run_continuous_mining(
             extra_nonce_2_cycles_completed=extra_nonce_2_cycles,
             network_time_rolls=network_time_rolls,
             duplicate_work_ignored=duplicates,
+            reconnect_attempts=statistics.reconnect_attempts,
+            successful_reconnects=statistics.successful_reconnects,
+            failed_reconnect_attempts=statistics.failed_reconnect_attempts,
+            sessions_established=statistics.sessions_established,
             total_hashes_checked=total_hashes,
             total_elapsed_ns=total_elapsed_ns,
         )
@@ -477,7 +540,10 @@ def run_continuous_mining(
             ignore_duplicate("pool_context")
             return False
 
-        selected_cursor = MiningWorkCursor.start(selected_job, extra_nonce_2)
+        selected_cursor = MiningWorkCursor.start(
+            selected_job,
+            current_extra_nonce_2_seed,
+        )
         selected_work = prepare_work_variant(
             selected_cursor.current_variant,
             prepare_work=prepare_work,
@@ -500,6 +566,81 @@ def run_continuous_mining(
         next_nonce = plan.start_nonce
         current_work_searched = False
         current_job_searched = False
+        return True
+
+    def install_recovered_session(session: StratumMiningSession) -> None:
+        nonlocal current_assembler
+        nonlocal current_cursor
+        nonlocal current_extra_nonce_2_seed
+        nonlocal current_job
+        nonlocal current_job_searched
+        nonlocal current_pool_identity
+        nonlocal current_receive_notification
+        nonlocal current_submit_share
+        nonlocal current_variant_reason
+        nonlocal current_work
+        nonlocal current_work_identity
+        nonlocal current_work_searched
+        nonlocal last_ignored_pool_identity
+        nonlocal next_nonce
+        nonlocal replacements
+
+        recovered_cursor = MiningWorkCursor.start(
+            session.initial_job,
+            session.extra_nonce_2_seed,
+        )
+        recovered_work = prepare_work_variant(
+            recovered_cursor.current_variant,
+            prepare_work=prepare_work,
+        )
+        if current_job_searched:
+            replacements += 1
+            event_observer.job_replaced(
+                current_job,
+                session.initial_job,
+                replacements,
+            )
+        current_assembler = session.assembler
+        current_cursor = recovered_cursor
+        current_extra_nonce_2_seed = session.extra_nonce_2_seed
+        current_job = session.initial_job
+        current_job_searched = False
+        current_pool_identity = mining_job_context_identity(session.initial_job)
+        current_receive_notification = session.receive_notification
+
+        def submit_recovered_share(
+            work: PreparedMiningWork,
+            match: NonceSearchMatch,
+        ) -> bool:
+            return session.submit_share(
+                work.job_id,
+                work.extra_nonce_2,
+                work.network_time,
+                match.nonce,
+            )
+
+        current_submit_share = submit_recovered_share
+        current_variant_reason = "recovered_session"
+        current_work = recovered_work
+        current_work_identity = mining_work_identity(recovered_work)
+        current_work_searched = False
+        last_ignored_pool_identity = None
+        next_nonce = plan.start_nonce
+
+    def recover_connection(
+        error: StratumConnectionError,
+        stage: StratumRecoveryStage,
+    ) -> bool:
+        if recover_session is None:
+            raise error
+        recovered = recover_session(error, stage)
+        if recovered is None:
+            return False
+        if not isinstance(recovered, StratumMiningSession):
+            raise ContinuousMiningValidationError(
+                "recover_session must return StratumMiningSession or None"
+            )
+        install_recovered_session(recovered)
         return True
 
     while True:
@@ -536,7 +677,7 @@ def run_continuous_mining(
             event_observer.candidate_found(current_work, match)
             if stop_token.stop_requested:
                 observe_stop()
-            accepted = submit_share(current_work, match)
+            accepted = current_submit_share(current_work, match)
             if not isinstance(accepted, bool):
                 raise ContinuousMiningValidationError("submit_share must return an actual Boolean")
             if stop_token.stop_requested:
@@ -560,12 +701,17 @@ def run_continuous_mining(
         if next_nonce == _NONCE_LIMIT:
             event_observer.nonce_space_exhausted(current_work)
 
-        selected_job = _drain_notifications(
-            assembler,
-            stop_token,
-            receive_notification,
-            event_observer,
-        )
+        try:
+            selected_job = _drain_notifications(
+                current_assembler,
+                stop_token,
+                current_receive_notification,
+                event_observer,
+            )
+        except StratumConnectionError as error:
+            if not recover_connection(error, StratumRecoveryStage.NOTIFICATION_POLL):
+                return finish_stopped()
+            continue
         if stop_token.stop_requested:
             return finish_stopped()
         if selected_job is not None:
@@ -610,16 +756,30 @@ def run_continuous_mining(
         while True:
             if stop_token.stop_requested:
                 return finish_stopped()
-            notification = receive_notification(_NOTIFICATION_WAIT_SECONDS)
+            try:
+                notification = current_receive_notification(_NOTIFICATION_WAIT_SECONDS)
+            except StratumConnectionError as error:
+                if not recover_connection(error, StratumRecoveryStage.REPLACEMENT_WAIT):
+                    return finish_stopped()
+                break
             if notification is None:
                 continue
-            waiting_job = _apply_notification(assembler, notification, event_observer)
-            drained_job = _drain_notifications(
-                assembler,
-                stop_token,
-                receive_notification,
+            waiting_job = _apply_notification(
+                current_assembler,
+                notification,
                 event_observer,
             )
+            try:
+                drained_job = _drain_notifications(
+                    current_assembler,
+                    stop_token,
+                    current_receive_notification,
+                    event_observer,
+                )
+            except StratumConnectionError as error:
+                if not recover_connection(error, StratumRecoveryStage.REPLACEMENT_WAIT):
+                    return finish_stopped()
+                break
             if stop_token.stop_requested:
                 return finish_stopped()
             if drained_job is not None:
@@ -672,6 +832,8 @@ def _validate_run_inputs(
     submit_share: object,
     prepare_work: object,
     search_range: object,
+    recover_session: object,
+    recovery_statistics: object,
 ) -> None:
     if not isinstance(plan, ContinuousMiningPlan):
         raise ContinuousMiningValidationError("plan must be a ContinuousMiningPlan")
@@ -690,6 +852,16 @@ def _validate_run_inputs(
         (search_range, "search_range"),
     ):
         if not callable(callback):
+            raise ContinuousMiningValidationError(f"{name} must be callable")
+    if (recover_session is None) != (recovery_statistics is None):
+        raise ContinuousMiningValidationError(
+            "recover_session and recovery_statistics must be provided together"
+        )
+    for callback, name in (
+        (recover_session, "recover_session"),
+        (recovery_statistics, "recovery_statistics"),
+    ):
+        if callback is not None and not callable(callback):
             raise ContinuousMiningValidationError(f"{name} must be callable")
 
 

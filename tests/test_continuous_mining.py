@@ -19,12 +19,18 @@ from hashphere.mining import (
     NonceSearchResult,
     PreparedMiningWork,
     StopController,
+    StratumMiningSession,
+    StratumRecoveryStage,
+    StratumRecoveryStatistics,
     run_continuous_mining,
 )
 from hashphere.mining.continuous import MiningNotification
 from hashphere.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
+    StratumClientState,
+    StratumConnectionError,
+    StratumProtocolError,
     SubscribeResult,
 )
 
@@ -151,6 +157,8 @@ class Harness:
         if not values:
             return None
         value = values.popleft()
+        if isinstance(value, BaseException):
+            raise value
         return value  # type: ignore[return-value]
 
     def submit(self, work: PreparedMiningWork, match: NonceSearchMatch) -> bool:
@@ -237,6 +245,94 @@ class Harness:
 
     def duplicate_work_ignored(self, duplicate_count: int, reason: str) -> None:
         self.observations.append(("duplicate", duplicate_count, reason))
+
+
+class RecoveredClient:
+    """Authorized socket-free client owned by one recovered test session."""
+
+    def __init__(
+        self,
+        result: SubscribeResult,
+        *,
+        notifications: list[object | None] | None = None,
+        submit_failure: BaseException | None = None,
+    ) -> None:
+        self.result = result
+        self.notifications = deque(notifications or [])
+        self.submit_failure = submit_failure
+        self.state = StratumClientState.AUTHORIZED
+        self.submit_calls: list[tuple[str, str, str, int]] = []
+        self.close_calls = 0
+
+    def handshake(self) -> SubscribeResult:
+        return self.result
+
+    def poll_notification(
+        self,
+        timeout_seconds: float = 0.0,
+    ) -> SetDifficultyNotification | MiningNotifyNotification | None:
+        del timeout_seconds
+        if not self.notifications:
+            return None
+        value = self.notifications.popleft()
+        if isinstance(value, BaseException):
+            raise value
+        return value  # type: ignore[return-value]
+
+    def submit_share(
+        self,
+        job_id: str,
+        extra_nonce_2: str,
+        network_time: str,
+        nonce: int,
+    ) -> bool:
+        self.submit_calls.append((job_id, extra_nonce_2, network_time, nonce))
+        if self.submit_failure is not None:
+            raise self.submit_failure
+        return True
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.state = StratumClientState.DISCONNECTED
+
+
+def recovered_session(
+    *,
+    job_id: str = "recovered-job",
+    extra_nonce_2_size: int = 1,
+    seed: str = "cd",
+    network_time: str = "65f04abd",
+    difficulty_value: int | float = 200,
+    notifications: list[object | None] | None = None,
+    submit_failure: BaseException | None = None,
+    session_index: int = 2,
+) -> tuple[StratumMiningSession, RecoveredClient]:
+    """Build one fresh-session result for continuous recovery tests."""
+
+    result = SubscribeResult(
+        subscriptions=(("mining.notify", "subscription-id"),),
+        extra_nonce_1="09000003",
+        extra_nonce_2_size=extra_nonce_2_size,
+    )
+    assembler = MiningJobAssembler(result)
+    assembler.apply_difficulty(SetDifficultyNotification(difficulty=difficulty_value))
+    initial_job = assembler.build_job(notification(job_id, network_time=network_time))
+    client = RecoveredClient(
+        result,
+        notifications=notifications,
+        submit_failure=submit_failure,
+    )
+    return (
+        StratumMiningSession(
+            client=client,
+            subscription=result,
+            assembler=assembler,
+            initial_job=initial_job,
+            extra_nonce_2_seed=seed,
+            session_index=session_index,
+        ),
+        client,
+    )
 
 
 def run_with_harness(
@@ -792,6 +888,278 @@ def test_submission_failure_propagates_without_polling_or_continuation() -> None
     assert len(harness.search_calls) == 1
     assert len(harness.submit_calls) == 1
     assert harness.receive_timeouts == []
+
+
+def test_connection_loss_after_chunk_installs_fresh_session_and_preserves_totals() -> None:
+    harness = Harness(
+        notifications=deque([StratumConnectionError("connection closed")]),
+        elapsed_values=deque([100, 300]),
+    )
+    session, _ = recovered_session(extra_nonce_2_size=2, seed="cdef")
+    recover_calls: list[tuple[StratumConnectionError, StratumRecoveryStage]] = []
+    statistics = StratumRecoveryStatistics(1, 1, 0, 2)
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+
+    def recover(
+        error: StratumConnectionError,
+        stage: StratumRecoveryStage,
+    ) -> StratumMiningSession:
+        recover_calls.append((error, stage))
+        return session
+
+    result = run_continuous_mining(
+        ContinuousMiningPlan(5, 2, 2),
+        assembler,
+        initial_job,
+        "abababab",
+        harness.controller,
+        receive_notification=harness.receive,
+        submit_share=harness.submit,
+        observer=harness,
+        prepare_work=harness.prepare,
+        search_range=harness.search,
+        recover_session=recover,
+        recovery_statistics=lambda: statistics,
+    )
+
+    assert [
+        (work.job_id, work.extra_nonce_2, start, stop) for work, start, stop in harness.search_calls
+    ] == [
+        ("initial-job", "abababab", 5, 7),
+        ("recovered-job", "cdef", 5, 7),
+    ]
+    assert recover_calls[0][1] is StratumRecoveryStage.NOTIFICATION_POLL
+    assert result.chunks_completed == 2
+    assert result.total_hashes_checked == 4
+    assert result.total_elapsed_ns == 400
+    assert result.jobs_used == 2
+    assert result.job_replacements == 1
+    assert result.work_variants_used == 2
+    assert result.reconnect_attempts == 1
+    assert result.successful_reconnects == 1
+    assert result.failed_reconnect_attempts == 0
+    assert result.sessions_established == 2
+
+
+def test_recovery_after_local_progression_discards_stale_cursor_and_keeps_counters() -> None:
+    harness = Harness(
+        notifications=deque([None, StratumConnectionError("connection closed")]),
+    )
+    session, _ = recovered_session(seed="10")
+    statistics = StratumRecoveryStatistics(2, 1, 1, 2)
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+
+    result = run_continuous_mining(
+        ContinuousMiningPlan(0xFFFFFFFF, 1, 3),
+        assembler,
+        initial_job,
+        "abababab",
+        harness.controller,
+        receive_notification=harness.receive,
+        submit_share=harness.submit,
+        observer=harness,
+        prepare_work=harness.prepare,
+        search_range=harness.search,
+        recover_session=lambda error, stage: session,
+        recovery_statistics=lambda: statistics,
+    )
+
+    assert [extra for _, extra in harness.prepare_calls] == [
+        "abababab",
+        "abababac",
+        "10",
+    ]
+    assert all((start, stop) == (0xFFFFFFFF, 2**32) for _, start, stop in harness.search_calls)
+    assert result.extra_nonce_2_advances == 1
+    assert result.work_variants_used == 3
+    assert result.total_hashes_checked == 3
+    assert result.reconnect_attempts == 2
+    assert result.failed_reconnect_attempts == 1
+
+
+def test_new_session_is_explicit_acceptance_context_even_when_work_identity_matches() -> None:
+    harness = Harness(
+        notifications=deque([StratumConnectionError("connection closed")]),
+    )
+    session, _ = recovered_session(
+        job_id="initial-job",
+        extra_nonce_2_size=4,
+        seed="abababab",
+        network_time="65f04abc",
+        difficulty_value=100,
+    )
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+
+    result = run_continuous_mining(
+        ContinuousMiningPlan(7, 1, 2),
+        assembler,
+        initial_job,
+        "abababab",
+        harness.controller,
+        receive_notification=harness.receive,
+        submit_share=harness.submit,
+        observer=harness,
+        prepare_work=harness.prepare,
+        search_range=harness.search,
+        recover_session=lambda error, stage: session,
+        recovery_statistics=lambda: StratumRecoveryStatistics(1, 1, 0, 2),
+    )
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (7, 8),
+        (7, 8),
+    ]
+    assert result.job_replacements == 1
+    assert result.duplicate_work_ignored == 0
+    assert result.sessions_established == 2
+
+
+def test_protocol_poll_failure_is_terminal_and_does_not_invoke_recovery() -> None:
+    harness = Harness(notifications=deque([StratumProtocolError("malformed")]))
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+    recover_calls = 0
+
+    def recover(
+        error: StratumConnectionError,
+        stage: StratumRecoveryStage,
+    ) -> StratumMiningSession | None:
+        nonlocal recover_calls
+        del error, stage
+        recover_calls += 1
+        return None
+
+    with pytest.raises(StratumProtocolError):
+        run_continuous_mining(
+            ContinuousMiningPlan(0, 1, 2),
+            assembler,
+            initial_job,
+            "abababab",
+            harness.controller,
+            receive_notification=harness.receive,
+            submit_share=harness.submit,
+            prepare_work=harness.prepare,
+            search_range=harness.search,
+            recover_session=recover,
+            recovery_statistics=lambda: StratumRecoveryStatistics(0, 0, 0, 1),
+        )
+
+    assert recover_calls == 0
+    assert len(harness.search_calls) == 1
+
+
+def test_submission_connection_failure_is_terminal_and_never_recovers() -> None:
+    harness = Harness(match_call=1)
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+    recover_calls = 0
+
+    def fail_submit(work: PreparedMiningWork, match: NonceSearchMatch) -> bool:
+        del work, match
+        raise StratumConnectionError("uncertain submission")
+
+    def recover(
+        error: StratumConnectionError,
+        stage: StratumRecoveryStage,
+    ) -> StratumMiningSession | None:
+        nonlocal recover_calls
+        del error, stage
+        recover_calls += 1
+        return None
+
+    with pytest.raises(StratumConnectionError, match="uncertain submission"):
+        run_continuous_mining(
+            ContinuousMiningPlan(0, 1),
+            assembler,
+            initial_job,
+            "abababab",
+            harness.controller,
+            receive_notification=harness.receive,
+            submit_share=fail_submit,
+            prepare_work=harness.prepare,
+            search_range=harness.search,
+            recover_session=recover,
+            recovery_statistics=lambda: StratumRecoveryStatistics(0, 0, 0, 1),
+        )
+
+    assert recover_calls == 0
+    assert len(harness.search_calls) == 1
+
+
+def test_stop_during_recovery_returns_controlled_outcome_without_new_search() -> None:
+    harness = Harness(
+        notifications=deque([StratumConnectionError("connection closed")]),
+    )
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+
+    def recover(
+        error: StratumConnectionError,
+        stage: StratumRecoveryStage,
+    ) -> None:
+        del error, stage
+        harness.controller.request_stop()
+
+    result = run_continuous_mining(
+        ContinuousMiningPlan(0, 1),
+        assembler,
+        initial_job,
+        "abababab",
+        harness.controller,
+        receive_notification=harness.receive,
+        submit_share=harness.submit,
+        observer=harness,
+        prepare_work=harness.prepare,
+        search_range=harness.search,
+        recover_session=recover,
+        recovery_statistics=lambda: StratumRecoveryStatistics(0, 0, 0, 1),
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.STOPPED_BY_USER
+    assert len(harness.search_calls) == 1
+    assert harness.observations[-1] == ("stopped",)
+
+
+def test_connection_loss_during_terminal_job_wait_recovers_without_busy_loop() -> None:
+    harness = Harness(
+        timed_notifications=deque([StratumConnectionError("connection closed")]),
+    )
+    session, _ = recovered_session(seed="22")
+    assembler = make_assembler(extra_nonce_2_size=1)
+    initial_job = assembler.build_job(notification("initial-job", network_time="ffffffff"))
+    stages: list[StratumRecoveryStage] = []
+
+    def recover(
+        error: StratumConnectionError,
+        stage: StratumRecoveryStage,
+    ) -> StratumMiningSession:
+        del error
+        stages.append(stage)
+        return session
+
+    result = run_continuous_mining(
+        ContinuousMiningPlan(0xFFFFFFFF, 1, 257),
+        assembler,
+        initial_job,
+        "00",
+        harness.controller,
+        receive_notification=harness.receive,
+        submit_share=harness.submit,
+        observer=harness,
+        prepare_work=harness.prepare,
+        search_range=harness.search,
+        recover_session=recover,
+        recovery_statistics=lambda: StratumRecoveryStatistics(1, 1, 0, 2),
+    )
+
+    assert stages == [StratumRecoveryStage.REPLACEMENT_WAIT]
+    assert len(harness.search_calls) == 257
+    assert harness.search_calls[-1][0].job_id == "recovered-job"
+    assert result.extra_nonce_2_cycles_completed == 1
+    assert result.sessions_established == 2
 
 
 def test_unsupported_notification_fails_without_another_search() -> None:
