@@ -89,6 +89,11 @@ def test_empty_file_returns_immutable_zero_summary(tmp_path: Path) -> None:
         completion_outcome_counts=(),
         difficulty_event_count=0,
         mining_job_event_count=0,
+        work_variant_count=0,
+        extra_nonce_2_advance_count=0,
+        extra_nonce_2_cycle_count=0,
+        network_time_roll_count=0,
+        duplicate_work_ignored_count=0,
         completed_nonce_range_count=0,
         total_hashes_checked=0,
         total_mining_elapsed_ns=0,
@@ -289,6 +294,78 @@ def test_mining_events_are_aggregated_with_weighted_rate(tmp_path: Path) -> None
     assert summary.rejected_share_count == 1
 
 
+def test_progression_events_are_aggregated_without_affecting_weighted_rate(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "progression.jsonl"
+    records = [
+        event_record("mine", 1, "command_started", command="stratum-mine"),
+        event_record(
+            "mine",
+            2,
+            "mining_work_advanced",
+            command="stratum-mine",
+            reason="initial_job",
+            work_variant_index=0,
+            extra_nonce_2_advance_count=0,
+            network_time_roll_count=0,
+        ),
+        event_record(
+            "mine",
+            3,
+            "mining_work_advanced",
+            command="stratum-mine",
+            reason="extra_nonce_2",
+            work_variant_index=1,
+            extra_nonce_2_advance_count=1,
+            network_time_roll_count=0,
+        ),
+        event_record(
+            "mine",
+            4,
+            "extra_nonce_2_cycle_completed",
+            command="stratum-mine",
+            cycle_count=1,
+        ),
+        event_record(
+            "mine",
+            5,
+            "network_time_rolled",
+            command="stratum-mine",
+            roll_count=1,
+        ),
+        event_record(
+            "mine",
+            6,
+            "mining_work_advanced",
+            command="stratum-mine",
+            reason="network_time",
+            work_variant_index=2,
+            extra_nonce_2_advance_count=2,
+            network_time_roll_count=1,
+        ),
+        event_record(
+            "mine",
+            7,
+            "duplicate_work_ignored",
+            command="stratum-mine",
+            duplicate_count=1,
+            reason="pool_context",
+        ),
+    ]
+    write_records(path, records)
+
+    summary = summarize_jsonl(path)
+
+    assert summary.work_variant_count == 3
+    assert summary.extra_nonce_2_advance_count == 2
+    assert summary.extra_nonce_2_cycle_count == 1
+    assert summary.network_time_roll_count == 1
+    assert summary.duplicate_work_ignored_count == 1
+    assert summary.completed_nonce_range_count == 0
+    assert summary.weighted_hashes_per_second is None
+
+
 @pytest.mark.parametrize("with_range", [False, True])
 def test_weighted_rate_is_unavailable_without_positive_elapsed_time(
     tmp_path: Path,
@@ -472,6 +549,21 @@ def test_invalid_utf8_is_rejected(tmp_path: Path) -> None:
         ),
         ("share_submission_completed", {"accepted": 1}),
         ("share_submission_completed", {"accepted": "true"}),
+        (
+            "mining_work_advanced",
+            {
+                "reason": "extra_nonce_2",
+                "work_variant_index": True,
+                "extra_nonce_2_advance_count": 1,
+                "network_time_roll_count": 0,
+            },
+        ),
+        ("extra_nonce_2_cycle_completed", {"cycle_count": 0}),
+        ("network_time_rolled", {"roll_count": -1}),
+        (
+            "duplicate_work_ignored",
+            {"duplicate_count": 1, "reason": ""},
+        ),
     ],
 )
 def test_malformed_known_event_fields_are_rejected(

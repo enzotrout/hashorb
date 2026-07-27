@@ -425,6 +425,10 @@ def test_three_chunk_limit_prints_sanitized_aggregate_and_closes(
     output = capsys.readouterr().out
     assert "Maximum chunks: 3" in output
     assert "Chunks completed: 3" in output
+    assert "Work variants used: 1" in output
+    assert "Extra nonce 2 advances: 0" in output
+    assert "Network-time rolls: 0" in output
+    assert "Duplicate work ignored: 0" in output
     assert "Hashes checked: 6" in output
     assert "Elapsed time: 1000 ns" in output
     assert "Hashes per second: 6000000.00" in output
@@ -432,6 +436,55 @@ def test_three_chunk_limit_prints_sanitized_aggregate_and_closes(
     assert settings.stratum_password not in output
     assert settings.stratum_username not in output
     assert harness.generated_extra_nonce_2 not in output
+
+
+def test_controlled_nonce_boundary_plan_reports_safe_progression_totals(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "progression.jsonl"
+    client = FakeClient()
+    harness, _ = install_fakes(monkeypatch, client, deterministic_log=True)
+
+    assert (
+        cli_module.main(
+            arguments(
+                start_nonce="4294967295",
+                chunk_size="1",
+                max_chunks="3",
+                log_file=path,
+            )
+        )
+        == 0
+    )
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (0xFFFFFFFF, 2**32),
+        (0xFFFFFFFF, 2**32),
+        (0xFFFFFFFF, 2**32),
+    ]
+    assert [extra for _, extra in harness.prepare_calls] == [
+        "abababab",
+        "abababac",
+        "abababad",
+    ]
+    assert harness.generated_sizes == [4]
+    output = capsys.readouterr().out
+    assert "Work variants used: 3" in output
+    assert "Extra nonce 2 advances: 2" in output
+    assert "Extra nonce 2 cycles: 0" in output
+    assert "Network-time rolls: 0" in output
+    assert "Duplicate work ignored: 0" in output
+    assert harness.generated_extra_nonce_2 not in output
+
+    summary = summarize_jsonl(path)
+    assert summary.work_variant_count == 3
+    assert summary.extra_nonce_2_advance_count == 2
+    assert summary.extra_nonce_2_cycle_count == 0
+    assert summary.network_time_roll_count == 0
+    assert summary.duplicate_work_ignored_count == 0
+    assert harness.generated_extra_nonce_2 not in path.read_text(encoding="utf-8")
 
 
 def test_omitted_max_chunks_prints_unlimited_and_signal_stops_after_chunk(

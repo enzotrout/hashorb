@@ -25,6 +25,7 @@ from hashphere.mining import (
     MiningJob,
     MiningJobAssembler,
     MiningJobError,
+    MiningWorkProgressionError,
     NonceSearchError,
     NonceSearchMatch,
     NonceSearchResult,
@@ -467,6 +468,11 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
     print("\nMining:")
     print(f"  Difficulty events: {summary.difficulty_event_count}")
     print(f"  Jobs received: {summary.mining_job_event_count}")
+    print(f"  Work variants searched: {summary.work_variant_count}")
+    print(f"  Extra nonce 2 advances: {summary.extra_nonce_2_advance_count}")
+    print(f"  Extra nonce 2 cycles: {summary.extra_nonce_2_cycle_count}")
+    print(f"  Network-time rolls: {summary.network_time_roll_count}")
+    print(f"  Duplicate work ignored: {summary.duplicate_work_ignored_count}")
     print(f"  Nonce ranges completed: {summary.completed_nonce_range_count}")
     print(f"  Hashes checked: {summary.total_hashes_checked}")
     print(f"  Mining elapsed: {summary.total_mining_elapsed_ns} ns")
@@ -883,6 +889,7 @@ def _run_stratum_mine(
         BlockHeaderError,
         TargetError,
         NonceSearchError,
+        MiningWorkProgressionError,
         ContinuousMiningError,
         _SignalLifecycleError,
         OSError,
@@ -1498,6 +1505,7 @@ def _error_category(error: BaseException) -> str:
         (BlockHeaderError, "BlockHeaderError"),
         (TargetError, "TargetError"),
         (NonceSearchError, "NonceSearchError"),
+        (MiningWorkProgressionError, "MiningWorkProgressionError"),
         (ChunkedMiningError, "ChunkedMiningError"),
         (ContinuousMiningError, "ContinuousMiningError"),
         (_SignalLifecycleError, "SignalLifecycleError"),
@@ -1664,6 +1672,14 @@ def _print_continuous_mining_outcome(
     print(f"Chunks completed: {result.chunks_completed if result is not None else 0}")
     print(f"Jobs used: {result.jobs_used if result is not None else 0}")
     print(f"Job replacements: {result.job_replacements if result is not None else 0}")
+    print(f"Work variants used: {result.work_variants_used if result is not None else 0}")
+    print(f"Extra nonce 2 advances: {result.extra_nonce_2_advances if result is not None else 0}")
+    print(
+        "Extra nonce 2 cycles: "
+        f"{result.extra_nonce_2_cycles_completed if result is not None else 0}"
+    )
+    print(f"Network-time rolls: {result.network_time_rolls if result is not None else 0}")
+    print(f"Duplicate work ignored: {result.duplicate_work_ignored if result is not None else 0}")
     print(f"Candidates found: {result.candidates_found if result is not None else 0}")
     print(f"Submissions performed: {result.submissions_performed if result is not None else 0}")
     print(f"Hashes checked: {result.total_hashes_checked if result is not None else 0}")

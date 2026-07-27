@@ -45,6 +45,11 @@ class LogSummary:
     completion_outcome_counts: tuple[tuple[str, int], ...]
     difficulty_event_count: int
     mining_job_event_count: int
+    work_variant_count: int
+    extra_nonce_2_advance_count: int
+    extra_nonce_2_cycle_count: int
+    network_time_roll_count: int
+    duplicate_work_ignored_count: int
     completed_nonce_range_count: int
     total_hashes_checked: int
     total_mining_elapsed_ns: int
@@ -74,6 +79,11 @@ class _Accumulator:
     failure_counts: Counter[tuple[str, str]] = field(default_factory=Counter)
     difficulty_event_count: int = 0
     mining_job_event_count: int = 0
+    work_variant_count: int = 0
+    extra_nonce_2_advance_count: int = 0
+    extra_nonce_2_cycle_count: int = 0
+    network_time_roll_count: int = 0
+    duplicate_work_ignored_count: int = 0
     completed_nonce_range_count: int = 0
     total_hashes_checked: int = 0
     total_mining_elapsed_ns: int = 0
@@ -268,6 +278,30 @@ def _aggregate_known_event(
     elif event == "mining_job_received":
         _nonblank_string(_required(record, "job_id"), "job_id")
         accumulator.mining_job_event_count += 1
+    elif event == "mining_work_advanced":
+        reason = _nonblank_string(_required(record, "reason"), "reason")
+        _nonnegative_int(_required(record, "work_variant_index"), "work_variant_index")
+        _nonnegative_int(
+            _required(record, "extra_nonce_2_advance_count"),
+            "extra_nonce_2_advance_count",
+        )
+        _nonnegative_int(
+            _required(record, "network_time_roll_count"),
+            "network_time_roll_count",
+        )
+        accumulator.work_variant_count += 1
+        if reason in {"extra_nonce_2", "network_time"}:
+            accumulator.extra_nonce_2_advance_count += 1
+    elif event == "extra_nonce_2_cycle_completed":
+        _positive_int(_required(record, "cycle_count"), "cycle_count")
+        accumulator.extra_nonce_2_cycle_count += 1
+    elif event == "network_time_rolled":
+        _positive_int(_required(record, "roll_count"), "roll_count")
+        accumulator.network_time_roll_count += 1
+    elif event == "duplicate_work_ignored":
+        _positive_int(_required(record, "duplicate_count"), "duplicate_count")
+        _nonblank_string(_required(record, "reason"), "reason")
+        accumulator.duplicate_work_ignored_count += 1
     elif event == "nonce_range_completed":
         hashes_checked = _nonnegative_int(_required(record, "hashes_checked"), "hashes_checked")
         elapsed_ns = _nonnegative_int(_required(record, "elapsed_ns"), "elapsed_ns")
@@ -303,6 +337,13 @@ def _nonnegative_int(value: object, name: str) -> int:
     parsed = _actual_int(value, name)
     if parsed < 0:
         raise _RecordValidationError(f"{name} must be nonnegative")
+    return parsed
+
+
+def _positive_int(value: object, name: str) -> int:
+    parsed = _actual_int(value, name)
+    if parsed <= 0:
+        raise _RecordValidationError(f"{name} must be positive")
     return parsed
 
 
@@ -378,6 +419,11 @@ def _build_summary(accumulator: _Accumulator) -> LogSummary:
         completion_outcome_counts=tuple(sorted(accumulator.outcome_counts.items())),
         difficulty_event_count=accumulator.difficulty_event_count,
         mining_job_event_count=accumulator.mining_job_event_count,
+        work_variant_count=accumulator.work_variant_count,
+        extra_nonce_2_advance_count=accumulator.extra_nonce_2_advance_count,
+        extra_nonce_2_cycle_count=accumulator.extra_nonce_2_cycle_count,
+        network_time_roll_count=accumulator.network_time_roll_count,
+        duplicate_work_ignored_count=accumulator.duplicate_work_ignored_count,
         completed_nonce_range_count=accumulator.completed_nonce_range_count,
         total_hashes_checked=accumulator.total_hashes_checked,
         total_mining_elapsed_ns=accumulator.total_mining_elapsed_ns,
