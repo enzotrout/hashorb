@@ -108,10 +108,24 @@ normalization, byte reversal, or endian conversion. The caller is responsible
 for choosing or generating `extra_nonce_2`; the assembler only validates its
 type, hexadecimal representation, and exact session-defined size.
 
-This boundary does not parse or otherwise validate the assembled transaction,
-calculate a transaction ID or coinbase hash, apply double-SHA256, calculate a
-Merkle root or target, construct a block header, iterate nonces, hash, perform
-networking, or submit shares. Those stages remain deferred.
+Coinbase assembly does not parse or otherwise validate the assembled
+transaction. Hashing is a separate operation described below.
+
+## Double-SHA256 Boundary
+
+`double_sha256` applies SHA-256 twice to immutable bytes and returns the raw
+32-byte digest. `hash_coinbase_transaction` validates that assembled coinbase
+transaction bytes are nonempty and delegates to that single cryptographic
+primitive. The raw coinbase digest is intended to be the first hash in the
+upcoming Merkle-tree calculation.
+
+The raw internal digest is not byte-reversed or formatted as a displayed
+transaction identifier. Human-readable transaction-ID display order is a
+separate conversion and remains deferred.
+
+This boundary does not calculate a Merkle root or target, construct a block
+header, iterate nonces, mine, perform networking, or submit shares. Merkle-tree
+calculation is the next deferred stage.
 
 ## Compute Backend and Compute Profile
 
@@ -193,13 +207,22 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
 
 Responsibilities:
 
-- `coinbase.py`: assemble raw coinbase transaction bytes from protocol components
+- `coinbase.py`: assemble and hash raw coinbase transaction bytes
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `engine.py`: coordinate mining jobs and search operations
 - `profiles.py`: define Lite, Auto, and Max policies
 - `scheduler.py`: control worker allocation and duty cycles
 - `backends/cpu.py`: implement CPU hashing
 - `backends/gpu.py`: implement future GPU hashing
+
+## Cryptographic Components
+
+    src/hashphere/crypto/
+    └── hashing.py
+
+Responsibilities:
+
+- `hashing.py`: provide reusable raw double-SHA256 digest calculation
 
 ## Proposed Stratum Components
 

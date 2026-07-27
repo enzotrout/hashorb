@@ -4,6 +4,7 @@ from hashphere.mining.coinbase import (
     CoinbaseError,
     CoinbaseValidationError,
     build_coinbase_transaction,
+    hash_coinbase_transaction,
 )
 from hashphere.mining.job import (
     MiningJob,
@@ -22,4 +23,5 @@ __all__ = [
     "MiningJobStateError",
     "MiningJobValidationError",
     "build_coinbase_transaction",
+    "hash_coinbase_transaction",
 ]

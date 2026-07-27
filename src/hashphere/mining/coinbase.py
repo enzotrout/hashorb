@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import string
 
+from hashphere.crypto import double_sha256
 from hashphere.mining.job import MiningJob
 
 _HEX_DIGITS = frozenset(string.hexdigits)
@@ -26,6 +27,16 @@ def build_coinbase_transaction(job: MiningJob, extra_nonce_2: str) -> bytes:
 
     transaction_hex = job.coinbase_part_1 + job.extra_nonce_1 + extra_nonce_2 + job.coinbase_part_2
     return bytes.fromhex(transaction_hex)
+
+
+def hash_coinbase_transaction(transaction: bytes) -> bytes:
+    """Return the raw double-SHA256 digest of nonempty transaction bytes."""
+
+    if not isinstance(transaction, bytes):
+        raise CoinbaseValidationError("transaction must be bytes")
+    if not transaction:
+        raise CoinbaseValidationError("transaction must not be empty")
+    return double_sha256(transaction)
 
 
 def _validate_extra_nonce_2(value: object, expected_byte_length: int) -> None:
