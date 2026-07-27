@@ -188,10 +188,35 @@ block hashes are conventionally displayed by reversing those raw bytes for
 presentation, but this boundary performs no reversal and provides no display or
 hexadecimal formatting API. It also does not interpret the digest as an integer.
 
-This slice does not decode compact targets, convert pool difficulty, compare a
-hash with a target, generate or iterate nonces, mine, perform networking, or
-submit shares. Compact-target decoding and proof-of-work integer comparison are
-the next deferred stage.
+This boundary does not convert pool difficulty, compare a hash with a target,
+generate or iterate nonces, mine, perform networking, or submit shares. Compact
+target decoding belongs to the boundary below.
+
+## Compact Network Target Boundary
+
+Bitcoin's `nBits` field represents the network proof-of-work target in a compact
+base-256 form. `decode_compact_target` treats the unchanged eight-character
+Stratum `network_bits` value as a 32-bit pattern. The high byte is the exponent,
+the low 23 bits are the mantissa, and bit `0x00800000` is the sign flag. For
+exponents through three, the mantissa is right-shifted; for larger exponents it
+is left-shifted. The resulting full target is returned as a positive Python
+integer using integer arithmetic only.
+
+Negative encodings, targets reduced to zero by the small-exponent right shift,
+and Bitcoin Core's three compact overflow cases are rejected. Results must fit
+within 256 bits. The decoder does not clamp or normalize the representation and
+does not enforce Bitcoin mainnet's proof-of-work limit; that is network policy,
+not compact-format validation.
+
+These rules mirror Bitcoin Core's [`arith_uint256::SetCompact`](https://github.com/bitcoin/bitcoin/blob/e75b76b12c5dcaf1c3b9f02d8739b1f551dcf421/src/arith_uint256.cpp#L174-L193)
+and the structural checks used by [`DeriveTarget`](https://github.com/bitcoin/bitcoin/blob/e75b76b12c5dcaf1c3b9f02d8739b1f551dcf421/src/pow.cpp#L146-L158),
+apart from the intentionally deferred network-specific proof-of-work limit.
+
+The network target encoded by `network_bits` is distinct from CKPool's share
+target derived from `mining.set_difficulty`. This slice performs neither share
+difficulty conversion nor target comparison. Converting a raw header digest to
+its proof-of-work integer and comparing it with the decoded target are the next
+deferred stages.
 
 ## Compute Backend and Compute Profile
 
@@ -265,6 +290,7 @@ available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
     ├── header.py
     ├── job.py
     ├── merkle.py
+    ├── target.py
     ├── engine.py
     ├── profiles.py
     ├── scheduler.py
@@ -279,6 +305,7 @@ Responsibilities:
 - `header.py`: serialize and hash raw 80-byte block headers
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
+- `target.py`: decode structurally valid compact network targets into integers
 - `engine.py`: coordinate mining jobs and search operations
 - `profiles.py`: define Lite, Auto, and Max policies
 - `scheduler.py`: control worker allocation and duty cycles
