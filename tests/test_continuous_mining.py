@@ -438,6 +438,19 @@ def test_nonce_space_exhaustion_waits_and_new_job_resumes_at_start() -> None:
     assert result.total_hashes_checked == 2
 
 
+def test_immediately_available_replacement_still_reports_nonce_exhaustion() -> None:
+    harness = Harness(notifications=deque([notification("ready-job"), None]))
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0xFFFFFFFF, 1, 2),
+        harness,
+    )
+
+    assert ("exhausted", "initial-job") in harness.observations
+    assert ("waiting", "initial-job") not in harness.observations
+    assert result.final_job.job_id == "ready-job"
+
+
 def test_stop_while_waiting_for_new_job_is_controlled_and_does_not_busy_continue() -> None:
     harness = Harness(
         notifications=deque([None]),
@@ -500,6 +513,34 @@ def test_network_only_candidate_is_submitted() -> None:
     assert result.match.meets_share_target is False
     assert result.match.meets_network_target is True
     assert result.submissions_performed == 1
+
+
+def test_submission_failure_propagates_without_polling_or_continuation() -> None:
+    harness = Harness(match_call=1)
+
+    def fail_submit(work: PreparedMiningWork, match: NonceSearchMatch) -> bool:
+        harness.submit_calls.append((work, match))
+        raise RuntimeError("submission failed")
+
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+    with pytest.raises(RuntimeError, match="submission failed"):
+        run_continuous_mining(
+            ContinuousMiningPlan(0, 1),
+            assembler,
+            initial_job,
+            "abababab",
+            harness.controller,
+            receive_notification=harness.receive,
+            submit_share=fail_submit,
+            observer=harness,
+            prepare_work=harness.prepare,
+            search_range=harness.search,
+        )
+
+    assert len(harness.search_calls) == 1
+    assert len(harness.submit_calls) == 1
+    assert harness.receive_timeouts == []
 
 
 def test_unsupported_notification_fails_without_another_search() -> None:

@@ -371,26 +371,6 @@ def run_continuous_mining(
         if plan.max_chunks is not None and chunks_completed >= plan.max_chunks:
             return finish(ContinuousMiningOutcome.CHUNK_LIMIT_REACHED)
 
-        if next_nonce == _NONCE_LIMIT:
-            event_observer.nonce_space_exhausted(current_work)
-            event_observer.waiting_for_job(current_work)
-            selected_job = _wait_for_replacement(
-                assembler,
-                stop_token,
-                receive_notification,
-                event_observer,
-            )
-            if selected_job is None:
-                return finish_stopped()
-            replacement_work = prepare_work(selected_job, extra_nonce_2)
-            replacements += 1
-            event_observer.job_replaced(current_job, selected_job, replacements)
-            current_job = selected_job
-            current_work = replacement_work
-            next_nonce = plan.start_nonce
-            current_work_searched = False
-            continue
-
         stop_nonce = min(next_nonce + plan.chunk_size, _NONCE_LIMIT)
         if not current_work_searched:
             jobs_used += 1
@@ -423,6 +403,9 @@ def run_continuous_mining(
         if plan.max_chunks is not None and chunks_completed >= plan.max_chunks:
             return finish(ContinuousMiningOutcome.CHUNK_LIMIT_REACHED)
 
+        if next_nonce == _NONCE_LIMIT:
+            event_observer.nonce_space_exhausted(current_work)
+
         selected_job = _drain_notifications(
             assembler,
             stop_token,
@@ -431,6 +414,16 @@ def run_continuous_mining(
         )
         if stop_token.stop_requested:
             return finish_stopped()
+        if selected_job is None and next_nonce == _NONCE_LIMIT:
+            event_observer.waiting_for_job(current_work)
+            selected_job = _wait_for_replacement(
+                assembler,
+                stop_token,
+                receive_notification,
+                event_observer,
+            )
+            if selected_job is None:
+                return finish_stopped()
         if selected_job is not None:
             replacement_work = prepare_work(selected_job, extra_nonce_2)
             replacements += 1
