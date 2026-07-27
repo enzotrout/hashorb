@@ -1,5 +1,13 @@
 """Stratum networking support."""
 
+from hashphere.network.stratum.client import (
+    StratumAuthorizationError,
+    StratumClient,
+    StratumClientError,
+    StratumClientState,
+    StratumClientStateError,
+    StratumRequestError,
+)
 from hashphere.network.stratum.messages import (
     MiningNotifyNotification,
     SetDifficultyNotification,
@@ -24,10 +32,16 @@ from hashphere.network.stratum.transport import (
 __all__ = [
     "MiningNotifyNotification",
     "SetDifficultyNotification",
+    "StratumAuthorizationError",
+    "StratumClient",
+    "StratumClientError",
+    "StratumClientState",
+    "StratumClientStateError",
     "StratumConnectionError",
     "StratumError",
     "StratumMessageError",
     "StratumProtocolError",
+    "StratumRequestError",
     "StratumTransport",
     "StratumTransportError",
     "SubscribeResult",
