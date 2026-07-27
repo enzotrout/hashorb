@@ -1,4 +1,4 @@
-"""Structural decoding of Bitcoin compact network targets."""
+"""Bitcoin network-target decoding and proof-of-work comparison."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import string
 
 _HEX_DIGITS = frozenset(string.hexdigits)
 _COMPACT_HEX_LENGTH = 8
+_HASH_BYTE_LENGTH = 32
 _MAX_UINT256 = (1 << 256) - 1
 
 
@@ -14,7 +15,7 @@ class TargetError(Exception):
 
 
 class TargetValidationError(TargetError, ValueError):
-    """Raised when a compact target violates structural invariants."""
+    """Raised when target-domain input violates structural invariants."""
 
 
 def decode_compact_target(network_bits: str) -> int:
@@ -48,6 +49,27 @@ def decode_compact_target(network_bits: str) -> int:
     if target == 0:
         raise TargetValidationError("network_bits must decode to a nonzero target")
     return target
+
+
+def block_hash_to_int(block_hash: bytes) -> int:
+    """Interpret a raw 32-byte block hash as an unsigned little-endian integer."""
+
+    if not isinstance(block_hash, bytes):
+        raise TargetValidationError("block_hash must be bytes")
+    if len(block_hash) != _HASH_BYTE_LENGTH:
+        raise TargetValidationError("block_hash must contain exactly 32 bytes")
+    return int.from_bytes(block_hash, byteorder="little", signed=False)
+
+
+def hash_meets_target(block_hash: bytes, target: int) -> bool:
+    """Return whether a raw block hash is less than or equal to a target."""
+
+    hash_value = block_hash_to_int(block_hash)
+    if isinstance(target, bool) or not isinstance(target, int):
+        raise TargetValidationError("target must be an integer")
+    if not 1 <= target <= _MAX_UINT256:
+        raise TargetValidationError("target must be between 1 and 2**256 - 1")
+    return hash_value <= target
 
 
 def _validate_network_bits(value: object) -> None:

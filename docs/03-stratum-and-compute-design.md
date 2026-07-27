@@ -213,10 +213,31 @@ and the structural checks used by [`DeriveTarget`](https://github.com/bitcoin/bi
 apart from the intentionally deferred network-specific proof-of-work limit.
 
 The network target encoded by `network_bits` is distinct from CKPool's share
-target derived from `mining.set_difficulty`. This slice performs neither share
-difficulty conversion nor target comparison. Converting a raw header digest to
-its proof-of-work integer and comparing it with the decoded target are the next
-deferred stages.
+target derived from `mining.set_difficulty`. Compact decoding does not perform
+share-difficulty conversion or compare a hash with either target.
+
+## Network Proof-of-Work Comparison Boundary
+
+`block_hash_to_int` interprets the unchanged raw 32-byte digest returned by
+`hash_block_header` as an unsigned little-endian integer using exactly:
+
+    int.from_bytes(block_hash, byteorder="little", signed=False)
+
+The input is not reversed or converted through displayed hexadecimal. This
+matches Bitcoin Core's little-endian `uint256` storage and its
+`UintToArith256` conversion. `hash_meets_target` validates both operands and
+returns whether the resulting integer is less than or equal to the structurally
+decoded network target. Equality is therefore valid proof of work.
+
+These rules mirror Bitcoin Core's [`UintToArith256`](https://github.com/bitcoin/bitcoin/blob/e75b76b12c5dcaf1c3b9f02d8739b1f551dcf421/src/arith_uint256.cpp#L212-L217)
+and [`CheckProofOfWorkImpl`](https://github.com/bitcoin/bitcoin/blob/e75b76b12c5dcaf1c3b9f02d8739b1f551dcf421/src/pow.cpp#L145-L154).
+The usual displayed block-hash string is a separate presentation convention and
+is not used in production comparison.
+
+Meeting the network target identifies a block candidate; it is distinct from
+meeting CKPool's easier share target. CKPool share-target calculation,
+difficulty conversion, block-candidate handling, nonce generation and
+iteration, mining loops, networking, and share submission remain deferred.
 
 ## Compute Backend and Compute Profile
 
@@ -305,7 +326,7 @@ Responsibilities:
 - `header.py`: serialize and hash raw 80-byte block headers
 - `job.py`: validate and assemble immutable mining-job snapshots
 - `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
-- `target.py`: decode structurally valid compact network targets into integers
+- `target.py`: decode network targets and compare raw block-hash integers
 - `engine.py`: coordinate mining jobs and search operations
 - `profiles.py`: define Lite, Auto, and Max policies
 - `scheduler.py`: control worker allocation and duty cycles

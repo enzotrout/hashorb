@@ -27,7 +27,9 @@ from hashphere.mining.merkle import (
 from hashphere.mining.target import (
     TargetError,
     TargetValidationError,
+    block_hash_to_int,
     decode_compact_target,
+    hash_meets_target,
 )
 
 __all__ = [
@@ -44,10 +46,12 @@ __all__ = [
     "MerkleValidationError",
     "TargetError",
     "TargetValidationError",
+    "block_hash_to_int",
     "build_coinbase_transaction",
     "calculate_merkle_root",
     "decode_compact_target",
     "hash_block_header",
     "hash_coinbase_transaction",
+    "hash_meets_target",
     "serialize_block_header",
 ]
