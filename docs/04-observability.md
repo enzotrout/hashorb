@@ -108,6 +108,75 @@ is disabled or succeeds. JSONL is an additional sanitized interface intended
 for scripts, inspection, and later telemetry work; it does not replace console
 output.
 
-Built-in log summarization and telemetry aggregation are deferred to later
-slices. File rotation, retention policy, compression, remote export, and
-background event delivery also remain deferred.
+## Read-Only Log Summary
+
+The public analysis boundary is:
+
+```python
+class LogSummaryError(RuntimeError): ...
+
+@dataclass(frozen=True, slots=True)
+class LogSummary: ...
+
+def summarize_jsonl(path: str | Path) -> LogSummary: ...
+```
+
+`summarize_jsonl` opens an existing file in read-only UTF-8 text mode and
+processes one physical line at a time. It never creates directories, repairs,
+rewrites, truncates, rotates, deletes, or appends to the source. A blank line
+is invalid because the JSONL contract assigns exactly one event to every
+physical line. A malformed nonblank line fails the entire analysis rather than
+being skipped.
+
+Every record must be a JSON object with the schema-version-1 envelope. The
+analyzer requires an actual integer schema version and sequence (not Boolean),
+a parseable UTC RFC3339 timestamp ending in `Z`, a nonblank run ID and command,
+an exact supported level, and a valid `snake_case` event name. It also rejects
+duplicate JSON keys, non-finite numbers, unsupported schema versions, and
+invalid envelope types. Error output may identify a safe path and physical
+line number, but never echoes the raw record.
+
+## Run Integrity and Forward Compatibility
+
+Run IDs may be physically interleaved. Each run is validated independently in
+its physical appearance order: its command stays constant; sequence starts at
+one and increases contiguously; `command_started` occurs exactly once and
+first; at most one terminal `command_completed` or `command_failed` event may
+occur; and no event follows a terminal event. A started run with no terminal
+event is valid and is counted as incomplete.
+
+Unknown schema-version-1 event names are accepted after envelope and run
+validation. This allows future events and additional safe fields without
+changing current mining totals. Known events validate only the fields used by
+their calculations: completion outcome, controlled failure stage/category,
+difficulty, received job identity, completed-range metrics, and submission
+acceptance.
+
+## Aggregation and Privacy
+
+The immutable summary reports record and run status counts, chronological
+first and last UTC timestamps, sorted command and completion-outcome counts,
+known mining event counts, range totals, accepted and rejected submission
+counts, and sorted controlled failure-stage/category counts. Command counts
+are per distinct run ID rather than per record. The human-readable CLI always
+shows the three currently known commands in a stable order, including zero
+counts, followed by any future command names in sorted order.
+
+Aggregate mining rate is weighted from the integer totals:
+
+```text
+weighted_hps = total_hashes_checked * 1_000_000_000 / total_elapsed_ns
+```
+
+The analyzer does not average or trust logged per-range rates. The result is
+unavailable when no range completed or total elapsed time is zero.
+
+The CLI prints aggregate information only. It omits run IDs, job IDs,
+usernames, payout addresses, passwords, extra nonces, coinbase data, nonces,
+block hashes, raw events, raw exception messages, and protocol payloads. The
+user-supplied path may be displayed.
+
+Machine-readable summary output, file rotation and retention, compression,
+remote export, background delivery, and Prometheus/Grafana-compatible metrics
+remain deferred. These observability additions do not block chunked or
+continuous mining orchestration.

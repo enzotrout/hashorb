@@ -102,22 +102,26 @@ small injectable boundaries for deterministic tests.
 
 # Observability Boundary
 
-`hashphere.observability` owns structured event validation and persistent JSON
-Lines storage. An `EventSink` abstraction lets CLI orchestration emit the same
-sanitized event catalog whether persistence is enabled or disabled. The no-op
-sink avoids conditional logging branches throughout command and mining flows;
-the JSONL sink owns directory creation, append mode, UTF-8 encoding, event
-envelopes, sequencing, flushing, and file closure.
+`hashphere.observability` owns structured event validation, persistent JSON
+Lines storage, and read-only log analysis. An `EventSink` abstraction lets CLI
+orchestration emit the same sanitized event catalog whether persistence is
+enabled or disabled. The no-op sink avoids conditional logging branches
+throughout command and mining flows; the JSONL sink owns directory creation,
+append mode, UTF-8 encoding, event envelopes, sequencing, flushing, and file
+closure. The analyzer separately opens existing files read-only, validates
+schema and per-run integrity, and returns immutable aggregate results.
 
-Networking, cryptographic, and mining-domain components do not open or write
-log files. The CLI observes their typed results and emits explicitly selected
-safe fields through an injected sink. Raw protocol messages, credentials,
-extra nonces, complete coinbase data, and arbitrary exception messages do not
-cross the observability boundary.
+Networking, cryptographic, and mining-domain components remain unaware of log
+paths. The CLI observes their typed results and emits explicitly selected safe
+fields through an injected sink; event writers append validated records, and
+analyzers read and aggregate them. Raw protocol messages, credentials, extra
+nonces, complete coinbase data, and arbitrary exception messages do not cross
+the observability boundary. The CLI formats analyzer results without exposing
+raw records or identifiers.
 
-JSONL is the first local persistence format. Log summarization, aggregation,
-rotation, retention, and external telemetry exporters remain separate future
-components.
+JSONL is the first local persistence format. Rotation, retention,
+machine-readable summary output, and external telemetry exporters remain
+separate future components.
 
 ---
 

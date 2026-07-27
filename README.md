@@ -210,5 +210,69 @@ Get-Content .\logs\hashphere.jsonl |
 ```
 
 Failure to initialize, write, or close an explicitly requested event log is
-reported with a nonzero exit status; logging is never silently disabled. A
-built-in Hashphere log-summary command remains deferred.
+reported with a nonzero exit status; logging is never silently disabled.
+
+## Summarize structured logs locally
+
+Hashphere can validate and summarize an existing schema-version-1 event log
+without `jq` or a network connection:
+
+```bash
+uv run python -m hashphere logs-summary \
+  --log-file logs/hashphere.jsonl
+```
+
+`logs-summary` is read-only. It does not require either live-network opt-in,
+load Stratum configuration, initialize an event sink, modify the source file,
+or create a missing path. Each physical line must be one valid JSON event;
+blank, malformed, semantically invalid, or run-inconsistent lines fail the
+whole analysis instead of being silently skipped.
+
+Example sanitized output:
+
+```text
+Hashphere log summary.
+Log file: logs/hashphere.jsonl
+Records: 6
+Runs: 2
+Completed runs: 2
+Failed runs: 0
+Incomplete runs: 0
+First event: 2026-07-27T12:15:31.632625Z
+Last event: 2026-07-27T12:16:17.817473Z
+
+Commands:
+  stratum-handshake: 2
+  stratum-observe: 0
+  stratum-mine-once: 0
+
+Completion outcomes:
+  handshake_succeeded: 2
+
+Mining:
+  Difficulty events: 0
+  Jobs received: 0
+  Nonce ranges completed: 0
+  Hashes checked: 0
+  Mining elapsed: 0 ns
+  Weighted hashes per second: unavailable
+  Share candidates: 0
+  Shares submitted: 0
+  Shares accepted: 0
+  Shares rejected: 0
+
+Failures:
+  command_failed events: 0
+```
+
+The weighted mining rate is calculated from total hashes checked divided by
+total mining elapsed time, not by averaging the rounded per-range rates stored
+in the log. It is unavailable when there are no completed ranges or their
+total elapsed time is zero. The summary contains aggregate counts only; it
+does not print run IDs, job IDs, nonces, block hashes, credentials, or raw
+records.
+
+The direct `tail`, `jq`, and PowerShell inspection commands above remain useful
+when record-level access is explicitly wanted. Machine-readable summary output,
+log rotation, and Prometheus/Grafana-compatible metrics remain deferred future
+observability options and do not block continued mining orchestration work.

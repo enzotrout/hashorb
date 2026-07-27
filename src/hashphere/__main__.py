@@ -39,7 +39,10 @@ from hashphere.observability import (
     EventLogError,
     EventSink,
     JsonlEventSink,
+    LogSummary,
+    LogSummaryError,
     NullEventSink,
+    summarize_jsonl,
 )
 
 _LIVE_STRATUM_FLAG = "HASHPHERE_ENABLE_LIVE_STRATUM"
@@ -47,8 +50,14 @@ _LIVE_MINING_FLAG = "HASHPHERE_ENABLE_LIVE_MINING"
 _STRATUM_USER_AGENT = "Hashphere/0.1"
 _NONCE_LIMIT = 1 << 32
 _MAX_NONCE = _NONCE_LIMIT - 1
+_KNOWN_LOG_COMMANDS = (
+    "stratum-handshake",
+    "stratum-observe",
+    "stratum-mine-once",
+)
 _USAGE = (
-    "Usage: python -m hashphere {stratum-handshake,stratum-observe,stratum-mine-once} [options]"
+    "Usage: python -m hashphere "
+    "{stratum-handshake,stratum-observe,stratum-mine-once,logs-summary} [options]"
 )
 
 
@@ -66,6 +75,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected Hashphere command and return its process status."""
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "logs-summary":
+        try:
+            summary_log_file = _parse_summary_command_arguments(arguments[1:])
+        except ValueError as exc:
+            print(f"Argument error: {exc}", file=sys.stderr)
+            print(_USAGE, file=sys.stderr)
+            return 2
+        return _run_log_summary(summary_log_file)
     if arguments and arguments[0] == "stratum-handshake":
         try:
             log_file = _parse_log_file(arguments[1:])
@@ -107,6 +124,69 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(_USAGE, file=sys.stderr)
     return 2
+
+
+def _run_log_summary(log_file: str) -> int:
+    """Print one sanitized aggregate summary without modifying its source log."""
+
+    try:
+        summary = summarize_jsonl(log_file)
+    except LogSummaryError as exc:
+        print(f"Log summary failed: {exc}", file=sys.stderr)
+        return 1
+
+    _print_log_summary(log_file, summary)
+    return 0
+
+
+def _print_log_summary(log_file: str, summary: LogSummary) -> None:
+    """Render one stable human-readable aggregate summary."""
+
+    first_timestamp = summary.first_timestamp or "unavailable"
+    last_timestamp = summary.last_timestamp or "unavailable"
+    print("Hashphere log summary.")
+    print(f"Log file: {log_file}")
+    print(f"Records: {summary.record_count}")
+    print(f"Runs: {summary.run_count}")
+    print(f"Completed runs: {summary.completed_run_count}")
+    print(f"Failed runs: {summary.failed_run_count}")
+    print(f"Incomplete runs: {summary.incomplete_run_count}")
+    print(f"First event: {first_timestamp}")
+    print(f"Last event: {last_timestamp}")
+
+    command_counts = dict(summary.command_counts)
+    print("\nCommands:")
+    for command in _KNOWN_LOG_COMMANDS:
+        print(f"  {command}: {command_counts.pop(command, 0)}")
+    for command, count in sorted(command_counts.items()):
+        print(f"  {command}: {count}")
+
+    if summary.completion_outcome_counts:
+        print("\nCompletion outcomes:")
+        for outcome, count in summary.completion_outcome_counts:
+            print(f"  {outcome}: {count}")
+
+    weighted_rate = (
+        "unavailable"
+        if summary.weighted_hashes_per_second is None
+        else f"{summary.weighted_hashes_per_second:.2f}"
+    )
+    print("\nMining:")
+    print(f"  Difficulty events: {summary.difficulty_event_count}")
+    print(f"  Jobs received: {summary.mining_job_event_count}")
+    print(f"  Nonce ranges completed: {summary.completed_nonce_range_count}")
+    print(f"  Hashes checked: {summary.total_hashes_checked}")
+    print(f"  Mining elapsed: {summary.total_mining_elapsed_ns} ns")
+    print(f"  Weighted hashes per second: {weighted_rate}")
+    print(f"  Share candidates: {summary.share_candidate_count}")
+    print(f"  Shares submitted: {summary.share_submission_count}")
+    print(f"  Shares accepted: {summary.accepted_share_count}")
+    print(f"  Shares rejected: {summary.rejected_share_count}")
+
+    print("\nFailures:")
+    print(f"  command_failed events: {summary.command_failure_count}")
+    for stage, category, count in summary.failure_stage_category_counts:
+        print(f"  {stage}/{category}: {count}")
 
 
 def _run_with_event_sink(
@@ -369,6 +449,21 @@ def _parse_log_file(arguments: Sequence[str]) -> str | None:
     if len(arguments) != 2 or arguments[0] != "--log-file":
         raise ValueError("unsupported live-command argument")
     return _validate_log_file_path(arguments[1])
+
+
+def _parse_summary_command_arguments(arguments: Sequence[str]) -> str:
+    """Parse the one required read-only log-summary path."""
+
+    if len(arguments) == 2 and arguments[1].startswith("--"):
+        raise ValueError("--log-file requires a value")
+    option_values = _parse_option_values(
+        arguments,
+        {"--log-file"},
+        unsupported_message="unsupported logs-summary argument",
+    )
+    if "--log-file" not in option_values:
+        raise ValueError("--log-file is required")
+    return _validate_log_file_path(option_values["--log-file"])
 
 
 def _parse_mining_command_arguments(

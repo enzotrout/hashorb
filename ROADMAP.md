@@ -47,7 +47,7 @@ Progress:
 - ✅ Opt-in bounded live Stratum mining with at most one submission
 - ✅ Timeout-aware Stratum notification polling
 - ✅ Sanitized structured JSONL event logging
-- ⬜ Built-in structured-log summary command
+- ✅ Built-in structured-log summary command
 - ⬜ Chunked mining orchestration and notification handling between chunks
 - ⬜ Continuous CPU mining and worker scheduling
 - ⬜ Multiprocess CPU backend
@@ -82,7 +82,7 @@ Progress:
 - ✅ One bounded live mining range
 - ✅ Timeout-aware notification polling
 - ✅ Sanitized structured JSONL event logging
-- ⬜ Built-in structured-log analysis
+- ✅ Built-in structured-log analysis
 - ⬜ Chunked and continuous mining
 - ⬜ Multi-process mining
 - ⬜ Direct block submission
@@ -149,19 +149,19 @@ Planned:
 
 # Current Milestone
 
-**Sanitized Structured JSONL Event Logging — Complete**
+**Native Read-Only JSONL Log Analysis — Complete**
 
 Objective:
 
-Preserve existing human-readable console output while optionally appending
-sanitized, versioned, machine-readable events for each live Stratum command.
-The logging boundary must be synchronous, injectable, immediately flushed, and
-unable to accept secret-bearing fields or raw protocol payloads.
+Validate and aggregate schema-version-1 JSONL event logs locally without
+network access or source-file modification. The analyzer enforces record and
+per-run integrity, reports sanitized aggregate counts, and derives weighted
+hashrate from integer hash and elapsed-time totals.
 
-Timeout-aware notification polling and structured logging are complete. A
-small built-in log-summary command is the next slice; chunked orchestration
-remains deferred until basic analysis is available. This milestone does not
-introduce chunk scheduling, retries, reconnects, or continuous mining.
+Timeout-aware notification polling, sanitized structured logging, and native
+read-only log analysis are complete. Chunked mining orchestration is next.
+Prometheus/Grafana-compatible metrics remain deferred to a later observability
+milestone and do not block the continuous-mining path.
 
 ---
 
@@ -169,5 +169,5 @@ introduce chunk scheduling, retries, reconnects, or continuous mining.
 
 Continue with:
 
-**Complete structured event logging, then add a small built-in log-summary
-command before designing bounded nonce-chunk orchestration.**
+**Design bounded nonce-chunk orchestration that checks for notifications
+between searches.**
