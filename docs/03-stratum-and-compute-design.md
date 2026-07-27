@@ -306,6 +306,35 @@ Continuous mining, `extra_nonce_2` generation or rollover, network-time rolling,
 execution, orbiting-bit search, live Stratum integration, and share submission
 remain deferred.
 
+## Stratum Share-Submission Message Boundary
+
+`build_submit_request` constructs, but does not transmit, a `mining.submit`
+request. Its five parameters are ordered exactly as follows:
+
+1. the previously authorized username supplied by the caller
+2. `PreparedMiningWork.job_id`
+3. `PreparedMiningWork.extra_nonce_2`
+4. `PreparedMiningWork.network_time` (Stratum `ntime`)
+5. the nonce from `NonceSearchMatch`
+
+The nonce integer is converted with
+`nonce.to_bytes(4, byteorder="little", signed=False).hex()`. This produces the
+same four bytes that the bounded search appended to its 76-byte header prefix;
+it is not direct integer formatting, native-endian serialization, or reversal
+of formatted text. Other hexadecimal parameters retain their caller-supplied
+case and representation. The ordering and byte-based nonce representation
+match [CKPool's upstream submission construction](https://github.com/ckolivas/ckpool/blob/308410ddf321349704f252f36b82d77f2ae007fc/src/generator.c#L2042-L2048)
+and [cgminer's Stratum share construction](https://github.com/ckolivas/cgminer/blob/b8491c66e7e22f23a9edf095dd1337ee581e88bd/cgminer.c#L7138-L7163).
+
+`parse_submit_result` accepts only an actual JSON Boolean: `true` means the
+pool accepted the share and `false` means it rejected the share. A rejection is
+a valid parsed response, while non-null Stratum errors remain the responsibility
+of the request-response routing layer.
+
+Request transmission, a `StratumClient` submission operation, live pool
+submission, retries, stale- or duplicate-share handling, and result counters
+remain deferred. This slice performs no network activity.
+
 ## Compute Backend and Compute Profile
 
 Compute backend and compute profile are separate settings.

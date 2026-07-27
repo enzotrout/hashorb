@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import math
+import string
 from collections.abc import Mapping
 from dataclasses import dataclass
+
+_HEX_DIGITS = frozenset(string.hexdigits)
+_NETWORK_TIME_HEX_LENGTH = 8
+_NONCE_BYTE_LENGTH = 4
+_MAX_NONCE = 0xFFFFFFFF
 
 
 class StratumMessageError(ValueError):
@@ -80,6 +86,35 @@ def build_authorize_request(
     }
 
 
+def build_submit_request(
+    request_id: int,
+    username: str,
+    job_id: str,
+    extra_nonce_2: str,
+    network_time: str,
+    nonce: int,
+) -> dict[str, object]:
+    """Build a validated ``mining.submit`` request without transmitting it."""
+
+    _validate_request_id(request_id)
+    _validate_nonempty_request_value(username, "username")
+    _validate_nonempty_request_value(job_id, "job_id")
+    _validate_hex_bytes(extra_nonce_2, "extra_nonce_2")
+    _validate_fixed_hex(network_time, "network_time", _NETWORK_TIME_HEX_LENGTH)
+    nonce_hex = _serialize_submit_nonce(nonce)
+    return {
+        "id": request_id,
+        "method": "mining.submit",
+        "params": [
+            username,
+            job_id,
+            extra_nonce_2,
+            network_time,
+            nonce_hex,
+        ],
+    }
+
+
 def parse_subscribe_result(message: Mapping[str, object]) -> SubscribeResult:
     """Parse a successful ``mining.subscribe`` response result."""
 
@@ -92,9 +127,7 @@ def parse_subscribe_result(message: Mapping[str, object]) -> SubscribeResult:
     for index, raw_subscription in enumerate(raw_subscriptions):
         subscription = _require_list(raw_subscription, f"result[0][{index}]")
         if len(subscription) != 2:
-            raise StratumMessageError(
-                f"result[0][{index}] must contain exactly two strings"
-            )
+            raise StratumMessageError(f"result[0][{index}] must contain exactly two strings")
         method = _require_string(subscription[0], f"result[0][{index}][0]")
         subscription_id = _require_string(subscription[1], f"result[0][{index}][1]")
         subscriptions.append((method, subscription_id))
@@ -113,6 +146,15 @@ def parse_subscribe_result(message: Mapping[str, object]) -> SubscribeResult:
 
 def parse_authorize_result(message: Mapping[str, object]) -> bool:
     """Parse a ``mining.authorize`` result, accepting only a JSON boolean."""
+
+    result = _required_field(message, "result")
+    if not isinstance(result, bool):
+        raise StratumMessageError("result must be a boolean")
+    return result
+
+
+def parse_submit_result(message: Mapping[str, object]) -> bool:
+    """Parse a ``mining.submit`` acceptance or rejection Boolean."""
 
     result = _required_field(message, "result")
     if not isinstance(result, bool):
@@ -198,6 +240,38 @@ def _validate_nonempty_request_value(value: str, name: str) -> None:
         raise TypeError(f"{name} must be a string")
     if not value.strip():
         raise ValueError(f"{name} must not be empty")
+
+
+def _validate_hex_bytes(value: str, name: str) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    if not value:
+        raise ValueError(f"{name} must not be empty")
+    if len(value) % 2 != 0:
+        raise ValueError(f"{name} must contain an even number of hexadecimal characters")
+    if any(character not in _HEX_DIGITS for character in value):
+        raise ValueError(f"{name} must contain only ASCII hexadecimal characters")
+
+
+def _validate_fixed_hex(value: str, name: str, length: int) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    if len(value) != length:
+        raise ValueError(f"{name} must contain exactly {length} hexadecimal characters")
+    if any(character not in _HEX_DIGITS for character in value):
+        raise ValueError(f"{name} must contain only ASCII hexadecimal characters")
+
+
+def _serialize_submit_nonce(nonce: int) -> str:
+    if isinstance(nonce, bool) or not isinstance(nonce, int):
+        raise TypeError("nonce must be an integer")
+    if not 0 <= nonce <= _MAX_NONCE:
+        raise ValueError("nonce must be between 0 and 0xffffffff")
+    return nonce.to_bytes(
+        _NONCE_BYTE_LENGTH,
+        byteorder="little",
+        signed=False,
+    ).hex()
 
 
 def _required_field(message: Mapping[str, object], name: str) -> object:
