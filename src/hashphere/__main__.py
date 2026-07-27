@@ -11,16 +11,21 @@ from dataclasses import dataclass
 from hashphere.config import Settings
 from hashphere.mining import (
     BlockHeaderError,
+    ChunkedMiningError,
+    ChunkedMiningPlan,
+    ChunkedMiningResult,
     CoinbaseError,
     MerkleError,
     MiningJob,
     MiningJobAssembler,
     MiningJobError,
     NonceSearchError,
+    NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
     TargetError,
     prepare_mining_work,
+    run_chunked_mining,
     search_nonce_range,
 )
 from hashphere.network.stratum import (
@@ -54,10 +59,12 @@ _KNOWN_LOG_COMMANDS = (
     "stratum-handshake",
     "stratum-observe",
     "stratum-mine-once",
+    "stratum-mine-chunks",
 )
 _USAGE = (
     "Usage: python -m hashphere "
-    "{stratum-handshake,stratum-observe,stratum-mine-once,logs-summary} [options]"
+    "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
+    "logs-summary} [options]"
 )
 
 
@@ -69,6 +76,117 @@ class _MiningOutcome:
     work: PreparedMiningWork
     result: NonceSearchResult
     pool_accepted: bool | None
+
+
+class _ChunkedEventObserver:
+    """Translate passive chunk-orchestration callbacks into safe events."""
+
+    __slots__ = ("_events",)
+
+    def __init__(self, events: EventSink) -> None:
+        self._events = events
+
+    def notification_received(
+        self,
+        notification: SetDifficultyNotification | MiningNotifyNotification,
+    ) -> None:
+        """Emit one parsed notification in arrival order."""
+
+        if isinstance(notification, SetDifficultyNotification):
+            _emit_difficulty_received(self._events, notification)
+        else:
+            _emit_mining_job_received(self._events, notification)
+
+    def chunk_started(
+        self,
+        work: PreparedMiningWork,
+        start_nonce: int,
+        stop_nonce: int,
+    ) -> None:
+        """Emit the exact half-open range passed to search."""
+
+        self._events.emit(
+            "nonce_range_started",
+            fields={
+                "job_id": work.job_id,
+                "start_nonce": start_nonce,
+                "stop_nonce": stop_nonce,
+            },
+        )
+
+    def chunk_completed(
+        self,
+        work: PreparedMiningWork,
+        result: NonceSearchResult,
+    ) -> None:
+        """Emit metrics for one completed chunk."""
+
+        self._events.emit(
+            "nonce_range_completed",
+            fields={
+                "job_id": work.job_id,
+                "start_nonce": result.start_nonce,
+                "stop_nonce": result.stop_nonce,
+                "hashes_checked": result.hashes_checked,
+                "elapsed_ns": result.elapsed_ns,
+                "hashes_per_second": result.hashes_per_second,
+                "match_found": result.match is not None,
+            },
+        )
+
+    def job_replaced(
+        self,
+        previous_job: MiningJob,
+        new_job: MiningJob,
+        replacement_index: int,
+    ) -> None:
+        """Emit safe metadata for one current-work replacement."""
+
+        self._events.emit(
+            "mining_job_replaced",
+            fields={
+                "previous_job_id": previous_job.job_id,
+                "new_job_id": new_job.job_id,
+                "clean_jobs": new_job.clean_jobs,
+                "replacement_index": replacement_index,
+            },
+        )
+
+    def candidate_found(
+        self,
+        work: PreparedMiningWork,
+        match: NonceSearchMatch,
+    ) -> None:
+        """Emit safe candidate metadata before submission."""
+
+        self._events.emit(
+            "share_candidate_found",
+            fields={
+                "job_id": work.job_id,
+                "nonce": match.nonce,
+                "abbreviated_block_hash": _abbreviate_hex(match.block_hash.hex()),
+                "meets_share_target": match.meets_share_target,
+                "meets_network_target": match.meets_network_target,
+            },
+        )
+
+    def submission_completed(
+        self,
+        work: PreparedMiningWork,
+        match: NonceSearchMatch,
+        accepted: bool,
+    ) -> None:
+        """Emit the single controlled pool response."""
+
+        self._events.emit(
+            "share_submission_completed",
+            level="INFO" if accepted else "WARNING",
+            fields={
+                "job_id": work.job_id,
+                "nonce": match.nonce,
+                "accepted": accepted,
+            },
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -120,6 +238,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 stop_nonce,
                 events,
             ),
+        )
+    if arguments and arguments[0] == "stratum-mine-chunks":
+        try:
+            plan, log_file = _parse_chunked_mining_arguments(arguments[1:])
+        except ValueError as exc:
+            print(f"Argument error: {exc}", file=sys.stderr)
+            print(_USAGE, file=sys.stderr)
+            return 2
+        return _run_with_event_sink(
+            "stratum-mine-chunks",
+            log_file,
+            lambda events: _run_stratum_mine_chunks(plan, events),
         )
 
     print(_USAGE, file=sys.stderr)
@@ -407,6 +537,113 @@ def _run_stratum_mine_once(
     return 0
 
 
+def _run_stratum_mine_chunks(
+    plan: ChunkedMiningPlan,
+    events: EventSink,
+) -> int:
+    """Run one explicitly enabled finite multi-chunk mining invocation."""
+
+    settings = _load_live_mining_settings()
+    if settings is None:
+        _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
+        return 2
+
+    client: StratumClient | None = None
+    result: ChunkedMiningResult | None = None
+    status = 0
+    pending_failure: BaseException | None = None
+    try:
+        client = StratumClient(settings, _STRATUM_USER_AGENT)
+        subscription = client.handshake()
+        _emit_stratum_authorized(events, settings, subscription)
+        assembler = MiningJobAssembler(subscription)
+        initial_job = _receive_buildable_job(client, assembler, events)
+        extra_nonce_2 = _generate_extra_nonce_2(subscription.extra_nonce_2_size)
+        observer = _ChunkedEventObserver(events)
+        result = run_chunked_mining(
+            plan,
+            assembler,
+            initial_job,
+            extra_nonce_2,
+            poll_notification=lambda: client.poll_notification(timeout_seconds=0.0),
+            submit_share=lambda work, match: client.submit_share(
+                work.job_id,
+                work.extra_nonce_2,
+                work.network_time,
+                match.nonce,
+            ),
+            observer=observer,
+            prepare_work=prepare_mining_work,
+            search_range=search_nonce_range,
+        )
+    except StratumAuthorizationError as exc:
+        pending_failure = exc
+        print("Stratum authorization failed.", file=sys.stderr)
+        status = 1
+        _emit_command_failed(events, "handshake", _error_category(exc))
+    except StratumConnectionError as exc:
+        pending_failure = exc
+        print("Could not connect to the configured Stratum endpoint.", file=sys.stderr)
+        status = 1
+        _emit_command_failed(events, "handshake", _error_category(exc))
+    except (
+        StratumTransportError,
+        StratumMessageError,
+        StratumClientError,
+        MiningJobError,
+        CoinbaseError,
+        MerkleError,
+        BlockHeaderError,
+        TargetError,
+        NonceSearchError,
+        ChunkedMiningError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        pending_failure = exc
+        print("Chunked Stratum mining failed.", file=sys.stderr)
+        status = 1
+        _emit_command_failed(events, "chunked_mining", _error_category(exc))
+    except BaseException as exc:
+        pending_failure = exc
+        try:
+            _emit_command_failed(events, "chunked_mining", "UnexpectedError")
+        except EventLogError:
+            pass
+        raise
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except BaseException:
+                if pending_failure is None:
+                    print("Could not close the Stratum connection cleanly.", file=sys.stderr)
+                    status = 1
+                    _emit_command_failed(events, "cleanup", "ClientCloseError")
+
+    if status != 0:
+        return status
+    if result is None:
+        raise RuntimeError("chunked mining completed without an outcome")
+
+    if result.match is None:
+        completion_level = "INFO"
+        completion_outcome = "hash_budget_exhausted"
+    elif result.pool_accepted:
+        completion_level = "INFO"
+        completion_outcome = "share_accepted"
+    else:
+        completion_level = "WARNING"
+        completion_outcome = "share_rejected"
+    events.emit(
+        "command_completed",
+        level=completion_level,
+        fields={"outcome": completion_outcome},
+    )
+    _print_chunked_mining_outcome(settings, plan, result)
+    return 0
+
+
 def _load_live_settings(operation: str) -> Settings | None:
     """Load settings and enforce the shared explicit live-network opt-in."""
 
@@ -483,6 +720,67 @@ def _parse_mining_command_arguments(
     )
     start_nonce, stop_nonce = _mining_range_from_options(option_values)
     return start_nonce, stop_nonce, log_file
+
+
+def _parse_chunked_mining_arguments(
+    arguments: Sequence[str],
+) -> tuple[ChunkedMiningPlan, str | None]:
+    """Parse one finite chunk plan and optional structured-log path."""
+
+    option_values = _parse_option_values(
+        arguments,
+        {"--start-nonce", "--chunk-size", "--max-hashes", "--log-file"},
+        unsupported_message="unsupported stratum-mine-chunks argument",
+    )
+    log_file = (
+        _validate_log_file_path(option_values["--log-file"])
+        if "--log-file" in option_values
+        else None
+    )
+    return _chunked_plan_from_options(option_values), log_file
+
+
+def _parse_chunked_mining_plan(arguments: Sequence[str]) -> ChunkedMiningPlan:
+    """Parse strict decimal chunk options into a finite plan."""
+
+    option_values = _parse_option_values(
+        arguments,
+        {"--start-nonce", "--chunk-size", "--max-hashes"},
+        unsupported_message="unsupported stratum-mine-chunks argument",
+    )
+    return _chunked_plan_from_options(option_values)
+
+
+def _chunked_plan_from_options(option_values: dict[str, str]) -> ChunkedMiningPlan:
+    """Validate parsed options into one global chunked-mining budget."""
+
+    if "--chunk-size" not in option_values:
+        raise ValueError("--chunk-size is required")
+    if "--max-hashes" not in option_values:
+        raise ValueError("--max-hashes is required")
+    start_nonce = _parse_unpadded_decimal_option(
+        "--start-nonce",
+        option_values.get("--start-nonce", "0"),
+        minimum=0,
+        maximum=_MAX_NONCE,
+    )
+    chunk_size = _parse_unpadded_decimal_option(
+        "--chunk-size",
+        option_values["--chunk-size"],
+        minimum=1,
+        maximum=_NONCE_LIMIT,
+    )
+    max_hashes = _parse_unpadded_decimal_option(
+        "--max-hashes",
+        option_values["--max-hashes"],
+        minimum=1,
+        maximum=_NONCE_LIMIT,
+    )
+    return ChunkedMiningPlan(
+        start_nonce=start_nonce,
+        chunk_size=chunk_size,
+        max_hashes=max_hashes,
+    )
 
 
 def _parse_mining_range(arguments: Sequence[str]) -> tuple[int, int]:
@@ -566,6 +864,25 @@ def _parse_decimal_option(
     if not minimum <= parsed <= maximum:
         raise ValueError(f"{name} must be between {minimum} and {maximum}")
     return parsed
+
+
+def _parse_unpadded_decimal_option(
+    name: str,
+    value: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Parse strict ASCII decimal syntax without leading-zero padding."""
+
+    if len(value) > 1 and value.startswith("0"):
+        raise ValueError(f"{name} must be an unpadded ASCII decimal integer")
+    return _parse_decimal_option(
+        name,
+        value,
+        minimum=minimum,
+        maximum=maximum,
+    )
 
 
 def _mine_one_range(
@@ -779,6 +1096,7 @@ def _error_category(error: BaseException) -> str:
         (BlockHeaderError, "BlockHeaderError"),
         (TargetError, "TargetError"),
         (NonceSearchError, "NonceSearchError"),
+        (ChunkedMiningError, "ChunkedMiningError"),
         (TypeError, "TypeError"),
         (ValueError, "ValueError"),
     )
@@ -870,6 +1188,50 @@ def _print_mining_outcome(
     print(f"Meets share target: {str(match.meets_share_target).lower()}")
     print(f"Meets network target: {str(match.meets_network_target).lower()}")
     print(f"Pool result: {'accepted' if outcome.pool_accepted else 'rejected'}")
+
+
+def _print_chunked_mining_outcome(
+    settings: Settings,
+    plan: ChunkedMiningPlan,
+    result: ChunkedMiningResult,
+) -> None:
+    """Print a sanitized aggregate summary of finite chunked mining."""
+
+    print("Bounded chunked Stratum mining completed.")
+    print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
+    print(f"Username: {_mask_username(settings.stratum_username)}")
+    print(f"Initial job ID: {result.initial_job.job_id}")
+    print(f"Final job ID: {result.final_job.job_id}")
+    print(f"Final difficulty: {result.final_job.difficulty}")
+    print(f"Network bits: {result.final_job.network_bits}")
+    print(f"Extra nonce 2 size: {result.final_job.extra_nonce_2_size}")
+    print(f"Start nonce: {plan.start_nonce}")
+    print(f"Chunk size: {plan.chunk_size}")
+    print(f"Maximum hash budget: {plan.max_hashes}")
+    print(f"Chunks completed: {result.chunks_completed}")
+    print(f"Jobs used: {result.jobs_used}")
+    print(f"Job replacements: {result.job_replacements}")
+    print(f"Candidates found: {result.candidates_found}")
+    print(f"Submissions performed: {result.submissions_performed}")
+    print(f"Hashes checked: {result.total_hashes_checked}")
+    print(f"Elapsed time: {result.total_elapsed_ns} ns")
+    if result.weighted_hashes_per_second is None:
+        print("Hashes per second: unavailable")
+    else:
+        print(f"Hashes per second: {result.weighted_hashes_per_second:.2f}")
+
+    match = result.match
+    if match is None:
+        print("Result: hash budget exhausted without a qualifying hash")
+        return
+
+    nonce_hex = match.nonce.to_bytes(4, byteorder="little", signed=False).hex()
+    print(f"Matched nonce: {match.nonce}")
+    print(f"Submitted nonce hex: {nonce_hex}")
+    print(f"Raw block hash: {_abbreviate_hex(match.block_hash.hex())}")
+    print(f"Meets share target: {str(match.meets_share_target).lower()}")
+    print(f"Meets network target: {str(match.meets_network_target).lower()}")
+    print(f"Pool result: {'accepted' if result.pool_accepted else 'rejected'}")
 
 
 def _mask_username(username: str) -> str:

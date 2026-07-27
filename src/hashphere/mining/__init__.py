@@ -1,5 +1,14 @@
-"""Mining-domain models and assembly services."""
+"""Mining-domain models, deterministic primitives, and bounded orchestration."""
 
+from hashphere.mining.chunks import (
+    ChunkedMiningError,
+    ChunkedMiningObserver,
+    ChunkedMiningPlan,
+    ChunkedMiningResult,
+    ChunkedMiningValidationError,
+    NullChunkedMiningObserver,
+    run_chunked_mining,
+)
 from hashphere.mining.coinbase import (
     CoinbaseError,
     CoinbaseValidationError,
@@ -47,6 +56,11 @@ __all__ = [
     "BlockHeaderValidationError",
     "CoinbaseError",
     "CoinbaseValidationError",
+    "ChunkedMiningError",
+    "ChunkedMiningObserver",
+    "ChunkedMiningPlan",
+    "ChunkedMiningResult",
+    "ChunkedMiningValidationError",
     "MiningJob",
     "MiningJobAssembler",
     "MiningJobError",
@@ -58,6 +72,7 @@ __all__ = [
     "NonceSearchMatch",
     "NonceSearchResult",
     "NonceSearchValidationError",
+    "NullChunkedMiningObserver",
     "PreparedMiningWork",
     "TargetError",
     "TargetValidationError",
@@ -70,6 +85,7 @@ __all__ = [
     "hash_coinbase_transaction",
     "hash_meets_target",
     "prepare_mining_work",
+    "run_chunked_mining",
     "search_nonce_range",
     "serialize_block_header",
 ]

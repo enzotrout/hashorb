@@ -48,7 +48,7 @@ Progress:
 - ✅ Timeout-aware Stratum notification polling
 - ✅ Sanitized structured JSONL event logging
 - ✅ Built-in structured-log summary command
-- ⬜ Chunked mining orchestration and notification handling between chunks
+- ✅ Bounded chunked mining and notification handling between chunks
 - ⬜ Continuous CPU mining and worker scheduling
 - ⬜ Multiprocess CPU backend
 
@@ -83,7 +83,8 @@ Progress:
 - ✅ Timeout-aware notification polling
 - ✅ Sanitized structured JSONL event logging
 - ✅ Built-in structured-log analysis
-- ⬜ Chunked and continuous mining
+- ✅ Bounded chunked mining
+- ⬜ Continuous mining lifecycle
 - ⬜ Multi-process mining
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -149,19 +150,18 @@ Planned:
 
 # Current Milestone
 
-**Native Read-Only JSONL Log Analysis — Complete**
+**Bounded Chunked Live Stratum Mining — Complete**
 
 Objective:
 
-Validate and aggregate schema-version-1 JSONL event logs locally without
-network access or source-file modification. The analyzer enforces record and
-per-run integrity, reports sanitized aggregate counts, and derives weighted
-hashrate from integer hash and elapsed-time totals.
+Search a finite global nonce budget in sequential chunks, using nonblocking
+Stratum polling between chunks to apply ordered difficulty updates and switch
+to the newest announced job before the next search.
 
-Timeout-aware notification polling, sanitized structured logging, and native
-read-only log analysis are complete. Chunked mining orchestration is next.
-Prometheus/Grafana-compatible metrics remain deferred to a later observability
-milestone and do not block the continuous-mining path.
+JSONL writing and native analysis remain complete. The continuous mining
+lifecycle is next. Extra-nonce progression, network-time rolling, reconnects,
+multiprocessing, GPU support, orbiting-bit search, and Prometheus/Grafana-
+compatible metrics remain deferred and do not block lifecycle design.
 
 ---
 
@@ -169,5 +169,5 @@ milestone and do not block the continuous-mining path.
 
 Continue with:
 
-**Design bounded nonce-chunk orchestration that checks for notifications
-between searches.**
+**Design the continuous mining lifecycle around bounded chunks, explicit job
+freshness, and controlled shutdown.**

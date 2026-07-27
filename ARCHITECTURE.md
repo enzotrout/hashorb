@@ -100,6 +100,30 @@ small injectable boundaries for deterministic tests.
 
 ---
 
+# Chunked Mining Application Boundary
+
+`hashphere.mining.chunks` owns finite chunk-range calculation, invocation-wide
+hash accounting, ordered between-chunk notification processing, job
+replacement, replacement-work preparation, and stopping after budget
+exhaustion or the first candidate. It composes deterministic mining primitives
+through small injected preparation, search, polling, submission, and observer
+boundaries; it owns no socket, file, settings, or console output.
+
+The CLI owns live opt-ins, configuration, client and event-sink construction,
+initial authorized job acquisition, one invocation-scoped extra nonce, human-
+readable output, and deterministic cleanup. `StratumClient` retains ownership
+of notification queues and nonblocking polling. Coinbase, Merkle, header,
+target, and nonce-search primitives remain deterministic and unaware of
+orchestration.
+
+Observability passively records callbacks selected by CLI orchestration. It
+does not choose ranges, apply difficulty, replace work, submit shares, or
+control mining progress. This keeps a future continuous lifecycle above the
+same finite chunk primitive without moving application state into protocol or
+compute layers.
+
+---
+
 # Observability Boundary
 
 `hashphere.observability` owns structured event validation, persistent JSON

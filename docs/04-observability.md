@@ -60,9 +60,20 @@ Bounded mining also emits:
 - `share_candidate_found` when a match exists
 - `share_submission_completed` after an accepted or rejected response
 
+Bounded chunked mining may emit multiple ordered `nonce_range_started` and
+`nonce_range_completed` pairs in one run. When a notification changes prepared
+work, it additionally emits `mining_job_replaced` with the previous and new job
+IDs, the new job's `clean_jobs` value, and a one-based replacement index. The
+replacement event precedes the next range start. It is diagnostic only and
+does not control orchestration. One notification-drain boundary emits at most
+one replacement event: the previously searched job transitions directly to
+the final newest job selected for the next range. Superseded intermediate jobs
+still emit `mining_job_received`, but do not emit misleading replacement
+events.
+
 An exhausted range emits no share events. The completion outcome is one of
 `handshake_succeeded`, `observation_succeeded`, `range_exhausted`,
-`share_accepted`, or `share_rejected`.
+`hash_budget_exhausted`, `share_accepted`, or `share_rejected`.
 
 ## Safe Field Policy
 
@@ -159,8 +170,13 @@ first and last UTC timestamps, sorted command and completion-outcome counts,
 known mining event counts, range totals, accepted and rejected submission
 counts, and sorted controlled failure-stage/category counts. Command counts
 are per distinct run ID rather than per record. The human-readable CLI always
-shows the three currently known commands in a stable order, including zero
+shows the four currently known commands in a stable order, including zero
 counts, followed by any future command names in sorted order.
+
+The schema-version-1 analyzer accepts `mining_job_replaced` through its existing
+unknown-event forward-compatibility rule. Replacement records participate in
+record and run-integrity validation but deliberately add no new log-summary
+aggregate in this slice.
 
 Aggregate mining rate is weighted from the integer totals:
 

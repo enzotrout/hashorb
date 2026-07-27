@@ -377,9 +377,8 @@ failure, malformed messages, unexpected responses, and unsupported
 notifications continue to raise their existing errors. Polling does not close,
 reconnect, retry, change request IDs, or discard messages.
 
-This bounded check will allow future mining orchestration to inspect new pool
-notifications between bounded nonce-search chunks. Chunk scheduling,
-`clean_jobs` cancellation, job replacement, time rolling, and continuous mining
+Bounded chunked mining uses this check between exhausted nonfinal searches.
+Mid-chunk cancellation, time rolling, and the unlimited continuous lifecycle
 remain deferred.
 
 ## One-Shot Live Mining Orchestration
@@ -412,10 +411,53 @@ rejection are both completed exchanges with exit status zero; failures return
 nonzero. There is no retry, resubmission, reconnect, or automatic continuation
 into another range.
 
-Continuous mining, `clean_jobs` cancellation during hashing, active job
-replacement, `extra_nonce_2` progression, network-time rolling, reconnects,
-telemetry aggregation, multiprocessing, GPU execution, and orbiting-bit search
-remain deferred.
+## Bounded Multi-Chunk Mining Orchestration
+
+`stratum-mine-chunks` uses both live opt-ins and a caller-supplied
+`ChunkedMiningPlan`. The plan contains a configured start nonce, positive chunk
+size, and positive invocation-wide maximum hash count. All values use the
+unsigned 32-bit nonce space, and the global budget may not extend beyond the
+space remaining after the configured start.
+
+The reusable mining orchestrator prepares initial fixed work once, then
+searches adjacent half-open ranges for that job. Each stop is the smaller of
+the next chunk boundary and remaining global budget, so there are no gaps,
+overlaps, or silent budget increases. The last chunk is shortened as needed.
+Hash and elapsed-time totals span every chunk and job; aggregate rate is
+derived from those integer totals rather than averaged chunk rates.
+
+After an exhausted nonfinal chunk, the orchestrator repeatedly requests a
+nonblocking poll until no immediately available notification remains. Arrival
+order is semantic. Difficulty replaces the assembler's current value for
+subsequent jobs only. Each `mining.notify` immediately snapshots the
+difficulty current at that position. Thus job-then-difficulty preserves the
+old difficulty for that job, while difficulty-then-job uses the new value;
+repeated updates replace the value used by the next job.
+
+Every announced job is validated and assembled in arrival order using the
+difficulty current at that position. If several jobs are drained, only the
+final newest selected job is prepared using the invocation's same
+`extra_nonce_2`; superseded intermediate jobs are neither prepared nor
+searched. One drain therefore records at most one replacement transition from
+the previously searched job to the final job selected for the next chunk. Both
+`clean_jobs=true` and `clean_jobs=false` switch to the newer job. The former
+invalidates old work by protocol instruction, while the latter switch is
+Hashphere's deliberate freshness policy even though the pool may still accept
+the old job.
+
+A replacement restarts its own nonce position at the configured start, but
+does not reset hashes already consumed from the global budget. Exactly one
+`extra_nonce_2` is generated per invocation and is never printed, regenerated,
+or advanced. A running chunk is never interrupted; notifications are
+processed only after it exhausts. A candidate stops the loop and is submitted
+immediately with its exact work, without polling or job switching first.
+Network-target-only candidates are also submitted. Acceptance and rejection
+are terminal successful outcomes, with no retry or continuation.
+
+Unlimited lifecycle control, mid-chunk `clean_jobs` cancellation,
+`extra_nonce_2` progression, network-time rolling, nonce-space rollover,
+reconnects, telemetry aggregation, multiprocessing, GPU scheduling, and
+orbiting-bit search remain deferred.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not

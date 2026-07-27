@@ -174,11 +174,55 @@ the password, complete payout address or username, complete coinbase
 transaction, raw job JSON, authorization request, or complete submission
 request.
 
+## Run a bounded sequence of mining chunks
+
+The chunked command remains finite, but divides one global hash budget into
+sequential searches and checks for immediately available Stratum notifications
+between them:
+
+```bash
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine-chunks \
+  --start-nonce 0 \
+  --chunk-size 100000 \
+  --max-hashes 1000000 \
+  --log-file logs/hashphere.jsonl
+```
+
+Both opt-ins are required. `--chunk-size` and `--max-hashes` are required
+positive, unpadded ASCII decimal integers no larger than `2**32`.
+`--start-nonce` defaults to `0` and may range through `0xffffffff`. The global
+budget may not extend beyond the remaining 32-bit nonce space from that start.
+Each search uses a half-open range. Adjacent chunks for one job have no gaps or
+overlap, and the final chunk is shortened when less than one configured chunk
+remains.
+
+After each exhausted nonfinal chunk, the client performs nonblocking polls and
+drains every immediately available notification in arrival order. Difficulty
+changes apply only to jobs announced after them; they never rebuild the current
+job retroactively. A newly announced job replaces current work before the next
+chunk. Hashphere deliberately switches to the newest announced job for both
+`clean_jobs=true` and `clean_jobs=false` as a freshness policy. If several jobs
+arrive together, only the final newest job is searched.
+
+A replacement job restarts at the configured start nonce, but hashes already
+checked remain consumed from the invocation-wide budget. One `extra_nonce_2`
+is generated and reused for every prepared job. A chunk already running is not
+interrupted, and no notification poll occurs between candidate discovery and
+its one immediate submission.
+
+Budget exhaustion, pool acceptance, and pool rejection are successful finite
+outcomes. The command does not continue indefinitely, roll time or extra nonce
+values, reconnect, retry, or schedule background work. It is a bounded
+engineering step, not yet the unlimited continuous miner.
+
 ## Write structured JSONL event logs
 
 The `--log-file PATH` option is available on `stratum-handshake`,
-`stratum-observe`, and `stratum-mine-once`. It is optional: when omitted, no log
-file is created and the existing console output is unchanged.
+`stratum-observe`, `stratum-mine-once`, and `stratum-mine-chunks`. It is
+optional: when omitted, no log file is created and the existing console output
+is unchanged.
 
 When requested, Hashphere creates missing parent directories and appends
 sanitized events to the UTF-8 file without truncating existing records. Each
@@ -245,6 +289,7 @@ Commands:
   stratum-handshake: 2
   stratum-observe: 0
   stratum-mine-once: 0
+  stratum-mine-chunks: 0
 
 Completion outcomes:
   handshake_succeeded: 2
