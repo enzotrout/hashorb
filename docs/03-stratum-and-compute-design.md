@@ -304,10 +304,12 @@ This primitive remains a bounded synchronous search and performs no submission.
 Higher-level bounded and continuous orchestration may call and submit its typed
 result. `extra_nonce_2` rollover, network-time rolling, mid-chunk `clean_jobs`
 cancellation, worker partitioning, threads, multiprocessing, GPU execution,
-and alternative search order remain outside this primitive. Higher layers now
-provide deterministic work progression and configurable parent-range scheduling;
-native-parallel owns its internal worker partitioning. Mid-chunk cancellation,
-GPU execution, and additional search orders remain deferred.
+and alternative search order remain outside this Python reference primitive.
+Higher layers now provide deterministic work progression and configurable
+parent-range scheduling; native-parallel and CUDA own their private execution
+mappings.
+Mid-chunk cancellation, multi-GPU execution, and additional search orders
+remain deferred.
 
 ## Stratum Share-Submission Message Boundary
 
@@ -570,9 +572,10 @@ failure is not retried.
 Controlled outcomes are `stopped_by_user`, `chunk_limit_reached`,
 `share_accepted`, and `share_rejected`. The CLI returns zero for each, two for
 syntax or opt-in failure, and one for runtime, recovery exhaustion, or cleanup
-failure. Native and parallel CPU backends and the sequential strategy are
-available. GPU execution, alternative strategies, and pool failover remain
-deferred.
+failure. Python, native, native-parallel, and explicitly built CUDA backends
+are available; sequential and experimental orbiting-bit strategies remain
+independent of those backends. CUDA hardware validation, tuning, multi-GPU
+execution, and pool failover remain deferred.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not
@@ -658,8 +661,9 @@ deferred.
 Search strategy and compute backend are independent selections. The strategy
 chooses the next parent half-open range for one effective prepared-work variant;
 the backend hashes exactly that range. `native-parallel` may subdivide it among
-workers internally, but worker count and worker assignments are not strategy
-inputs.
+workers internally, while `cuda` may map it across GPU lanes. Worker count,
+device ordinal, private worker assignments, and kernel geometry are not
+strategy inputs.
 
 The built-in `sequential` strategy reproduces the established ascending,
 contiguous range order. Experimental `orbiting-bit` reverses fixed-width
@@ -696,6 +700,10 @@ interpreted as a backend selector.
 only to `native-parallel`; it does not implement a profile or alter either
 sequential backend.
 
+`HASHPHERE_CUDA_DEVICE` supplies one strict device ordinal only when `cuda` is
+explicitly selected. It defaults to zero, does not affect CPU backends, and
+does not implement automatic or multi-GPU selection.
+
 The built-in `python` backend delegates to validated `search_nonce_range` and
 remains the correctness oracle. The optional built-in `native` backend performs
 the same sequential search in portable C and verifies candidates again through
@@ -710,6 +718,15 @@ selects the lowest qualifying nonce independent of completion order, and owns
 only its reusable executor lifecycle. It is explicit, requires the native
 extension, and never changes Stratum recovery or submission semantics.
 
+The explicitly built `cuda` backend receives the same parent bounds, evaluates
+the complete range with a deterministic grid-stride mapping, reduces all
+qualifying results to the smallest nonce, and reports the full range size as
+its hash count. Its wrapper reconstructs and rehashes every reported candidate
+with the Python correctness primitives and independently checks both target
+flags before returning the shared result. CUDA selection initializes exactly
+one configured device before networking; execution and verification failures
+are terminal without CPU fallback or Stratum reconnect.
+
 CLI mining orchestration selects one backend before opening the live Stratum
 connection and reuses that same instance for every range, job replacement,
 extra-nonce or network-time variant, and recovered Stratum session. The backend
@@ -721,14 +738,16 @@ terminal and do not trigger another search, fallback, or Stratum reconnect.
 
 The capability declaration is immutable and low-cardinality. Python and native
 report sequential execution; native-parallel reports parallel execution and a
-safe worker count. All three report deterministic result order and no
-cooperative mid-range cancellation, device selection, or preferred batch size.
-SIMD, additional alternative strategies, GPU execution, device probing, and
+safe worker count; CUDA reports GPU kind, parallel execution, explicit device
+selection, and a safe ordinal. All report deterministic result order and no
+cooperative mid-range cancellation or preferred batch size. SIMD, additional
+strategies, automatic device probing, multi-GPU execution, tuning, and
 Lite/Auto/Max/Custom resource profiles remain deferred. Detailed compute
 contracts are documented in
 [`05-compute-backends.md`](05-compute-backends.md) and
 [`06-native-cpu.md`](06-native-cpu.md), with parallel design in
-[`07-parallel-cpu.md`](07-parallel-cpu.md).
+[`07-parallel-cpu.md`](07-parallel-cpu.md) and CUDA design in
+[`10-cuda-backend.md`](10-cuda-backend.md).
 
 ## Mining and Compute Components
 
@@ -737,6 +756,7 @@ src/hashphere/
 ├── compute/
 │   ├── backend.py
 │   ├── benchmark.py
+│   ├── cuda.py
 │   ├── native.py
 │   ├── parallel.py
 │   ├── python.py
@@ -759,8 +779,8 @@ The mining package owns Bitcoin work construction, targets, progression,
 parent-range strategy, session recovery, and lifecycle orchestration. The
 compute package owns only the execution boundary for a supplied prepared range,
 stable capabilities, and deterministic backend selection. This separation
-allows later search orders or GPU execution without changing Stratum or
-Bitcoin-domain semantics.
+allows alternative search orders and CUDA execution without changing Stratum
+or Bitcoin-domain semantics.
 
 ## Cryptographic Components
 

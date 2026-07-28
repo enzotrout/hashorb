@@ -154,10 +154,11 @@ orbiting-bit cursor
     -> one verified NonceSearchResult
 ```
 
-The strategy does not know backend type, worker count, executor state, internal
-assignments, hashing implementation, candidate verification, or timing. Worker
-count does not alter the bit-reversal parent order. Python, native, and native-
-parallel are all compatible with orbiting-bit.
+The strategy does not know backend type, worker count, CUDA device, executor
+state, internal assignments, kernel mapping, hashing implementation, candidate
+verification, or timing. Worker count and CUDA launch geometry do not alter the
+bit-reversal parent order. Python, native, native-parallel, and cuda are all
+compatible with orbiting-bit.
 
 ## Probability Limitations
 
@@ -205,11 +206,12 @@ There is no per-skip event and no logging of permutation counters, physical
 indexes, cursor history, jobs, headers, extra nonces, credentials, protocol
 messages, candidates, or worker assignments.
 
-## Future GPU and Distributed Execution
+## CUDA and Future Distributed Execution
 
-A future GPU backend can hash any ordinary parent range supplied by either
-strategy without understanding bit reversal. Host-side candidate verification,
-device scheduling, and cleanup remain backend responsibilities. Likewise,
-future distributed coordination must decide how to partition strategy domains
-explicitly; no distributed worker, work-stealing, GPU, or device logic is part
-of orbiting-bit today.
+The optional CUDA correctness backend hashes any ordinary parent range supplied
+by either strategy without understanding bit reversal. Its device scheduling,
+deterministic smallest-candidate reduction, Python verification, and cleanup
+remain backend responsibilities. Orbiting order is unchanged. Likewise, future
+multi-GPU or distributed coordination must decide how to partition execution
+without moving device, worker, work-stealing, or submission state into the
+orbiting-bit cursor.

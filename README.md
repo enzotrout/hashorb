@@ -12,7 +12,10 @@ sequential execution. The explicit `native-parallel` backend divides each
 parent nonce interval across portable native worker threads. Independently,
 one search strategy decides which parent interval comes next. `sequential`
 preserves ascending contiguous range order, while experimental `orbiting-bit`
-permutes the same parent-range indexes deterministically.
+permutes the same parent-range indexes deterministically. An explicitly built
+and selected `cuda` correctness backend can search either strategy's ordinary
+parent ranges on one NVIDIA device, with every reported candidate verified
+again by the Python correctness primitives.
 
 ## Configure the environment
 
@@ -29,11 +32,13 @@ derives a sanitized worker name from the hostname. No seed phrase, private key,
 or wallet password is needed or should be placed in `.env`.
 
 `HASHPHERE_COMPUTE_BACKEND` selects the nonce-search implementation. Its
-default, `auto`, deliberately continues to select `python`; native availability
-does not change that choice. Exact selectors `python`, `native`, and
-`native-parallel` are supported, and the earlier `cpu` value remains a
-compatibility alias for `python`. Both native modes require the optional
-compiled extension.
+default, `auto`, deliberately continues to select `python`; native or CUDA
+availability does not change that choice. Exact selectors `python`, `native`,
+`native-parallel`, and `cuda` are supported, and the earlier `cpu` value
+remains a compatibility alias for `python`. The native modes require the
+optional C extension. CUDA additionally requires the explicitly enabled CUDA
+extension and one available NVIDIA device. There is no fallback after an
+explicit selection.
 
 `HASHPHERE_COMPUTE_WORKERS` configures only `native-parallel`. It is a strict
 unpadded ASCII decimal integer from `1` through `256` and defaults to `2`.
@@ -41,6 +46,13 @@ Ranges shorter than the configured count create fewer nonempty assignments.
 `HASHPHERE_COMPUTE_PROFILE` remains separate; future Lite/Auto/Max/Custom
 profiles may choose worker counts and resource policy, but profile behavior is
 not implemented yet.
+
+`HASHPHERE_CUDA_DEVICE` configures only an explicitly selected `cuda` backend.
+It defaults to ordinal `0` and must be an unpadded ASCII decimal integer from
+`0` through `2147483647`. Invalid CUDA device syntax or an unavailable device
+fails before live networking. The setting is ignored by CPU backends. UUIDs,
+serial numbers, PCI addresses, and driver paths are never included in normal
+console or JSONL output. Multi-GPU selection is not implemented.
 
 `HASHPHERE_SEARCH_STRATEGY` selects where mining looks next, while
 `HASHPHERE_COMPUTE_BACKEND` selects how that assigned range is hashed. The
@@ -61,9 +73,11 @@ not retry the range with another backend or silently fall back. The parallel
 backend creates contiguous, balanced, nonoverlapping assignments whose union is
 the exact parent range, then deterministically chooses the lowest qualifying
 nonce after all running workers finish. These worker assignments remain private
-to the backend and do not change the selected global strategy. SIMD,
-multiprocessing, GPU execution, device selection, cooperative mid-range
-cancellation, and resource profiles remain deferred.
+to the backend and do not change the selected global strategy. CUDA follows
+the same parent-range boundary and uses deterministic smallest-candidate
+reduction. SIMD, multiprocessing, cooperative mid-range cancellation,
+automatic device selection, multi-GPU execution, tuning, and resource profiles
+remain deferred.
 
 ## Choose a search strategy
 
@@ -108,6 +122,87 @@ HASHPHERE_SEARCH_STRATEGY=orbiting-bit
 See [`docs/09-orbiting-bit.md`](docs/09-orbiting-bit.md) for the accessible
 algorithm and coverage proof.
 
+## Build the optional CUDA backend
+
+**What:** CUDA support is a narrow optional extension containing one
+correctness-first Bitcoin double-SHA256 kernel. Normal source and wheel builds
+remain CPU-only and do not require a CUDA toolkit.
+
+**Why:** GPU execution should plug into the existing compute contract without
+moving strategy, Stratum, progression, recovery, submission, or JSONL
+ownership onto the device.
+
+**Plain talk:** The selected strategy hands the GPU one ordinary bounded range.
+The GPU checks every nonce in that range and reports the smallest match. Python
+then rebuilds and hashes that candidate again before it can be submitted.
+
+Prerequisites are a supported NVIDIA GPU, installed CUDA toolkit and runtime,
+and `nvcc` on `PATH`. Enable the extension deliberately:
+
+```bash
+HASHPHERE_BUILD_CUDA=1 \
+uv sync --locked --reinstall-package hashphere
+```
+
+Without `HASHPHERE_BUILD_CUDA=1`, `_cuda.cu` is included in source
+distributions but is not compiled or imported. CPU-only packages continue to
+provide Python and optional native CPU operation. When the switch is set,
+missing `nvcc` or compilation failure stops the CUDA-enabled build instead of
+silently producing a package that appears CUDA-capable.
+
+CUDA remains explicit:
+
+```bash
+HASHPHERE_COMPUTE_BACKEND=cuda
+HASHPHERE_CUDA_DEVICE=0
+```
+
+`auto` and `cpu` still select Python. CUDA initialization occurs only during
+CUDA listing or explicit CUDA selection. An absent extension, failed runtime
+initialization, or missing device is a controlled unavailable-backend error
+before Stratum networking. CUDA execution or host-verification failure is
+terminal, with no CPU fallback and no Stratum reconnect.
+
+After offline parity succeeds on the target device, the controlled sequential
+live command is:
+
+```bash
+HASHPHERE_COMPUTE_BACKEND=cuda \
+HASHPHERE_CUDA_DEVICE=0 \
+HASHPHERE_SEARCH_STRATEGY=sequential \
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine \
+  --start-nonce 0 \
+  --chunk-size 1000000 \
+  --max-chunks 3 \
+  --max-reconnect-attempts 5 \
+  --log-file logs/hashphere.jsonl
+```
+
+The controlled orbiting-bit form changes only the strategy:
+
+```bash
+HASHPHERE_COMPUTE_BACKEND=cuda \
+HASHPHERE_CUDA_DEVICE=0 \
+HASHPHERE_SEARCH_STRATEGY=orbiting-bit \
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine \
+  --start-nonce 0 \
+  --chunk-size 1000000 \
+  --max-chunks 3 \
+  --max-reconnect-attempts 5 \
+  --log-file logs/hashphere.jsonl
+```
+
+These commands are documentation only and are not executed automatically.
+
+This repository has completed CPU-only builds and fake-runtime correctness
+tests. CUDA compilation and Python/CUDA parity still require an NVIDIA CUDA
+host; no speed or hardware-validation claim is made until that gate passes.
+See [`docs/10-cuda-backend.md`](docs/10-cuda-backend.md).
+
 `uv sync --locked` attempts to compile the optional self-contained C extension
 with the platform C compiler. Python-only operation remains available if that
 optional build is unavailable; explicit `native` and `native-parallel`
@@ -140,9 +235,20 @@ uv run python -m hashphere compute-benchmark \
   --hash-count 1000000
 ```
 
-`--backend` must be exactly `python`, `native`, or `native-parallel`.
+After an explicit CUDA build, benchmark one selected device offline with:
+
+```bash
+uv run python -m hashphere compute-benchmark \
+  --backend cuda \
+  --device 0 \
+  --hash-count 1000000
+```
+
+`--backend` must be exactly `cuda`, `python`, `native`, or `native-parallel`.
 `--workers` is valid only for `native-parallel`, accepts the same strict range
-as production configuration, and defaults to `2`. `--hash-count` is a positive
+as production configuration, and defaults to `2`. `--device` is valid only
+for CUDA, uses the same strict ordinal syntax, and defaults to `0`.
+`--hash-count` is a positive
 unpadded ASCII decimal integer; optional `--start-nonce` uses the same strict
 syntax and defaults to zero. The selected range may end at `2**32` but cannot
 exceed it. Output contains backend, implementation, hashes checked, elapsed
@@ -155,6 +261,14 @@ or per-thread data.
 Rates are local measurements for that process, build, machine, and synthetic
 fixture. They are not pool performance guarantees and should not be converted
 into a general speedup claim without controlled evidence.
+
+Hardware parity tests remain separately gated and never run in default pytest:
+
+```bash
+HASHPHERE_ENABLE_CUDA_TESTS=1 \
+HASHPHERE_CUDA_DEVICE=0 \
+uv run pytest -q tests/test_cuda_hardware.py
+```
 
 ## Run a live Stratum handshake
 
@@ -465,8 +579,8 @@ Malformed protocol data, authorization rejection, mining invariants, logging
 errors, and other non-connection failures remain terminal. Most importantly,
 a `mining.submit` transport failure is never retried: its outcome is uncertain,
 and resending could duplicate a submission. Pool failover, random backoff
-jitter, cooperative mid-chunk cancellation, SIMD, multiprocessing, and GPU
-execution remain deferred.
+jitter, cooperative mid-chunk cancellation, SIMD, multiprocessing, CUDA
+hardware validation and tuning, and multi-GPU execution remain deferred.
 
 To validate explicit native selection with a bounded live gate, use:
 

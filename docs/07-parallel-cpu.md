@@ -148,6 +148,8 @@ current parallel call and prevents the next mining chunk. There is no work
 stealing, multiprocessing, SIMD, assembly, GPU code, device selection, or
 platform-specific threading.
 
-The explicit sequential and orbiting-bit parent-range strategies are complete.
-Other alternative global search orders, GPU support, resource profiles, wheel
-publishing, distributed workers, and automatic backend policy remain deferred.
+The explicit sequential and orbiting-bit parent-range strategies are complete,
+and the optional CUDA correctness backend is independent of this CPU worker
+pool. Other global search orders, CUDA hardware tuning and multi-GPU support,
+resource profiles, wheel publishing, distributed workers, and automatic
+backend policy remain deferred.

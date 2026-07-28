@@ -11,8 +11,10 @@ model. The backend never chooses the global order of parent intervals.
 The existing Python sequential scanner remains the correctness reference. The
 optional `native` backend performs the same bounded sequential search through a
 self-contained portable C extension. `native-parallel` divides a parent range
-among concurrent verified native calls. Multiprocessing, SIMD, accelerators,
-and device discovery remain deferred.
+among concurrent verified native calls. The optional `cuda` backend evaluates
+one parent range on one explicitly selected NVIDIA device and verifies every
+reported candidate again in Python. Multiprocessing, SIMD, automatic device
+discovery, multi-GPU execution, and performance tuning remain deferred.
 
 ## Public Contract
 
@@ -92,6 +94,13 @@ The `native-parallel` backend declares kind `cpu`, implementation
 cancellation, no device selection, and no preferred batch size. Its safe
 immutable backend metadata includes the configured worker count.
 
+The `cuda` backend declares kind `gpu`, implementation `cuda`, deterministic
+result order, parallel search, no cooperative cancellation, device selection,
+and no preferred batch size. Its only runtime identifier is the configured
+nonnegative device ordinal. Availability requires the optional extension,
+successful runtime initialization, and the requested device; failures use a
+controlled category rather than a driver or compiler message.
+
 ## Python Reference Backend
 
 `PythonSequentialBackend` delegates exactly once to the existing validated
@@ -167,6 +176,47 @@ cannot be reused.
 The complete lifecycle and benchmark boundary is also summarized in
 [`07-parallel-cpu.md`](07-parallel-cpu.md).
 
+## Optional CUDA Correctness Backend
+
+`CudaBackend` receives the unchanged 76-byte header prefix, exact little-endian
+share and network targets, and inclusive/exclusive nonce bounds. The optional
+extension assigns logical offsets with a deterministic grid stride:
+
+```text
+lane = block_index * threads_per_block + thread_index
+stride = grid_size * threads_per_block
+offsets for one lane = lane, lane + stride, lane + 2*stride, ...
+```
+
+Only offsets below `stop_nonce - start_nonce` are evaluated. This partitions
+the logical range exactly once without gaps, duplication, wraparound, or
+out-of-range work. Each nonce is appended as four explicit unsigned
+little-endian bytes. Device SHA-256 runs twice, and raw digest bytes are
+compared inclusively and independently with the two little-endian targets.
+
+Parallel execution order is not observable. Every qualifying lane applies an
+atomic minimum to the absolute nonce, so the public candidate is always the
+smallest qualifying nonce in the supplied parent range. A synchronized
+correctness kernel evaluates the full range even after a candidate appears;
+therefore `hashes_checked` is exactly `stop_nonce - start_nonce`. One monotonic
+host interval covers input transfer, launch, synchronization, candidate flag
+retrieval, and result return. No lane or kernel timing is summed.
+
+The extension returns only optional candidate nonce, two target flags, and the
+full hash count. Python rejects malformed counts, flags, or out-of-range
+nonces, reconstructs `header_prefix || nonce_little_endian`, calculates the
+digest through the established `hash_block_header`, and checks both flags with
+`hash_meets_target`. A disagreement raises `ComputeBackendExecutionError`.
+Neither a fabricated nor an unverified candidate can reach submission.
+
+One CUDA backend instance owns one device selection for the mining invocation.
+It survives chunks, job replacement, extra-nonce progression, network-time
+rolling, and Stratum recovery. Caller-owned cleanup synchronizes backend work
+once, is idempotent, and does not reset unrelated CUDA global state. The backend
+owns no settings loading, strategy cursor, networking, submission, signal,
+console, or event-file behavior. Full source and validation details are in
+[`10-cuda-backend.md`](10-cuda-backend.md).
+
 ## Registry and Selection
 
 `ComputeBackendRegistry` snapshots an explicit iterable into isolated immutable
@@ -174,15 +224,20 @@ per-instance state. It rejects duplicates, lists capabilities in sorted exact
 backend-name order, and performs no plugin loading, entry-point discovery, dynamic
 import, or hardware probing.
 
-The built-in registry always contains `python` and also describes `native` and
-`native-parallel` whether available or unavailable. Configuration accepts:
+The built-in registry always contains `python` and also describes `cuda`,
+`native`, and `native-parallel` whether available or unavailable. An ordinary
+CPU registry leaves CUDA uninitialized, so importing Hashphere or selecting a
+CPU backend does not probe a GPU. CUDA listing or explicit selection performs
+the controlled extension/runtime/device initialization. Configuration accepts:
 
 - `python`, selecting the reference backend directly;
 - `auto`, deterministically selecting `python` in this milestone;
 - `cpu`, a compatibility alias selecting `python`;
 - `native`, selecting the extension only when available;
 - `native-parallel`, selecting the thread pool only when the extension and
-  worker configuration are available.
+  worker configuration are available;
+- `cuda`, selecting the optional extension only when the configured device
+  initializes successfully.
 
 Unknown and unavailable selectors are controlled configuration errors detected
 before a mining command constructs a live client. `auto` does not currently
@@ -193,6 +248,12 @@ separate deferred resource-policy setting.
 through 256, defaults to 2, and configures only `native-parallel`. It does not
 alter Python or native sequential search. Profiles may own smarter resource
 policy later but do not interpret this value today.
+
+`HASHPHERE_CUDA_DEVICE` is a strict unpadded ASCII decimal device ordinal,
+defaults to zero, and is parsed only for explicit CUDA selection. Invalid
+syntax fails before networking. CPU backends ignore it. No UUID, serial number,
+PCI address, compiler path, driver path, or automatic multi-device selection is
+part of the contract.
 
 There is no native-to-Python execution fallback. `auto` intentionally remains
 `python` until parity, packaging, and live benchmark evidence justify a separate
@@ -222,6 +283,8 @@ Both sequential and orbiting-bit supply ordinary contiguous half-open parent
 ranges. Orbiting-bit changes only the order in which those ranges arrive. A
 backend receives no permutation counter or physical-range index and performs no
 strategy-specific hashing, partitioning, accounting, or candidate handling.
+CUDA is compatible with both strategies and sees exactly the same bounds as the
+Python and native backends.
 
 Caller-owned command cleanup closes the selected backend only after its final
 search and never during a recoverable reconnect. Cleanup is idempotent, waits
@@ -245,11 +308,18 @@ A parallel worker failure is sanitized, cancels futures that have not started
 where possible, waits for running calls, and permanently marks that backend
 instance unusable. It does not trigger Stratum reconnect or fallback.
 
+CUDA import, runtime, initialization, and missing-device failures make explicit
+selection unavailable and return configuration status 2 before networking.
+Kernel, transfer, synchronization, result, candidate-verification, and cleanup
+failures are sanitized runtime errors with status 1. They never trigger CPU
+fallback, repeat a range, or cause Stratum reconnect.
+
 ## Observability and Privacy
 
 Mining commands emit one `compute_backend_selected` event after selection and
 before authorization. Safe fields are the backend name, kind, implementation,
-parallel flag, cooperative-cancellation flag, and optional worker count.
+parallel flag, cooperative-cancellation flag, device-selection flag, optional
+worker count, and optional CUDA device ordinal.
 Existing nonce-range events describe parent searches; there is no event per
 worker, assignment, or hash.
 
@@ -268,9 +338,15 @@ processor identity, and raw worker failures remain excluded. Log-summary
 backend aggregation naturally includes the stable name and does not aggregate
 worker counts.
 
+CUDA selection uses stable name `cuda`, kind `gpu`, implementation `cuda`, and
+one ordinal. JSONL excludes UUIDs, serial numbers, PCI addresses, driver and
+compiler paths, raw CUDA errors, targets, headers, digests, candidates, and
+per-thread or per-block data. Backend summary aggregation naturally counts
+`cuda` without creating a device-specific high-cardinality section.
+
 ## Offline Benchmark
 
-`compute-benchmark` selects an explicit `python`, `native`, or
+`compute-benchmark` selects an explicit `cuda`, `python`, `native`, or
 `native-parallel` backend without loading runtime settings, credentials, event
 sinks, or network code. It uses
 fixed public synthetic `PreparedMiningWork`, accepts one strict half-open range,
@@ -281,6 +357,12 @@ not printed.
 Parallel benchmarking accepts `--workers` only with `native-parallel` and
 reports that count. Its rate uses summed actual hashes over the parent-call
 wall-clock interval. It does not emit per-worker timing or events.
+
+CUDA benchmarking accepts `--device` only with `cuda`, defaults to ordinal
+zero, and reports that ordinal. It exercises the same deterministic synthetic
+work and host verification without Stratum or live opt-ins. Availability and
+syntax failures return status 2; execution, verification, or cleanup failures
+return status 1. No speed threshold or comparison is asserted.
 
 The rate is calculated from unrounded totals:
 
@@ -301,9 +383,8 @@ mid-range cancellation is deferred; all current backends truthfully declare
 that they cannot cancel a running range. A future cancellation input can be
 added only with lifecycle and actual hash-accounting tests.
 
-A future CUDA backend may search one supplied interval on a selected device,
-but device probing, memory management, and host-side result verification remain
-backend-local. It must remain unaware of Stratum, progression, logging files,
-and submission. CUDA, Metal, Vulkan, DGX Spark/GB10 optimization, multi-GPU
-coordination, multiprocessing, SIMD, alternative search strategies, resource
-profiles, and wheel publishing are all deferred.
+The CUDA correctness boundary is implemented but remains unvalidated on real
+hardware until the explicitly gated toolkit/device parity suite passes. DGX
+Spark/GB10 tuning follows that correctness gate. Metal, Vulkan, multi-GPU
+coordination, multiprocessing, SIMD, additional strategies, resource profiles,
+automatic selection, and CUDA wheel publishing remain deferred.

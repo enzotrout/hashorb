@@ -84,8 +84,9 @@ weighted rate without a new range schema.
 
 `compute_backend_selected` is shared by all three mining commands. Its fields
 are limited to `backend_name`, `backend_kind`, `implementation`,
-`supports_parallel_search`, `supports_cooperative_cancellation`, and the safe
-optional `worker_count`. It is emitted once per invocation rather than once per
+`supports_parallel_search`, `supports_cooperative_cancellation`,
+`supports_device_selection`, and the safe optional `worker_count` or
+`device_ordinal`. It is emitted once per invocation rather than once per
 range, so existing range events remain the authoritative parent-search records.
 Hardware serial numbers, thread identifiers, assignment bounds, device paths,
 availability-error text, work bytes, and credentials are never included.
@@ -105,6 +106,15 @@ There is no event per executor worker or assignment. Existing
 parent range, aggregate actual hashes, and wall-clock elapsed time. Read-only
 summary aggregation naturally counts the stable parallel backend name without
 creating worker-count aggregates.
+
+CUDA uses `backend_name=cuda`, `backend_kind=gpu`, `implementation=cuda`,
+`supports_parallel_search=true`, `supports_cooperative_cancellation=false`,
+`supports_device_selection=true`, and one nonnegative device ordinal. That
+ordinal is the only device identity permitted. GPU UUID, serial number, PCI
+address, driver or compiler path, target and header data, candidate values, raw
+CUDA errors, and per-thread, per-block, or per-kernel-lane events are excluded.
+The read-only summary naturally counts stable `cuda` selections without a
+device-specific aggregate.
 
 `search_strategy_selected` is shared by all mining commands and follows
 `compute_backend_selected`. Its exact safe fields are `strategy_name`,

@@ -212,11 +212,12 @@ then run parity tests against the installed artifact. Python-only artifacts or
 source installation must also be tested with the extension unavailable.
 
 The sequential and orbiting-bit strategies remain independent of this native
-implementation. Other alternative strategies, SIMD dispatch, cooperative
-cancellation, GPU/CUDA, device selection,
-Lite/Auto/Max/Custom profiles, and automatic native selection remain separate
-milestones. Cross-platform thread behavior uses only Python's
-standard executor API; native wheel targets and build requirements are
+implementation. The optional CUDA backend and its explicit device selection
+are separate from native CPU execution; additional strategies, SIMD dispatch,
+cooperative cancellation, Lite/Auto/Max/Custom profiles, and automatic native
+selection remain later milestones. Cross-platform thread behavior uses only
+Python's standard executor API; native wheel targets and build requirements are
 unchanged. See [`07-parallel-cpu.md`](07-parallel-cpu.md) for the assignment,
-reduction, and lifecycle contract, and
-[`08-search-strategies.md`](08-search-strategies.md) for parent-range ordering.
+reduction, and lifecycle contract, [`08-search-strategies.md`](08-search-strategies.md)
+for parent-range ordering, and [`10-cuda-backend.md`](10-cuda-backend.md) for the
+independent optional GPU boundary.

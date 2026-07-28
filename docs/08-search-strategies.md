@@ -184,10 +184,12 @@ selected strategy
 ```
 
 All current backends support `sequential` and `orbiting-bit`. Python and native
-search each parent range sequentially. `native-parallel` privately divides that parent range
-into balanced, contiguous, nonoverlapping worker assignments and reduces their
-results deterministically. The strategy does not know the worker count, create
-an executor, inspect worker assignments, or aggregate hashes and timing.
+search each parent range sequentially. `native-parallel` privately divides that
+parent range into balanced, contiguous, nonoverlapping worker assignments.
+`cuda` applies its private grid-stride mapping to the same exact parent bounds
+and returns a Python-verified smallest candidate. The strategy does not know
+the worker count, CUDA device, executor, kernel mapping, private assignments,
+candidate reduction, or backend hash and timing accounting.
 
 Compatibility is validated after backend and strategy selection but before a
 live client is constructed. This explicit boundary allows a future strategy to
@@ -266,8 +268,10 @@ explicit finite assignments, truthful capabilities, duplicate prevention, stop
 and pool-notification priority, exact accounting, controlled failure, and
 compatibility validation.
 
-A future GPU backend remains an execution implementation: it may hash one
-strategy-supplied parent assignment and verify a candidate through the shared
-result contract. GPU device selection, work distribution, host-side
-verification, and cleanup stay backend concerns. The strategy remains unaware
-of CUDA, devices, worker topology, Stratum, or share submission.
+The optional CUDA backend remains an execution implementation: it hashes one
+strategy-supplied parent assignment and verifies a candidate through the shared
+result contract. GPU device selection, grid mapping, host-side verification,
+and cleanup stay backend concerns. CUDA execution does not change sequential or
+orbiting assignment order. The strategy remains unaware of CUDA, devices,
+worker topology, Stratum, or share submission; future multi-GPU work must
+preserve that boundary.

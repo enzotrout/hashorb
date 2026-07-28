@@ -58,7 +58,7 @@ Progress:
 - ✅ Portable parallel native CPU backend
 - ✅ Search-strategy abstraction and sequential reference strategy
 - ✅ Deterministic orbiting-bit search strategy
-- ⬜ GPU/CUDA correctness backend
+- 🟨 GPU/CUDA correctness backend implemented; hardware validation gated
 - ⬜ Pool failover
 
 ---
@@ -101,7 +101,7 @@ Progress:
 - ✅ Portable parallel native CPU mining
 - ✅ Search-strategy abstraction and sequential reference strategy
 - ✅ Deterministic orbiting-bit search strategy
-- ⬜ GPU/CUDA correctness backend
+- 🟨 GPU/CUDA correctness backend implemented; hardware validation gated
 - ⬜ Pool failover
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -167,26 +167,30 @@ Planned:
 
 # Current Milestone
 
-**Deterministic Orbiting-Bit Search Strategy — Complete**
+**Optional CUDA Correctness Backend — Implemented, Hardware Gate Pending**
 
 Objective:
 
-Add a deterministic bit-reversal permutation over physical parent-range
-indexes. Orbiting-bit spreads early assignments across the nonce domain while
-still visiting every valid range exactly once and leaving backend execution
-unchanged.
+Add an explicitly built and selected CUDA backend that searches exact parent
+ranges, reduces to the smallest qualifying nonce, and verifies every device
+candidate through the existing Python correctness primitives. CPU-only builds,
+Python defaults, and both search strategies remain operational. CUDA source,
+host integration, mocked tests, and build tooling are complete; `nvcc`, an
+NVIDIA runtime, and a CUDA device are unavailable on the current validation
+host, so device parity and performance remain unclaimed.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, the
 compute-backend boundary, portable native sequential execution, and portable
 parallel execution, the strategy abstraction, and both sequential and
-orbiting-bit orders remain complete. A correctness-first GPU/CUDA backend is
-next, followed by DGX Spark/GB10 tuning, multi-GPU execution,
+orbiting-bit orders remain complete. CUDA hardware parity is the current gate,
+followed by DGX Spark/GB10 correctness tuning, multi-GPU execution,
 Lite/Auto/Max/Custom operating profiles, macOS/Windows/Linux/Docker packaging,
 broader pool support and Bitcoin Core true solo mining, distributed workers and
 adaptive tuning, then Prometheus/Grafana-compatible metrics. Pool failover
-remains a separate recovery milestone. Random, strided, partitioned-global,
-and probabilistic search orders remain unimplemented.
+remains a separate recovery milestone. Fibonacci-bounce, random, strided,
+partitioned-global, and probabilistic search orders remain a later experimental
+strategy-expansion point.
 
 ---
 
@@ -194,5 +198,5 @@ and probabilistic search orders remain unimplemented.
 
 Continue with:
 
-**Implement a correctness-first GPU/CUDA compute backend with host-side
-candidate verification.**
+**Compile and exercise the optional CUDA backend on NVIDIA hardware, then begin
+DGX Spark/GB10 correctness tuning without making unsupported speed claims.**

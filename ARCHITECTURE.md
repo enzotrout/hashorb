@@ -143,8 +143,9 @@ accessible bit-reversal design in
 [`docs/09-orbiting-bit.md`](docs/09-orbiting-bit.md).
 
 After a completed range, pool notifications remain higher priority than either
-strategy's next assignment. Future GPU backends receive the same ordinary
-parent-range contract and must not reinterpret sequential or orbiting order.
+strategy's next assignment. The optional CUDA backend receives the same
+ordinary parent-range contract and does not reinterpret sequential or orbiting
+order. Future multi-GPU coordination must preserve this ownership split.
 
 ---
 
@@ -161,11 +162,13 @@ files, client cleanup, or event-sink cleanup. A resource-owning backend does
 own its executor cleanup behind the shared close boundary.
 
 The built-in registry is created per invocation and contains the always
-available `python` backend plus `native` and `native-parallel`, whose
-availability is determined by one controlled optional-extension import. `auto`
-deterministically remains `python`; `cpu` is retained as a configuration
-compatibility alias. Explicit unavailable native selection fails before a live
-mining connection is opened, as does invalid parallel worker configuration.
+available `python` backend plus `native`, `native-parallel`, and `cuda`.
+Native availability is determined by one controlled optional-extension import.
+CUDA remains uninitialized in an ordinary CPU registry and initializes its
+explicit device only for CUDA listing or selection. `auto` deterministically
+remains `python`; `cpu` is retained as a configuration compatibility alias.
+Explicit unavailable backend selection fails before a live mining connection
+is opened, as do invalid parallel worker or CUDA device configurations.
 The same selected instance survives job changes, local work progression, and
 fresh Stratum sessions, while each prepared work value remains call-scoped and
 is not retained after search.
@@ -201,14 +204,42 @@ parallel call finishes. `HASHPHERE_COMPUTE_WORKERS` is validated by
 configuration and passed into backend construction without being interpreted
 by mining orchestration.
 
+`CudaBackend` is a verified Python wrapper around the optional `_cuda`
+extension. The extension owns one correctness-first grid-stride kernel for an
+exact supplied parent range, device buffers for the 76-byte prefix and two
+little-endian targets, and deterministic atomic-minimum candidate reduction.
+The synchronized kernel evaluates the complete range, so its hash count is the
+exact range size and its timing covers transfer, launch, synchronization, and
+retrieval. It neither sees strategy state nor owns Stratum, work progression,
+submission, settings loading, output, events, or client cleanup.
+
+The wrapper reconstructs the exact 80-byte header for every device candidate,
+rehashes it through the existing Python `hash_block_header`, and independently
+checks both targets through `hash_meets_target`. A nonce, count, flag, range, or
+verification mismatch is terminal; no unverified device result can reach
+submission. One selected CUDA instance and device ordinal survive chunks,
+work changes, and recovered Stratum sessions and are closed once by the same
+caller-owned backend cleanup as CPU resources. Cleanup synchronizes owned work
+without resetting unrelated global CUDA state.
+
+CUDA compilation is deliberately gated by `HASHPHERE_BUILD_CUDA=1`. Normal
+source and wheel builds do not invoke `nvcc`, while source distributions retain
+the CUDA source. The default test suite uses an injected extension-shaped fake
+and never initializes CUDA. Device parity tests require the separate
+`HASHPHERE_ENABLE_CUDA_TESTS=1` gate and skip cleanly when the extension or
+device is absent. Multi-GPU ownership, device discovery policy, tuning, and
+published CUDA wheels remain future boundaries.
+
 The native extension is optional at build and import time, preserving
 Python-only installs; both native modes then report controlled unavailability.
-Future strategy and GPU implementations must preserve the same range and result
-semantics and remain unaware of network and logging-file ownership.
+The CUDA extension is even more explicit and never participates in a normal
+CPU build. Every backend preserves the same range and result semantics and
+remains unaware of network and logging-file ownership.
 Detailed contracts are in
 [`docs/05-compute-backends.md`](docs/05-compute-backends.md) and
 [`docs/06-native-cpu.md`](docs/06-native-cpu.md), with parallel lifecycle detail
-in [`docs/07-parallel-cpu.md`](docs/07-parallel-cpu.md).
+in [`docs/07-parallel-cpu.md`](docs/07-parallel-cpu.md) and CUDA design in
+[`docs/10-cuda-backend.md`](docs/10-cuda-backend.md).
 
 ---
 
