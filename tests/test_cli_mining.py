@@ -357,12 +357,34 @@ def test_live_stratum_opt_in_is_required(
 
 @pytest.mark.parametrize("selector", ["auto", "python", "cpu"])
 def test_configured_backend_selectors_resolve_to_python(selector: str) -> None:
-    settings = replace(make_settings(), compute_backend=selector)
+    settings = replace(make_settings(), compute_backend=selector, compute_workers=256)
 
     backend = cli_module._select_configured_compute_backend(settings)
 
     assert backend.capabilities.backend_name == "python"
     assert settings.compute_profile == "lite"
+
+
+def test_explicit_native_parallel_selector_uses_configured_workers_when_available() -> None:
+    settings = replace(
+        make_settings(),
+        compute_backend="native-parallel",
+        compute_workers=3,
+    )
+    capabilities = {
+        item.backend_name: item
+        for item in cli_module.builtin_compute_backend_registry().list_capabilities()
+    }
+    if not capabilities["native-parallel"].available:
+        pytest.skip("optional native extension is not built")
+
+    backend = cli_module._select_configured_compute_backend(settings)
+
+    assert backend.capabilities.backend_name == "native-parallel"
+    assert backend.capabilities.implementation == "c-threadpool"
+    assert cli_module.compute_backend_worker_count(backend) == 3
+    assert settings.compute_profile == "lite"
+    cli_module.close_compute_backend(backend)
 
 
 def test_explicit_native_selector_resolves_only_when_extension_is_available() -> None:
@@ -471,10 +493,21 @@ def test_exact_range_reaches_one_prepare_and_one_search(
     assert "Compute backend: python" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("backend_name", "implementation", "parallel", "worker_count"),
+    [
+        ("native", "c", False, None),
+        ("native-parallel", "c-threadpool", True, 4),
+    ],
+)
 def test_one_shot_uses_one_selected_native_backend_and_emits_safe_identity(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    backend_name: str,
+    implementation: str,
+    parallel: bool,
+    worker_count: int | None,
 ) -> None:
     path = tmp_path / "native-one-shot.jsonl"
     client = FakeClient([difficulty_notification(), mining_notification()])
@@ -482,18 +515,21 @@ def test_one_shot_uses_one_selected_native_backend_and_emits_safe_identity(
     searcher = cli_module.search_nonce_range
 
     class NativeFakeBackend:
-        capabilities = ComputeBackendCapabilities(
-            backend_name="native",
-            display_name="Native fake",
-            backend_kind="cpu",
-            implementation="c",
-            supports_parallel_search=False,
-            supports_cooperative_cancellation=False,
-            supports_device_selection=False,
-            deterministic_search_order=True,
-            preferred_batch_size=None,
-            available=True,
-        )
+        def __init__(self) -> None:
+            self.capabilities = ComputeBackendCapabilities(
+                backend_name=backend_name,
+                display_name="Native fake",
+                backend_kind="cpu",
+                implementation=implementation,
+                supports_parallel_search=parallel,
+                supports_cooperative_cancellation=False,
+                supports_device_selection=False,
+                deterministic_search_order=True,
+                preferred_batch_size=None,
+                available=True,
+            )
+            self.worker_count = worker_count
+            self.close_calls = 0
 
         def search_nonce_range(
             self,
@@ -502,6 +538,9 @@ def test_one_shot_uses_one_selected_native_backend_and_emits_safe_identity(
             stop_nonce: int,
         ) -> NonceSearchResult:
             return searcher(work, start_nonce, stop_nonce)
+
+        def close(self) -> None:
+            self.close_calls += 1
 
     backend = NativeFakeBackend()
 
@@ -517,14 +556,20 @@ def test_one_shot_uses_one_selected_native_backend_and_emits_safe_identity(
 
     assert harness.backend_selection_calls == 1
     assert len(harness.search_calls) == 1
-    assert "Compute backend: native" in capsys.readouterr().out
+    assert backend.close_calls == 1
+    output = capsys.readouterr().out
+    assert f"Compute backend: {backend_name}" in output
+    if worker_count is not None:
+        assert f"Compute workers: {worker_count}" in output
     selected = read_event_log(path)[1]
     assert selected["event"] == "compute_backend_selected"
-    assert selected["backend_name"] == "native"
+    assert selected["backend_name"] == backend_name
     assert selected["backend_kind"] == "cpu"
-    assert selected["implementation"] == "c"
-    assert selected["supports_parallel_search"] is False
+    assert selected["implementation"] == implementation
+    assert selected["supports_parallel_search"] is parallel
     assert selected["supports_cooperative_cancellation"] is False
+    if worker_count is not None:
+        assert selected["worker_count"] == worker_count
 
 
 @pytest.mark.parametrize(
@@ -892,6 +937,71 @@ def test_cleanup_failure_after_success_is_nonzero(
     assert captured.out == ""
     assert captured.err == "Could not close the Stratum connection cleanly.\n"
     assert client.close_calls == 1
+
+
+@pytest.mark.parametrize("runtime_failure", [False, True])
+def test_parallel_backend_cleanup_follows_existing_failure_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    runtime_failure: bool,
+) -> None:
+    client = FakeClient([difficulty_notification(), mining_notification()])
+    harness = MiningHarness(
+        search_failure=(
+            ComputeBackendSelectionError("private original detail") if runtime_failure else None
+        )
+    )
+    install_mining_fakes(monkeypatch, client, harness)
+    searcher = cli_module.search_nonce_range
+
+    class CloseFailingParallelBackend:
+        capabilities = ComputeBackendCapabilities(
+            backend_name="native-parallel",
+            display_name="Parallel fake",
+            backend_kind="cpu",
+            implementation="c-threadpool",
+            supports_parallel_search=True,
+            supports_cooperative_cancellation=False,
+            supports_device_selection=False,
+            deterministic_search_order=True,
+            preferred_batch_size=None,
+            available=True,
+        )
+        worker_count = 4
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def search_nonce_range(
+            self,
+            work: PreparedMiningWork,
+            start_nonce: int,
+            stop_nonce: int,
+        ) -> NonceSearchResult:
+            return searcher(work, start_nonce, stop_nonce)
+
+        def close(self) -> None:
+            self.close_calls += 1
+            raise RuntimeError("private cleanup detail")
+
+    backend = CloseFailingParallelBackend()
+    monkeypatch.setattr(
+        cli_module,
+        "_select_configured_compute_backend",
+        lambda settings: backend,
+    )
+
+    assert cli_module.main(mining_arguments()) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert backend.close_calls == 1
+    assert "private" not in captured.err
+    assert captured.err == (
+        "Bounded Stratum mining failed.\n"
+        if runtime_failure
+        else "Could not close the compute backend cleanly.\n"
+    )
 
 
 def test_output_omits_credentials_coinbase_and_raw_requests(

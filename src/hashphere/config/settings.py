@@ -13,6 +13,8 @@ DEFAULT_STRATUM_HOST = "stratum.ckpool.org"
 DEFAULT_STRATUM_PORT = 3333
 DEFAULT_STRATUM_PASSWORD = "x"
 DEFAULT_WORKER_NAME = "auto"
+DEFAULT_COMPUTE_WORKERS = 2
+MAX_COMPUTE_WORKERS = 256
 
 _WORKER_INVALID_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]+")
 
@@ -49,6 +51,7 @@ class Settings:
     stratum_password: str
     compute_backend: str
     compute_profile: str
+    compute_workers: int = DEFAULT_COMPUTE_WORKERS
 
     @property
     def stratum_username(self) -> str:
@@ -80,6 +83,9 @@ class Settings:
             raise ValueError("HASHPHERE_STRATUM_PORT must be between 1 and 65535")
 
         worker_name = resolve_worker_name(os.getenv("HASHPHERE_WORKER_NAME", DEFAULT_WORKER_NAME))
+        compute_workers = _parse_compute_workers(
+            os.getenv("HASHPHERE_COMPUTE_WORKERS", str(DEFAULT_COMPUTE_WORKERS))
+        )
 
         return cls(
             stratum_host=os.getenv(
@@ -105,4 +111,21 @@ class Settings:
             )
             .strip()
             .lower(),
+            compute_workers=compute_workers,
         )
+
+
+def _parse_compute_workers(value: object) -> int:
+    if not isinstance(value, str):
+        raise ValueError("HASHPHERE_COMPUTE_WORKERS must be an ASCII decimal integer")
+    if (
+        not value
+        or not value.isascii()
+        or not value.isdecimal()
+        or (len(value) > 1 and value.startswith("0"))
+    ):
+        raise ValueError("HASHPHERE_COMPUTE_WORKERS must be an unpadded ASCII decimal integer")
+    worker_count = int(value)
+    if not 1 <= worker_count <= MAX_COMPUTE_WORKERS:
+        raise ValueError(f"HASHPHERE_COMPUTE_WORKERS must be between 1 and {MAX_COMPUTE_WORKERS}")
+    return worker_count

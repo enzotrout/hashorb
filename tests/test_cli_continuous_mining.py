@@ -689,9 +689,20 @@ def test_initial_connection_failure_recovers_with_fresh_client_and_session(
         assert sensitive not in serialized
 
 
+@pytest.mark.parametrize(
+    ("backend_name", "implementation", "parallel", "worker_count"),
+    [
+        ("native", "c", False, None),
+        ("native-parallel", "c-threadpool", True, 4),
+    ],
+)
 def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    backend_name: str,
+    implementation: str,
+    parallel: bool,
+    worker_count: int | None,
 ) -> None:
     failed = FakeClient(
         notifications=[
@@ -715,18 +726,21 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
     searcher = cli_module.search_nonce_range
 
     class NativeFakeBackend:
-        capabilities = ComputeBackendCapabilities(
-            backend_name="native",
-            display_name="Native fake",
-            backend_kind="cpu",
-            implementation="c",
-            supports_parallel_search=False,
-            supports_cooperative_cancellation=False,
-            supports_device_selection=False,
-            deterministic_search_order=True,
-            preferred_batch_size=None,
-            available=True,
-        )
+        def __init__(self) -> None:
+            self.capabilities = ComputeBackendCapabilities(
+                backend_name=backend_name,
+                display_name="Native fake",
+                backend_kind="cpu",
+                implementation=implementation,
+                supports_parallel_search=parallel,
+                supports_cooperative_cancellation=False,
+                supports_device_selection=False,
+                deterministic_search_order=True,
+                preferred_batch_size=None,
+                available=True,
+            )
+            self.worker_count = worker_count
+            self.close_calls = 0
 
         def search_nonce_range(
             self,
@@ -735,6 +749,9 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
             stop_nonce: int,
         ) -> NonceSearchResult:
             return searcher(work, start_nonce, stop_nonce)
+
+        def close(self) -> None:
+            self.close_calls += 1
 
     backend = NativeFakeBackend()
 
@@ -758,10 +775,13 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
     ]
     assert harness.generated_sizes == [4, 2]
     assert harness.backend_selection_calls == 1
+    assert backend.close_calls == 1
     assert failed.close_calls == 1
     assert recovered.close_calls == 1
     output = capsys.readouterr().out
-    assert "Compute backend: native" in output
+    assert f"Compute backend: {backend_name}" in output
+    if worker_count is not None:
+        assert f"Compute workers: {worker_count}" in output
     assert "Extra nonce 2 size: 2" in output
     assert "Reconnect attempts: 1" in output
     assert "Sessions established: 2" in output
@@ -926,6 +946,72 @@ def test_compute_backend_failure_is_terminal_without_reconnect_or_fallback(
     assert captured.out == ""
     assert captured.err == "Continuous Stratum mining failed.\n"
     assert private_detail not in captured.err
+
+
+@pytest.mark.parametrize("outcome", ["stop", "recovery_exhaustion"])
+def test_parallel_backend_closes_after_stop_and_recovery_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    client = FakeClient(
+        notifications=(
+            [difficulty(), job(), None, StratumConnectionError("private connection detail")]
+            if outcome == "recovery_exhaustion"
+            else None
+        )
+    )
+    harness, signals = install_fakes(monkeypatch, client)
+    if outcome == "stop":
+        harness.signal_trigger_call = 1
+        harness.signal_trigger = signals.trigger
+    searcher = cli_module.search_nonce_range
+
+    class ParallelFakeBackend:
+        capabilities = ComputeBackendCapabilities(
+            backend_name="native-parallel",
+            display_name="Parallel fake",
+            backend_kind="cpu",
+            implementation="c-threadpool",
+            supports_parallel_search=True,
+            supports_cooperative_cancellation=False,
+            supports_device_selection=False,
+            deterministic_search_order=True,
+            preferred_batch_size=None,
+            available=True,
+        )
+        worker_count = 4
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def search_nonce_range(
+            self,
+            work: PreparedMiningWork,
+            start_nonce: int,
+            stop_nonce: int,
+        ) -> NonceSearchResult:
+            return searcher(work, start_nonce, stop_nonce)
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    backend = ParallelFakeBackend()
+    monkeypatch.setattr(
+        cli_module,
+        "_select_configured_compute_backend",
+        lambda settings: backend,
+    )
+
+    status = cli_module.main(
+        arguments(
+            max_chunks=None if outcome == "stop" else "2",
+            max_reconnect_attempts=("0" if outcome == "recovery_exhaustion" else None),
+        )
+    )
+
+    assert status == (0 if outcome == "stop" else 1)
+    assert backend.close_calls == 1
+    assert signals.current == signals.previous
 
 
 @pytest.mark.parametrize(

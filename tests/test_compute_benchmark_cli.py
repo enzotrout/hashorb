@@ -25,6 +25,9 @@ class FakeBenchmarkBackend:
     capabilities: ComputeBackendCapabilities
     result: NonceSearchResult
     calls: list[tuple[PreparedMiningWork, int, int]]
+    close_calls: list[None]
+    worker_count: int | None = None
+    close_failure: bool = False
 
     def search_nonce_range(
         self,
@@ -35,12 +38,18 @@ class FakeBenchmarkBackend:
         self.calls.append((work, start_nonce, stop_nonce))
         return self.result
 
+    def close(self) -> None:
+        if self.close_failure:
+            raise RuntimeError("private cleanup detail")
+        self.close_calls.append(None)
+
 
 def fake_backend(
     backend_name: str = "python",
     *,
     elapsed_ns: int = 10,
     match: NonceSearchMatch | None = None,
+    close_failure: bool = False,
 ) -> FakeBenchmarkBackend:
     """Build one fake backend with a range-consistent result."""
 
@@ -49,8 +58,14 @@ def fake_backend(
             backend_name=backend_name,
             display_name=f"{backend_name} benchmark fake",
             backend_kind="cpu",
-            implementation="c" if backend_name == "native" else "python",
-            supports_parallel_search=False,
+            implementation=(
+                "c-threadpool"
+                if backend_name == "native-parallel"
+                else "c"
+                if backend_name == "native"
+                else "python"
+            ),
+            supports_parallel_search=backend_name == "native-parallel",
             supports_cooperative_cancellation=False,
             supports_device_selection=False,
             deterministic_search_order=True,
@@ -65,6 +80,9 @@ def fake_backend(
             match=match,
         ),
         calls=[],
+        close_calls=[],
+        worker_count=4 if backend_name == "native-parallel" else None,
+        close_failure=close_failure,
     )
 
 
@@ -78,7 +96,7 @@ def test_benchmark_fixture_is_stable_immutable_and_explicitly_synthetic() -> Non
     assert first.share_target == first.network_target == 1
 
 
-@pytest.mark.parametrize("backend_name", ["python", "native"])
+@pytest.mark.parametrize("backend_name", ["python", "native", "native-parallel"])
 def test_valid_benchmark_is_offline_sanitized_and_deterministic(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -86,8 +104,9 @@ def test_valid_benchmark_is_offline_sanitized_and_deterministic(
 ) -> None:
     backend = fake_backend(backend_name)
 
-    def select(received_name: str) -> MiningComputeBackend:
+    def select(received_name: str, received_workers: int | None) -> MiningComputeBackend:
         assert received_name == backend_name
+        assert received_workers == (4 if backend_name == "native-parallel" else None)
         return backend
 
     def forbidden(*args: object, **kwargs: object) -> object:
@@ -104,6 +123,7 @@ def test_valid_benchmark_is_offline_sanitized_and_deterministic(
                 "compute-benchmark",
                 "--backend",
                 backend_name,
+                *(["--workers", "4"] if backend_name == "native-parallel" else []),
                 "--start-nonce",
                 "7",
                 "--hash-count",
@@ -115,16 +135,26 @@ def test_valid_benchmark_is_offline_sanitized_and_deterministic(
 
     captured = capsys.readouterr()
     assert captured.err == ""
+    implementation = (
+        "c-threadpool"
+        if backend_name == "native-parallel"
+        else "c"
+        if backend_name == "native"
+        else "python"
+    )
+    workers_line = "Workers: 4\n" if backend_name == "native-parallel" else ""
     assert captured.out == (
         "Hashphere compute benchmark completed.\n"
         f"Backend: {backend_name}\n"
-        f"Implementation: {'c' if backend_name == 'native' else 'python'}\n"
+        f"Implementation: {implementation}\n"
+        f"{workers_line}"
         "Hashes checked: 3\n"
         "Elapsed time: 10 ns\n"
         "Hashes per second: 300000000.00\n"
         "Result: range exhausted\n"
     )
     assert backend.calls == [(deterministic_benchmark_work(), 7, 10)]
+    assert backend.close_calls == [None]
 
 
 def test_zero_elapsed_rate_is_unavailable(
@@ -144,7 +174,11 @@ def test_candidate_output_omits_candidate_and_fixture_values(
     private_digest = bytes.fromhex("ab" * 32)
     match = NonceSearchMatch(7, private_digest, True, False)
     backend = fake_backend(match=match)
-    monkeypatch.setattr(cli_module, "_select_benchmark_compute_backend", lambda name: backend)
+    monkeypatch.setattr(
+        cli_module,
+        "_select_benchmark_compute_backend",
+        lambda name, workers: backend,
+    )
 
     assert (
         cli_module.main(
@@ -183,6 +217,23 @@ def test_candidate_output_omits_candidate_and_fixture_values(
         ["--backend", "python", "--start-nonce", "4294967295", "--hash-count", "2"],
         ["--backend", "python", "--hash-count", "1", "--unknown", "x"],
         ["--backend", "python", "--backend", "native", "--hash-count", "1"],
+        ["--backend", "python", "--workers", "2", "--hash-count", "1"],
+        ["--backend", "native", "--workers", "2", "--hash-count", "1"],
+        ["--backend", "native-parallel", "--workers", "0", "--hash-count", "1"],
+        ["--backend", "native-parallel", "--workers", "01", "--hash-count", "1"],
+        ["--backend", "native-parallel", "--workers", "+2", "--hash-count", "1"],
+        ["--backend", "native-parallel", "--workers", "2.0", "--hash-count", "1"],
+        ["--backend", "native-parallel", "--workers", "257", "--hash-count", "1"],
+        [
+            "--backend",
+            "native-parallel",
+            "--workers",
+            "2",
+            "--workers",
+            "3",
+            "--hash-count",
+            "1",
+        ],
     ],
 )
 def test_malformed_benchmark_options_return_two(
@@ -199,8 +250,8 @@ def test_unavailable_backend_returns_two_without_raw_selection_detail(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def unavailable(name: str) -> MiningComputeBackend:
-        del name
+    def unavailable(name: str, workers: int | None) -> MiningComputeBackend:
+        del name, workers
         raise ComputeBackendSelectionError("private compiler path")
 
     monkeypatch.setattr(cli_module, "_select_benchmark_compute_backend", unavailable)
@@ -230,10 +281,11 @@ def test_backend_execution_failure_returns_one_without_fallback_or_raw_detail(
 
     selections = 0
 
-    def select(name: str) -> MiningComputeBackend:
+    def select(name: str, workers: int | None) -> MiningComputeBackend:
         nonlocal selections
         selections += 1
         assert name == "native"
+        assert workers is None
         return FailingBackend()
 
     monkeypatch.setattr(cli_module, "_select_benchmark_compute_backend", select)
@@ -246,7 +298,7 @@ def test_backend_execution_failure_returns_one_without_fallback_or_raw_detail(
     assert selections == 1
 
 
-@pytest.mark.parametrize("backend_name", ["python", "native"])
+@pytest.mark.parametrize("backend_name", ["python", "native", "native-parallel"])
 def test_actual_backend_completes_one_hash_when_available(
     capsys: pytest.CaptureFixture[str],
     backend_name: str,
@@ -257,9 +309,63 @@ def test_actual_backend_completes_one_hash_when_available(
         pytest.skip(f"{backend_name} backend is unavailable")
 
     assert (
-        cli_module.main(["compute-benchmark", "--backend", backend_name, "--hash-count", "1"]) == 0
+        cli_module.main(
+            [
+                "compute-benchmark",
+                "--backend",
+                backend_name,
+                *(["--workers", "2"] if backend_name == "native-parallel" else []),
+                "--hash-count",
+                "1",
+            ]
+        )
+        == 0
     )
     captured = capsys.readouterr()
     assert captured.err == ""
     assert f"Backend: {backend_name}" in captured.out
     assert "Hashes checked: 1" in captured.out
+    if backend_name == "native-parallel":
+        assert "Workers: 2" in captured.out
+
+
+def test_parallel_benchmark_defaults_to_two_workers(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = fake_backend("native-parallel")
+    received: list[tuple[str, int | None]] = []
+
+    def select(name: str, workers: int | None) -> MiningComputeBackend:
+        received.append((name, workers))
+        return backend
+
+    monkeypatch.setattr(cli_module, "_select_benchmark_compute_backend", select)
+
+    assert (
+        cli_module.main(["compute-benchmark", "--backend", "native-parallel", "--hash-count", "3"])
+        == 0
+    )
+    assert received == [("native-parallel", 2)]
+    assert "Workers: 4" in capsys.readouterr().out
+
+
+def test_benchmark_cleanup_failure_returns_one_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = fake_backend("native-parallel", close_failure=True)
+    monkeypatch.setattr(
+        cli_module,
+        "_select_benchmark_compute_backend",
+        lambda name, workers: backend,
+    )
+
+    assert (
+        cli_module.main(["compute-benchmark", "--backend", "native-parallel", "--hash-count", "3"])
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Compute benchmark cleanup failed.\n"
+    assert "private" not in captured.err

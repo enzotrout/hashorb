@@ -125,3 +125,16 @@ def close_compute_backend(backend: MiningComputeBackend) -> None:
         close()
     except Exception as exc:
         raise ComputeBackendExecutionError("compute backend cleanup failed") from exc
+
+
+def compute_backend_worker_count(backend: MiningComputeBackend) -> int | None:
+    """Return safe optional worker metadata for output and observability."""
+
+    if not isinstance(backend, MiningComputeBackend):
+        raise ComputeBackendValidationError("backend must implement MiningComputeBackend")
+    worker_count = getattr(backend, "worker_count", None)
+    if worker_count is None:
+        return None
+    if isinstance(worker_count, bool) or not isinstance(worker_count, int) or worker_count <= 0:
+        raise ComputeBackendValidationError("backend worker_count must be a positive integer")
+    return worker_count

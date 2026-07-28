@@ -1,5 +1,9 @@
 """Hashphere configuration."""
 
-from hashphere.config.settings import Settings
+from hashphere.config.settings import (
+    DEFAULT_COMPUTE_WORKERS,
+    MAX_COMPUTE_WORKERS,
+    Settings,
+)
 
-__all__ = ["Settings"]
+__all__ = ["DEFAULT_COMPUTE_WORKERS", "MAX_COMPUTE_WORKERS", "Settings"]

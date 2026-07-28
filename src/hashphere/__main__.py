@@ -16,6 +16,8 @@ from hashphere.compute import (
     ComputeBackendValidationError,
     MiningComputeBackend,
     builtin_compute_backend_registry,
+    close_compute_backend,
+    compute_backend_worker_count,
     deterministic_benchmark_work,
     select_compute_backend,
 )
@@ -75,6 +77,7 @@ from hashphere.observability import (
     NullEventSink,
     summarize_jsonl,
 )
+from hashphere.observability.events import EventValue
 
 _LIVE_STRATUM_FLAG = "HASHPHERE_ENABLE_LIVE_STRATUM"
 _LIVE_MINING_FLAG = "HASHPHERE_ENABLE_LIVE_MINING"
@@ -478,14 +481,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "compute-benchmark":
         try:
-            backend_name, start_nonce, stop_nonce = _parse_compute_benchmark_arguments(
-                arguments[1:]
+            backend_name, worker_count, start_nonce, stop_nonce = (
+                _parse_compute_benchmark_arguments(arguments[1:])
             )
         except ValueError as exc:
             print(f"Argument error: {exc}", file=sys.stderr)
             print(_USAGE, file=sys.stderr)
             return 2
-        return _run_compute_benchmark(backend_name, start_nonce, stop_nonce)
+        return _run_compute_benchmark(
+            backend_name,
+            worker_count,
+            start_nonce,
+            stop_nonce,
+        )
     if arguments and arguments[0] == "logs-summary":
         try:
             summary_log_file = _parse_summary_command_arguments(arguments[1:])
@@ -569,17 +577,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _run_compute_benchmark(
     backend_name: str,
+    worker_count: int | None,
     start_nonce: int,
     stop_nonce: int,
 ) -> int:
     """Run one offline synthetic range through an explicitly selected backend."""
 
     try:
-        backend = _select_benchmark_compute_backend(backend_name)
+        backend = _select_benchmark_compute_backend(backend_name, worker_count)
     except (ComputeBackendSelectionError, ComputeBackendValidationError):
         print("Compute benchmark backend is unavailable or invalid.", file=sys.stderr)
         return 2
 
+    result: NonceSearchResult | None = None
+    status = 0
     try:
         result = backend.search_nonce_range(
             deterministic_benchmark_work(),
@@ -588,16 +599,33 @@ def _run_compute_benchmark(
         )
     except ComputeBackendError:
         print("Compute benchmark failed.", file=sys.stderr)
-        return 1
+        status = 1
+    finally:
+        try:
+            close_compute_backend(backend)
+        except ComputeBackendError:
+            if status == 0:
+                print("Compute benchmark cleanup failed.", file=sys.stderr)
+                status = 1
 
+    if status != 0:
+        return status
+    if result is None:
+        raise RuntimeError("compute benchmark completed without a result")
     _print_compute_benchmark(backend, result)
     return 0
 
 
-def _select_benchmark_compute_backend(backend_name: str) -> MiningComputeBackend:
+def _select_benchmark_compute_backend(
+    backend_name: str,
+    worker_count: int | None,
+) -> MiningComputeBackend:
     """Select one offline backend without loading runtime configuration."""
 
-    registry = builtin_compute_backend_registry(python_searcher=search_nonce_range)
+    registry = builtin_compute_backend_registry(
+        python_searcher=search_nonce_range,
+        worker_count=worker_count if worker_count is not None else 2,
+    )
     return select_compute_backend(backend_name, registry)
 
 
@@ -612,6 +640,9 @@ def _print_compute_benchmark(
     print("Hashphere compute benchmark completed.")
     print(f"Backend: {capabilities.backend_name}")
     print(f"Implementation: {capabilities.implementation}")
+    worker_count = compute_backend_worker_count(backend)
+    if worker_count is not None:
+        print(f"Workers: {worker_count}")
     print(f"Hashes checked: {result.hashes_checked}")
     print(f"Elapsed time: {result.elapsed_ns} ns")
     print(f"Hashes per second: {'unavailable' if rate is None else f'{rate:.2f}'}")
@@ -895,6 +926,13 @@ def _run_stratum_mine_once(
                     print("Could not close the Stratum connection cleanly.", file=sys.stderr)
                     status = 1
                     _emit_command_failed(events, "cleanup", "ClientCloseError")
+        try:
+            close_compute_backend(backend)
+        except ComputeBackendError:
+            if pending_failure is None and status == 0:
+                print("Could not close the compute backend cleanly.", file=sys.stderr)
+                status = 1
+                _emit_command_failed(events, "cleanup", "ComputeBackendCloseError")
 
     if status != 0:
         return status
@@ -918,6 +956,7 @@ def _run_stratum_mine_once(
     _print_mining_outcome(
         settings,
         backend.capabilities.backend_name,
+        compute_backend_worker_count(backend),
         start_nonce,
         stop_nonce,
         outcome,
@@ -1012,6 +1051,13 @@ def _run_stratum_mine_chunks(
                     print("Could not close the Stratum connection cleanly.", file=sys.stderr)
                     status = 1
                     _emit_command_failed(events, "cleanup", "ClientCloseError")
+        try:
+            close_compute_backend(backend)
+        except ComputeBackendError:
+            if pending_failure is None and status == 0:
+                print("Could not close the compute backend cleanly.", file=sys.stderr)
+                status = 1
+                _emit_command_failed(events, "cleanup", "ComputeBackendCloseError")
 
     if status != 0:
         return status
@@ -1035,6 +1081,7 @@ def _run_stratum_mine_chunks(
     _print_chunked_mining_outcome(
         settings,
         backend.capabilities.backend_name,
+        compute_backend_worker_count(backend),
         plan,
         result,
     )
@@ -1176,6 +1223,14 @@ def _run_stratum_mine(
                 print("Could not restore signal handlers cleanly.", file=sys.stderr)
                 status = 1
                 _emit_command_failed(events, "cleanup", "SignalRestoreError")
+        try:
+            close_compute_backend(backend)
+        except ComputeBackendError:
+            if pending_failure is None and status == 0 and not cleanup_failure_reported:
+                print("Could not close the compute backend cleanly.", file=sys.stderr)
+                status = 1
+                cleanup_failure_reported = True
+                _emit_command_failed(events, "cleanup", "ComputeBackendCloseError")
 
     if status != 0:
         return status
@@ -1195,6 +1250,7 @@ def _run_stratum_mine(
     _print_continuous_mining_outcome(
         settings,
         backend.capabilities.backend_name,
+        compute_backend_worker_count(backend),
         subscription,
         plan,
         reconnect_policy,
@@ -1242,7 +1298,10 @@ def _load_live_mining_settings() -> Settings | None:
 def _select_configured_compute_backend(settings: Settings) -> MiningComputeBackend:
     """Select one invocation-local backend without probing hardware."""
 
-    registry = builtin_compute_backend_registry(python_searcher=search_nonce_range)
+    registry = builtin_compute_backend_registry(
+        python_searcher=search_nonce_range,
+        worker_count=settings.compute_workers,
+    )
     return select_compute_backend(settings.compute_backend, registry)
 
 
@@ -1289,12 +1348,12 @@ def _parse_summary_command_arguments(arguments: Sequence[str]) -> str:
 
 def _parse_compute_benchmark_arguments(
     arguments: Sequence[str],
-) -> tuple[str, int, int]:
+) -> tuple[str, int | None, int, int]:
     """Parse strict offline backend and half-open benchmark-range options."""
 
     option_values = _parse_option_values(
         arguments,
-        {"--backend", "--start-nonce", "--hash-count"},
+        {"--backend", "--workers", "--start-nonce", "--hash-count"},
         unsupported_message="unsupported compute-benchmark argument",
     )
     if "--backend" not in option_values:
@@ -1302,8 +1361,21 @@ def _parse_compute_benchmark_arguments(
     if "--hash-count" not in option_values:
         raise ValueError("--hash-count is required")
     backend_name = option_values["--backend"]
-    if backend_name not in {"python", "native"}:
-        raise ValueError("--backend must be python or native")
+    if backend_name not in {"python", "native", "native-parallel"}:
+        raise ValueError("--backend must be python, native, or native-parallel")
+    workers_text = option_values.get("--workers")
+    if workers_text is not None and backend_name != "native-parallel":
+        raise ValueError("--workers is valid only for native-parallel")
+    worker_count = (
+        _parse_unpadded_decimal_option(
+            "--workers",
+            workers_text if workers_text is not None else "2",
+            minimum=1,
+            maximum=256,
+        )
+        if backend_name == "native-parallel"
+        else None
+    )
     start_nonce = _parse_unpadded_decimal_option(
         "--start-nonce",
         option_values.get("--start-nonce", "0"),
@@ -1319,7 +1391,7 @@ def _parse_compute_benchmark_arguments(
     stop_nonce = start_nonce + hash_count
     if stop_nonce > _NONCE_LIMIT:
         raise ValueError("the requested benchmark range exceeds 2**32")
-    return backend_name, start_nonce, stop_nonce
+    return backend_name, worker_count, start_nonce, stop_nonce
 
 
 def _parse_mining_command_arguments(
@@ -1754,15 +1826,19 @@ def _emit_compute_backend_selected(
     """Emit stable, non-device-specific capabilities for one selected backend."""
 
     capabilities = backend.capabilities
+    fields: dict[str, EventValue] = {
+        "backend_name": capabilities.backend_name,
+        "backend_kind": capabilities.backend_kind,
+        "implementation": capabilities.implementation,
+        "supports_parallel_search": capabilities.supports_parallel_search,
+        "supports_cooperative_cancellation": (capabilities.supports_cooperative_cancellation),
+    }
+    worker_count = compute_backend_worker_count(backend)
+    if worker_count is not None:
+        fields["worker_count"] = worker_count
     events.emit(
         "compute_backend_selected",
-        fields={
-            "backend_name": capabilities.backend_name,
-            "backend_kind": capabilities.backend_kind,
-            "implementation": capabilities.implementation,
-            "supports_parallel_search": capabilities.supports_parallel_search,
-            "supports_cooperative_cancellation": (capabilities.supports_cooperative_cancellation),
-        },
+        fields=fields,
     )
 
 
@@ -1903,6 +1979,7 @@ def _print_observation_success(
 def _print_mining_outcome(
     settings: Settings,
     backend_name: str,
+    worker_count: int | None,
     start_nonce: int,
     stop_nonce: int,
     outcome: _MiningOutcome,
@@ -1913,6 +1990,8 @@ def _print_mining_outcome(
     print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
     print(f"Username: {_mask_username(settings.stratum_username)}")
     print(f"Compute backend: {backend_name}")
+    if worker_count is not None:
+        print(f"Compute workers: {worker_count}")
     print(f"Job ID: {outcome.job.job_id}")
     print(f"Difficulty: {outcome.job.difficulty}")
     print(f"Network bits: {outcome.job.network_bits}")
@@ -1943,6 +2022,7 @@ def _print_mining_outcome(
 def _print_chunked_mining_outcome(
     settings: Settings,
     backend_name: str,
+    worker_count: int | None,
     plan: ChunkedMiningPlan,
     result: ChunkedMiningResult,
 ) -> None:
@@ -1952,6 +2032,8 @@ def _print_chunked_mining_outcome(
     print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
     print(f"Username: {_mask_username(settings.stratum_username)}")
     print(f"Compute backend: {backend_name}")
+    if worker_count is not None:
+        print(f"Compute workers: {worker_count}")
     print(f"Initial job ID: {result.initial_job.job_id}")
     print(f"Final job ID: {result.final_job.job_id}")
     print(f"Final difficulty: {result.final_job.difficulty}")
@@ -1989,6 +2071,7 @@ def _print_chunked_mining_outcome(
 def _print_continuous_mining_outcome(
     settings: Settings,
     backend_name: str,
+    worker_count: int | None,
     subscription: SubscribeResult | None,
     plan: ContinuousMiningPlan,
     reconnect_policy: ReconnectPolicy,
@@ -2002,6 +2085,8 @@ def _print_continuous_mining_outcome(
     print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
     print(f"Username: {_mask_username(settings.stratum_username)}")
     print(f"Compute backend: {backend_name}")
+    if worker_count is not None:
+        print(f"Compute workers: {worker_count}")
     if result is None:
         print("Final difficulty: unavailable")
         print("Network bits: unavailable")

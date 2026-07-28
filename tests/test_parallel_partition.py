@@ -4,9 +4,9 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from hashphere.compute import ComputeBackendValidationError
-from hashphere.compute.parallel import (
+from hashphere.compute import (
     MAX_COMPUTE_WORKERS,
+    ComputeBackendValidationError,
     NonceRangeAssignment,
     partition_nonce_range,
 )

@@ -17,6 +17,7 @@ _ENVIRONMENT_VARIABLES = (
     "HASHPHERE_STRATUM_PASSWORD",
     "HASHPHERE_COMPUTE_BACKEND",
     "HASHPHERE_COMPUTE_PROFILE",
+    "HASHPHERE_COMPUTE_WORKERS",
 )
 
 
@@ -82,6 +83,7 @@ def test_settings_load_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.stratum_password == "x"
     assert settings.compute_backend == "auto"
     assert settings.compute_profile == "lite"
+    assert settings.compute_workers == 2
 
 
 def test_settings_load_explicit_values(
@@ -97,6 +99,7 @@ def test_settings_load_explicit_values(
     monkeypatch.setenv("HASHPHERE_STRATUM_PASSWORD", "test-password")
     monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "GPU")
     monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", "MAX")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_WORKERS", "256")
 
     settings = Settings.from_env()
 
@@ -106,6 +109,7 @@ def test_settings_load_explicit_values(
     assert settings.stratum_password == "test-password"
     assert settings.compute_backend == "gpu"
     assert settings.compute_profile == "max"
+    assert settings.compute_workers == 256
 
 
 def test_missing_bitcoin_address_is_rejected() -> None:
@@ -147,4 +151,30 @@ def test_out_of_range_port_is_rejected(
         ValueError,
         match="HASHPHERE_STRATUM_PORT must be between 1 and 65535",
     ):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("workers", ["1", "2", "256"])
+def test_compute_workers_accept_strict_supported_values(
+    monkeypatch: pytest.MonkeyPatch,
+    workers: str,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_WORKERS", workers)
+
+    assert Settings.from_env().compute_workers == int(workers)
+
+
+@pytest.mark.parametrize(
+    "workers",
+    ["", "0", "257", "01", "+2", "-2", "0x2", "2.0", " 2", "2 ", "２"],
+)
+def test_compute_workers_reject_malformed_or_out_of_range_values(
+    monkeypatch: pytest.MonkeyPatch,
+    workers: str,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_WORKERS", workers)
+
+    with pytest.raises(ValueError, match="HASHPHERE_COMPUTE_WORKERS"):
         Settings.from_env()

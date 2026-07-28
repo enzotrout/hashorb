@@ -12,7 +12,9 @@ from hashphere.compute.backend import (
     MiningComputeBackend,
 )
 from hashphere.compute.native import NativeSequentialBackend
+from hashphere.compute.parallel import NativeParallelBackend
 from hashphere.compute.python import PythonSequentialBackend, RangeSearcher
+from hashphere.config import DEFAULT_COMPUTE_WORKERS
 
 _AUTO_SELECTOR = "auto"
 _LEGACY_CPU_SELECTOR = "cpu"
@@ -78,8 +80,10 @@ def builtin_compute_backend_registry(
     *,
     python_searcher: RangeSearcher | None = None,
     native_backend: NativeSequentialBackend | None = None,
+    native_parallel_backend: NativeParallelBackend | None = None,
+    worker_count: int = DEFAULT_COMPUTE_WORKERS,
 ) -> ComputeBackendRegistry:
-    """Create a fresh registry containing Python and optional native execution."""
+    """Create a fresh registry containing Python and both optional native modes."""
 
     python_backend = (
         PythonSequentialBackend()
@@ -89,7 +93,14 @@ def builtin_compute_backend_registry(
     selected_native = NativeSequentialBackend() if native_backend is None else native_backend
     if not isinstance(selected_native, NativeSequentialBackend):
         raise ComputeBackendValidationError("native_backend must be NativeSequentialBackend")
-    return ComputeBackendRegistry((python_backend, selected_native))
+    selected_parallel = (
+        NativeParallelBackend(worker_count, selected_native)
+        if native_parallel_backend is None
+        else native_parallel_backend
+    )
+    if not isinstance(selected_parallel, NativeParallelBackend):
+        raise ComputeBackendValidationError("native_parallel_backend must be NativeParallelBackend")
+    return ComputeBackendRegistry((python_backend, selected_native, selected_parallel))
 
 
 def select_compute_backend(

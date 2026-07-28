@@ -454,9 +454,20 @@ def test_both_live_opt_ins_are_required(
     assert client.handshake_calls == 0
 
 
+@pytest.mark.parametrize(
+    ("backend_name", "implementation", "parallel", "worker_count"),
+    [
+        ("native", "c", False, None),
+        ("native-parallel", "c-threadpool", True, 4),
+    ],
+)
 def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    backend_name: str,
+    implementation: str,
+    parallel: bool,
+    worker_count: int | None,
 ) -> None:
     client = FakeClient()
     harness = install_fakes(
@@ -467,18 +478,21 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
     searcher = cli_module.search_nonce_range
 
     class NativeFakeBackend:
-        capabilities = ComputeBackendCapabilities(
-            backend_name="native",
-            display_name="Native fake",
-            backend_kind="cpu",
-            implementation="c",
-            supports_parallel_search=False,
-            supports_cooperative_cancellation=False,
-            supports_device_selection=False,
-            deterministic_search_order=True,
-            preferred_batch_size=None,
-            available=True,
-        )
+        def __init__(self) -> None:
+            self.capabilities = ComputeBackendCapabilities(
+                backend_name=backend_name,
+                display_name="Native fake",
+                backend_kind="cpu",
+                implementation=implementation,
+                supports_parallel_search=parallel,
+                supports_cooperative_cancellation=False,
+                supports_device_selection=False,
+                deterministic_search_order=True,
+                preferred_batch_size=None,
+                available=True,
+            )
+            self.worker_count = worker_count
+            self.close_calls = 0
 
         def search_nonce_range(
             self,
@@ -487,6 +501,9 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
             stop_nonce: int,
         ) -> NonceSearchResult:
             return searcher(work, start_nonce, stop_nonce)
+
+        def close(self) -> None:
+            self.close_calls += 1
 
     backend = NativeFakeBackend()
 
@@ -506,6 +523,7 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
         (11, 12),
     ]
     assert harness.backend_selection_calls == 1
+    assert backend.close_calls == 1
     assert client.poll_timeouts == [0.0, 0.0]
     assert harness.generated_sizes == [4]
     assert len(harness.prepare_calls) == 1
@@ -513,7 +531,9 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
     assert client.close_calls == 1
     output = capsys.readouterr().out
     assert "Chunk size: 2" in output
-    assert "Compute backend: native" in output
+    assert f"Compute backend: {backend_name}" in output
+    if worker_count is not None:
+        assert f"Compute workers: {worker_count}" in output
     assert "Maximum hash budget: 5" in output
     assert "Chunks completed: 3" in output
     assert "Jobs used: 1" in output

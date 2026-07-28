@@ -14,10 +14,8 @@ from hashphere.compute.backend import (
     ComputeBackendValidationError,
 )
 from hashphere.compute.native import NativeSequentialBackend
+from hashphere.config import DEFAULT_COMPUTE_WORKERS, MAX_COMPUTE_WORKERS
 from hashphere.mining.search import NonceSearchResult, PreparedMiningWork, _validate_nonce_range
-
-DEFAULT_COMPUTE_WORKERS = 2
-MAX_COMPUTE_WORKERS = 256
 
 type ExecutorFactory = Callable[[int], Executor]
 type MonotonicClock = Callable[[], int]

@@ -14,10 +14,12 @@ from hashphere.compute import (
     ComputeBackendSelectionError,
     ComputeBackendValidationError,
     MiningComputeBackend,
+    NativeParallelBackend,
     NativeSequentialBackend,
     PythonSequentialBackend,
     builtin_compute_backend_registry,
     close_compute_backend,
+    compute_backend_worker_count,
     list_compute_backends,
     select_compute_backend,
 )
@@ -302,9 +304,10 @@ def test_registry_lists_builtins_deterministically_and_is_isolated() -> None:
     assert first.list_capabilities() == second.list_capabilities()
     assert tuple(item.backend_name for item in first.list_capabilities()) == (
         "native",
+        "native-parallel",
         "python",
     )
-    assert first.list_capabilities()[1] == PythonSequentialBackend().capabilities
+    assert first.list_capabilities()[2] == PythonSequentialBackend().capabilities
     assert list_compute_backends(first) == first.list_capabilities()
 
 
@@ -334,16 +337,37 @@ def test_registry_exposes_controlled_unavailable_native_without_affecting_python
         native_backend=NativeSequentialBackend(None),
     )
 
-    native, python = registry.list_capabilities()
+    native, native_parallel, python = registry.list_capabilities()
     assert native.backend_name == "native"
     assert native.available is False
     assert native.unavailable_reason == "ExtensionNotInstalled"
+    assert native_parallel.backend_name == "native-parallel"
+    assert native_parallel.available is False
+    assert native_parallel.unavailable_reason == "ExtensionNotInstalled"
     assert python.backend_name == "python"
     assert python.available is True
     assert registry.select("auto").capabilities.backend_name == "python"
     assert registry.select("cpu").capabilities.backend_name == "python"
     with pytest.raises(ComputeBackendSelectionError, match="unavailable"):
         registry.select("native")
+    with pytest.raises(ComputeBackendSelectionError, match="unavailable"):
+        registry.select("native-parallel")
+
+
+def test_registry_selects_parallel_explicitly_without_changing_logical_aliases() -> None:
+    native = NativeSequentialBackend(lambda *args: (None, None, False, False, 1))
+    parallel = NativeParallelBackend(4, native)
+    registry = builtin_compute_backend_registry(
+        native_backend=native,
+        native_parallel_backend=parallel,
+    )
+
+    assert registry.select("native-parallel") is parallel
+    assert registry.select("auto").capabilities.backend_name == "python"
+    assert registry.select("cpu").capabilities.backend_name == "python"
+    assert compute_backend_worker_count(parallel) == 4
+    assert compute_backend_worker_count(registry.select("python")) is None
+    close_compute_backend(parallel)
 
 
 def test_registry_rejects_unknown_unavailable_and_invalid_selection_safely() -> None:
