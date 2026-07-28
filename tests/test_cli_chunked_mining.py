@@ -458,6 +458,7 @@ def test_both_live_opt_ins_are_required(
 @pytest.mark.parametrize(
     ("backend_name", "implementation", "parallel", "worker_count"),
     [
+        ("cuda", "cuda", True, None),
         ("native", "c", False, None),
         ("native-parallel", "c-threadpool", True, 4),
     ],
@@ -483,16 +484,17 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
             self.capabilities = ComputeBackendCapabilities(
                 backend_name=backend_name,
                 display_name="Native fake",
-                backend_kind="cpu",
+                backend_kind="gpu" if backend_name == "cuda" else "cpu",
                 implementation=implementation,
                 supports_parallel_search=parallel,
                 supports_cooperative_cancellation=False,
-                supports_device_selection=False,
+                supports_device_selection=backend_name == "cuda",
                 deterministic_search_order=True,
                 preferred_batch_size=None,
                 available=True,
             )
             self.worker_count = worker_count
+            self.device_ordinal = 3 if backend_name == "cuda" else None
             self.close_calls = 0
 
         def search_nonce_range(

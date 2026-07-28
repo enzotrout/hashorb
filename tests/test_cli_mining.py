@@ -10,7 +10,11 @@ from pathlib import Path
 import pytest
 
 import hashphere.__main__ as cli_module
-from hashphere.compute import ComputeBackendCapabilities, ComputeBackendSelectionError
+from hashphere.compute import (
+    ComputeBackendCapabilities,
+    ComputeBackendSelectionError,
+    CudaBackend,
+)
 from hashphere.config import Settings
 from hashphere.mining import (
     CoinbaseError,
@@ -406,6 +410,41 @@ def test_explicit_native_selector_resolves_only_when_extension_is_available() ->
     assert settings.compute_profile == "lite"
 
 
+def test_explicit_cuda_selector_initializes_only_the_configured_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = replace(make_settings(), compute_backend="cuda", cuda_device=7)
+    initialized: list[int] = []
+
+    class Runtime:
+        def initialize_device(self, device_ordinal: int) -> None:
+            initialized.append(device_ordinal)
+
+        def search_nonce_range(self, *arguments: object) -> object:
+            del arguments
+            return (None, False, False, 1)
+
+        def close_device(self) -> None:
+            return None
+
+    backend = CudaBackend(7, Runtime())
+    original_registry = cli_module.builtin_compute_backend_registry
+
+    def registry(**options: object) -> object:
+        assert options["cuda_device"] == 7
+        assert options["initialize_cuda"] is True
+        options["cuda_backend"] = backend
+        return original_registry(**options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli_module, "builtin_compute_backend_registry", registry)
+
+    selected = cli_module._select_configured_compute_backend(settings)
+
+    assert selected is backend
+    assert initialized == [7]
+    cli_module.close_compute_backend(backend)
+
+
 def test_unknown_backend_fails_before_client_construction_without_echoing_selector(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -437,7 +476,7 @@ def test_unavailable_backend_fails_before_client_construction(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    settings = replace(make_settings(), compute_backend="native")
+    settings = replace(make_settings(), compute_backend="cuda", cuda_device=7)
     client_calls = 0
 
     def unavailable(received_settings: Settings) -> object:
@@ -581,6 +620,7 @@ def test_one_shot_reports_orbiting_bit_but_preserves_explicit_range(
 @pytest.mark.parametrize(
     ("backend_name", "implementation", "parallel", "worker_count"),
     [
+        ("cuda", "cuda", True, None),
         ("native", "c", False, None),
         ("native-parallel", "c-threadpool", True, 4),
     ],
@@ -604,16 +644,17 @@ def test_one_shot_uses_one_selected_native_backend_and_emits_safe_identity(
             self.capabilities = ComputeBackendCapabilities(
                 backend_name=backend_name,
                 display_name="Native fake",
-                backend_kind="cpu",
+                backend_kind="gpu" if backend_name == "cuda" else "cpu",
                 implementation=implementation,
                 supports_parallel_search=parallel,
                 supports_cooperative_cancellation=False,
-                supports_device_selection=False,
+                supports_device_selection=backend_name == "cuda",
                 deterministic_search_order=True,
                 preferred_batch_size=None,
                 available=True,
             )
             self.worker_count = worker_count
+            self.device_ordinal = 3 if backend_name == "cuda" else None
             self.close_calls = 0
 
         def search_nonce_range(
@@ -650,10 +691,13 @@ def test_one_shot_uses_one_selected_native_backend_and_emits_safe_identity(
     selected = read_event_log(path)[1]
     assert selected["event"] == "compute_backend_selected"
     assert selected["backend_name"] == backend_name
-    assert selected["backend_kind"] == "cpu"
+    assert selected["backend_kind"] == ("gpu" if backend_name == "cuda" else "cpu")
     assert selected["implementation"] == implementation
     assert selected["supports_parallel_search"] is parallel
     assert selected["supports_cooperative_cancellation"] is False
+    assert selected["supports_device_selection"] is (backend_name == "cuda")
+    if backend_name == "cuda":
+        assert selected["device_ordinal"] == 3
     if worker_count is not None:
         assert selected["worker_count"] == worker_count
 
@@ -818,6 +862,7 @@ def test_exhausted_mining_jsonl_event_order_and_metrics(
         "implementation": "python",
         "supports_parallel_search": False,
         "supports_cooperative_cancellation": False,
+        "supports_device_selection": False,
     }
     strategy_record = records[2]
     assert strategy_record == {

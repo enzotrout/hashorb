@@ -521,8 +521,54 @@ def test_continuous_cli_uses_orbiting_bit_order_with_unchanged_backend(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     client = FakeClient()
-    settings = replace(make_settings(), search_strategy="orbiting-bit")
+    settings = replace(
+        make_settings(),
+        compute_backend="cuda",
+        search_strategy="orbiting-bit",
+        cuda_device=3,
+    )
     harness, _ = install_fakes(monkeypatch, client, settings=settings)
+    searcher = cli_module.search_nonce_range
+
+    class CudaFakeBackend:
+        capabilities = ComputeBackendCapabilities(
+            backend_name="cuda",
+            display_name="CUDA fake",
+            backend_kind="gpu",
+            implementation="cuda",
+            supports_parallel_search=True,
+            supports_cooperative_cancellation=False,
+            supports_device_selection=True,
+            deterministic_search_order=True,
+            preferred_batch_size=None,
+            available=True,
+        )
+        device_ordinal = 3
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def search_nonce_range(
+            self,
+            work: PreparedMiningWork,
+            start_nonce: int,
+            stop_nonce: int,
+        ) -> NonceSearchResult:
+            return searcher(work, start_nonce, stop_nonce)
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    backend = CudaFakeBackend()
+    selections = 0
+
+    def select_cuda(received_settings: Settings) -> CudaFakeBackend:
+        nonlocal selections
+        selections += 1
+        assert received_settings is settings
+        return backend
+
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select_cuda)
     start_nonce = 2**32 - 8
 
     assert cli_module.main(arguments(chunk_size="2", start_nonce=str(start_nonce))) == 0
@@ -533,9 +579,11 @@ def test_continuous_cli_uses_orbiting_bit_order_with_unchanged_backend(
         (start_nonce + 2, start_nonce + 4),
     ]
     output = capsys.readouterr().out
-    assert "Compute backend: python" in output
+    assert "Compute backend: cuda" in output
     assert "Search strategy: orbiting-bit" in output
     assert "Chunks completed: 3" in output
+    assert selections == 1
+    assert backend.close_calls == 1
 
 
 def test_controlled_nonce_boundary_plan_reports_safe_progression_totals(
@@ -716,6 +764,7 @@ def test_initial_connection_failure_recovers_with_fresh_client_and_session(
 @pytest.mark.parametrize(
     ("backend_name", "implementation", "parallel", "worker_count"),
     [
+        ("cuda", "cuda", True, None),
         ("native", "c", False, None),
         ("native-parallel", "c-threadpool", True, 4),
     ],
@@ -754,16 +803,17 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
             self.capabilities = ComputeBackendCapabilities(
                 backend_name=backend_name,
                 display_name="Native fake",
-                backend_kind="cpu",
+                backend_kind="gpu" if backend_name == "cuda" else "cpu",
                 implementation=implementation,
                 supports_parallel_search=parallel,
                 supports_cooperative_cancellation=False,
-                supports_device_selection=False,
+                supports_device_selection=backend_name == "cuda",
                 deterministic_search_order=True,
                 preferred_batch_size=None,
                 available=True,
             )
             self.worker_count = worker_count
+            self.device_ordinal = 3 if backend_name == "cuda" else None
             self.close_calls = 0
 
         def search_nonce_range(
@@ -968,15 +1018,58 @@ def test_compute_backend_failure_is_terminal_without_reconnect_or_fallback(
     harness = SearchHarness(
         search_failure=ComputeBackendExecutionError(private_detail),
     )
-    harness, _ = install_fakes(monkeypatch, client, harness)
+    settings = replace(make_settings(), compute_backend="cuda", cuda_device=3)
+    harness, _ = install_fakes(monkeypatch, client, harness, settings=settings)
+    searcher = cli_module.search_nonce_range
+
+    class FailingCudaBackend:
+        capabilities = ComputeBackendCapabilities(
+            backend_name="cuda",
+            display_name="Failing CUDA fake",
+            backend_kind="gpu",
+            implementation="cuda",
+            supports_parallel_search=True,
+            supports_cooperative_cancellation=False,
+            supports_device_selection=True,
+            deterministic_search_order=True,
+            preferred_batch_size=None,
+            available=True,
+        )
+        device_ordinal = 3
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def search_nonce_range(
+            self,
+            work: PreparedMiningWork,
+            start_nonce: int,
+            stop_nonce: int,
+        ) -> NonceSearchResult:
+            return searcher(work, start_nonce, stop_nonce)
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    backend = FailingCudaBackend()
+    selections = 0
+
+    def select_cuda(received_settings: Settings) -> FailingCudaBackend:
+        nonlocal selections
+        selections += 1
+        assert received_settings is settings
+        return backend
+
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select_cuda)
 
     assert cli_module.main(arguments(max_chunks=None)) == 1
 
-    assert harness.backend_selection_calls == 1
+    assert selections == 1
     assert len(harness.search_calls) == 1
     assert harness.reconnect_delays == []
     assert client.close_calls == 1
     assert client.handshake_calls == 1
+    assert backend.close_calls == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "Continuous Stratum mining failed.\n"

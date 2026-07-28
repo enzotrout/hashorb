@@ -17,11 +17,12 @@ from hashphere.compute import (
     MiningComputeBackend,
     builtin_compute_backend_registry,
     close_compute_backend,
+    compute_backend_device_ordinal,
     compute_backend_worker_count,
     deterministic_benchmark_work,
     select_compute_backend,
 )
-from hashphere.config import Settings
+from hashphere.config import DEFAULT_CUDA_DEVICE, MAX_CUDA_DEVICE, Settings
 from hashphere.mining import (
     MAX_RECONNECT_ATTEMPTS,
     BlockHeaderError,
@@ -488,7 +489,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "compute-benchmark":
         try:
-            backend_name, worker_count, start_nonce, stop_nonce = (
+            backend_name, worker_count, device_ordinal, start_nonce, stop_nonce = (
                 _parse_compute_benchmark_arguments(arguments[1:])
             )
         except ValueError as exc:
@@ -498,6 +499,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_compute_benchmark(
             backend_name,
             worker_count,
+            device_ordinal,
             start_nonce,
             stop_nonce,
         )
@@ -585,13 +587,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _run_compute_benchmark(
     backend_name: str,
     worker_count: int | None,
+    device_ordinal: int | None,
     start_nonce: int,
     stop_nonce: int,
 ) -> int:
     """Run one offline synthetic range through an explicitly selected backend."""
 
     try:
-        backend = _select_benchmark_compute_backend(backend_name, worker_count)
+        backend = _select_benchmark_compute_backend(
+            backend_name,
+            worker_count,
+            device_ordinal,
+        )
     except (ComputeBackendSelectionError, ComputeBackendValidationError):
         print("Compute benchmark backend is unavailable or invalid.", file=sys.stderr)
         return 2
@@ -626,12 +633,15 @@ def _run_compute_benchmark(
 def _select_benchmark_compute_backend(
     backend_name: str,
     worker_count: int | None,
+    device_ordinal: int | None,
 ) -> MiningComputeBackend:
     """Select one offline backend without loading runtime configuration."""
 
     registry = builtin_compute_backend_registry(
         python_searcher=search_nonce_range,
         worker_count=worker_count if worker_count is not None else 2,
+        cuda_device=(device_ordinal if device_ordinal is not None else DEFAULT_CUDA_DEVICE),
+        initialize_cuda=backend_name == "cuda",
     )
     return select_compute_backend(backend_name, registry)
 
@@ -650,6 +660,9 @@ def _print_compute_benchmark(
     worker_count = compute_backend_worker_count(backend)
     if worker_count is not None:
         print(f"Workers: {worker_count}")
+    device_ordinal = compute_backend_device_ordinal(backend)
+    if device_ordinal is not None:
+        print(f"CUDA device: {device_ordinal}")
     print(f"Hashes checked: {result.hashes_checked}")
     print(f"Elapsed time: {result.elapsed_ns} ns")
     print(f"Hashes per second: {'unavailable' if rate is None else f'{rate:.2f}'}")
@@ -1324,6 +1337,8 @@ def _select_configured_compute_backend(settings: Settings) -> MiningComputeBacke
     registry = builtin_compute_backend_registry(
         python_searcher=search_nonce_range,
         worker_count=settings.compute_workers,
+        cuda_device=settings.cuda_device,
+        initialize_cuda=settings.compute_backend == "cuda",
     )
     return select_compute_backend(settings.compute_backend, registry)
 
@@ -1396,12 +1411,12 @@ def _parse_summary_command_arguments(arguments: Sequence[str]) -> str:
 
 def _parse_compute_benchmark_arguments(
     arguments: Sequence[str],
-) -> tuple[str, int | None, int, int]:
+) -> tuple[str, int | None, int | None, int, int]:
     """Parse strict offline backend and half-open benchmark-range options."""
 
     option_values = _parse_option_values(
         arguments,
-        {"--backend", "--workers", "--start-nonce", "--hash-count"},
+        {"--backend", "--workers", "--device", "--start-nonce", "--hash-count"},
         unsupported_message="unsupported compute-benchmark argument",
     )
     if "--backend" not in option_values:
@@ -1409,8 +1424,8 @@ def _parse_compute_benchmark_arguments(
     if "--hash-count" not in option_values:
         raise ValueError("--hash-count is required")
     backend_name = option_values["--backend"]
-    if backend_name not in {"python", "native", "native-parallel"}:
-        raise ValueError("--backend must be python, native, or native-parallel")
+    if backend_name not in {"cuda", "python", "native", "native-parallel"}:
+        raise ValueError("--backend must be cuda, python, native, or native-parallel")
     workers_text = option_values.get("--workers")
     if workers_text is not None and backend_name != "native-parallel":
         raise ValueError("--workers is valid only for native-parallel")
@@ -1422,6 +1437,19 @@ def _parse_compute_benchmark_arguments(
             maximum=256,
         )
         if backend_name == "native-parallel"
+        else None
+    )
+    device_text = option_values.get("--device")
+    if device_text is not None and backend_name != "cuda":
+        raise ValueError("--device is valid only for cuda")
+    device_ordinal = (
+        _parse_unpadded_decimal_option(
+            "--device",
+            device_text if device_text is not None else str(DEFAULT_CUDA_DEVICE),
+            minimum=0,
+            maximum=MAX_CUDA_DEVICE,
+        )
+        if backend_name == "cuda"
         else None
     )
     start_nonce = _parse_unpadded_decimal_option(
@@ -1439,7 +1467,7 @@ def _parse_compute_benchmark_arguments(
     stop_nonce = start_nonce + hash_count
     if stop_nonce > _NONCE_LIMIT:
         raise ValueError("the requested benchmark range exceeds 2**32")
-    return backend_name, worker_count, start_nonce, stop_nonce
+    return backend_name, worker_count, device_ordinal, start_nonce, stop_nonce
 
 
 def _parse_mining_command_arguments(
@@ -1871,7 +1899,7 @@ def _emit_compute_backend_selected(
     events: EventSink,
     backend: MiningComputeBackend,
 ) -> None:
-    """Emit stable, non-device-specific capabilities for one selected backend."""
+    """Emit stable safe capabilities for one selected backend."""
 
     capabilities = backend.capabilities
     fields: dict[str, EventValue] = {
@@ -1880,10 +1908,14 @@ def _emit_compute_backend_selected(
         "implementation": capabilities.implementation,
         "supports_parallel_search": capabilities.supports_parallel_search,
         "supports_cooperative_cancellation": (capabilities.supports_cooperative_cancellation),
+        "supports_device_selection": capabilities.supports_device_selection,
     }
     worker_count = compute_backend_worker_count(backend)
     if worker_count is not None:
         fields["worker_count"] = worker_count
+    device_ordinal = compute_backend_device_ordinal(backend)
+    if device_ordinal is not None:
+        fields["device_ordinal"] = device_ordinal
     events.emit(
         "compute_backend_selected",
         fields=fields,

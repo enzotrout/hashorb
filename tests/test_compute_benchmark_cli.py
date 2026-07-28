@@ -27,6 +27,7 @@ class FakeBenchmarkBackend:
     calls: list[tuple[PreparedMiningWork, int, int]]
     close_calls: list[None]
     worker_count: int | None = None
+    device_ordinal: int | None = None
     close_failure: bool = False
 
     def search_nonce_range(
@@ -57,17 +58,19 @@ def fake_backend(
         capabilities=ComputeBackendCapabilities(
             backend_name=backend_name,
             display_name=f"{backend_name} benchmark fake",
-            backend_kind="cpu",
+            backend_kind="gpu" if backend_name == "cuda" else "cpu",
             implementation=(
-                "c-threadpool"
+                "cuda"
+                if backend_name == "cuda"
+                else "c-threadpool"
                 if backend_name == "native-parallel"
                 else "c"
                 if backend_name == "native"
                 else "python"
             ),
-            supports_parallel_search=backend_name == "native-parallel",
+            supports_parallel_search=backend_name in {"cuda", "native-parallel"},
             supports_cooperative_cancellation=False,
-            supports_device_selection=False,
+            supports_device_selection=backend_name == "cuda",
             deterministic_search_order=True,
             preferred_batch_size=None,
             available=True,
@@ -75,13 +78,14 @@ def fake_backend(
         result=NonceSearchResult(
             start_nonce=7,
             stop_nonce=10,
-            hashes_checked=3 if match is None else match.nonce - 7 + 1,
+            hashes_checked=(3 if match is None or backend_name == "cuda" else match.nonce - 7 + 1),
             elapsed_ns=elapsed_ns,
             match=match,
         ),
         calls=[],
         close_calls=[],
         worker_count=4 if backend_name == "native-parallel" else None,
+        device_ordinal=3 if backend_name == "cuda" else None,
         close_failure=close_failure,
     )
 
@@ -96,7 +100,7 @@ def test_benchmark_fixture_is_stable_immutable_and_explicitly_synthetic() -> Non
     assert first.share_target == first.network_target == 1
 
 
-@pytest.mark.parametrize("backend_name", ["python", "native", "native-parallel"])
+@pytest.mark.parametrize("backend_name", ["cuda", "python", "native", "native-parallel"])
 def test_valid_benchmark_is_offline_sanitized_and_deterministic(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -104,9 +108,14 @@ def test_valid_benchmark_is_offline_sanitized_and_deterministic(
 ) -> None:
     backend = fake_backend(backend_name)
 
-    def select(received_name: str, received_workers: int | None) -> MiningComputeBackend:
+    def select(
+        received_name: str,
+        received_workers: int | None,
+        received_device: int | None,
+    ) -> MiningComputeBackend:
         assert received_name == backend_name
         assert received_workers == (4 if backend_name == "native-parallel" else None)
+        assert received_device == (3 if backend_name == "cuda" else None)
         return backend
 
     def forbidden(*args: object, **kwargs: object) -> object:
@@ -124,6 +133,7 @@ def test_valid_benchmark_is_offline_sanitized_and_deterministic(
                 "--backend",
                 backend_name,
                 *(["--workers", "4"] if backend_name == "native-parallel" else []),
+                *(["--device", "3"] if backend_name == "cuda" else []),
                 "--start-nonce",
                 "7",
                 "--hash-count",
@@ -136,18 +146,22 @@ def test_valid_benchmark_is_offline_sanitized_and_deterministic(
     captured = capsys.readouterr()
     assert captured.err == ""
     implementation = (
-        "c-threadpool"
+        "cuda"
+        if backend_name == "cuda"
+        else "c-threadpool"
         if backend_name == "native-parallel"
         else "c"
         if backend_name == "native"
         else "python"
     )
     workers_line = "Workers: 4\n" if backend_name == "native-parallel" else ""
+    device_line = "CUDA device: 3\n" if backend_name == "cuda" else ""
     assert captured.out == (
         "Hashphere compute benchmark completed.\n"
         f"Backend: {backend_name}\n"
         f"Implementation: {implementation}\n"
         f"{workers_line}"
+        f"{device_line}"
         "Hashes checked: 3\n"
         "Elapsed time: 10 ns\n"
         "Hashes per second: 300000000.00\n"
@@ -177,7 +191,7 @@ def test_candidate_output_omits_candidate_and_fixture_values(
     monkeypatch.setattr(
         cli_module,
         "_select_benchmark_compute_backend",
-        lambda name, workers: backend,
+        lambda name, workers, device: backend,
     )
 
     assert (
@@ -219,6 +233,13 @@ def test_candidate_output_omits_candidate_and_fixture_values(
         ["--backend", "python", "--backend", "native", "--hash-count", "1"],
         ["--backend", "python", "--workers", "2", "--hash-count", "1"],
         ["--backend", "native", "--workers", "2", "--hash-count", "1"],
+        ["--backend", "cuda", "--workers", "2", "--hash-count", "1"],
+        ["--backend", "python", "--device", "0", "--hash-count", "1"],
+        ["--backend", "cuda", "--device", "00", "--hash-count", "1"],
+        ["--backend", "cuda", "--device", "+1", "--hash-count", "1"],
+        ["--backend", "cuda", "--device", "-1", "--hash-count", "1"],
+        ["--backend", "cuda", "--device", "1.0", "--hash-count", "1"],
+        ["--backend", "cuda", "--device", "2147483648", "--hash-count", "1"],
         ["--backend", "native-parallel", "--workers", "0", "--hash-count", "1"],
         ["--backend", "native-parallel", "--workers", "01", "--hash-count", "1"],
         ["--backend", "native-parallel", "--workers", "+2", "--hash-count", "1"],
@@ -250,8 +271,12 @@ def test_unavailable_backend_returns_two_without_raw_selection_detail(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def unavailable(name: str, workers: int | None) -> MiningComputeBackend:
-        del name, workers
+    def unavailable(
+        name: str,
+        workers: int | None,
+        device: int | None,
+    ) -> MiningComputeBackend:
+        del name, workers, device
         raise ComputeBackendSelectionError("private compiler path")
 
     monkeypatch.setattr(cli_module, "_select_benchmark_compute_backend", unavailable)
@@ -281,11 +306,16 @@ def test_backend_execution_failure_returns_one_without_fallback_or_raw_detail(
 
     selections = 0
 
-    def select(name: str, workers: int | None) -> MiningComputeBackend:
+    def select(
+        name: str,
+        workers: int | None,
+        device: int | None,
+    ) -> MiningComputeBackend:
         nonlocal selections
         selections += 1
         assert name == "native"
         assert workers is None
+        assert device is None
         return FailingBackend()
 
     monkeypatch.setattr(cli_module, "_select_benchmark_compute_backend", select)
@@ -334,10 +364,14 @@ def test_parallel_benchmark_defaults_to_two_workers(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     backend = fake_backend("native-parallel")
-    received: list[tuple[str, int | None]] = []
+    received: list[tuple[str, int | None, int | None]] = []
 
-    def select(name: str, workers: int | None) -> MiningComputeBackend:
-        received.append((name, workers))
+    def select(
+        name: str,
+        workers: int | None,
+        device: int | None,
+    ) -> MiningComputeBackend:
+        received.append((name, workers, device))
         return backend
 
     monkeypatch.setattr(cli_module, "_select_benchmark_compute_backend", select)
@@ -346,7 +380,7 @@ def test_parallel_benchmark_defaults_to_two_workers(
         cli_module.main(["compute-benchmark", "--backend", "native-parallel", "--hash-count", "3"])
         == 0
     )
-    assert received == [("native-parallel", 2)]
+    assert received == [("native-parallel", 2, None)]
     assert "Workers: 4" in capsys.readouterr().out
 
 
@@ -358,7 +392,7 @@ def test_benchmark_cleanup_failure_returns_one_after_success(
     monkeypatch.setattr(
         cli_module,
         "_select_benchmark_compute_backend",
-        lambda name, workers: backend,
+        lambda name, workers, device: backend,
     )
 
     assert (
