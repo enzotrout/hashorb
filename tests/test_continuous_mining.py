@@ -15,8 +15,10 @@ from hashphere.mining import (
     ContinuousMiningValidationError,
     MiningJob,
     MiningJobAssembler,
+    MiningSearchStrategy,
     NonceSearchMatch,
     NonceSearchResult,
+    OrbitingBitSearchStrategy,
     PreparedMiningWork,
     SearchStrategyCursor,
     SearchStrategyExecutionError,
@@ -363,7 +365,7 @@ def run_with_harness(
     extra_nonce_2_size: int = 4,
     extra_nonce_2: str | None = None,
     network_time: str = "65f04abc",
-    strategy: SequentialSearchStrategy | None = None,
+    strategy: MiningSearchStrategy | None = None,
 ) -> tuple[MiningJobAssembler, MiningJob, ContinuousMiningResult]:
     """Run continuous orchestration against one synthetic initial job."""
 
@@ -441,6 +443,87 @@ def test_sequential_chunks_are_gap_free_and_limit_counts_searches() -> None:
     assert result.total_hashes_checked == 6
     assert result.total_elapsed_ns == 1000
     assert result.weighted_hashes_per_second == 6_000_000.0
+
+
+def test_orbiting_bit_chunks_follow_exact_global_range_order() -> None:
+    harness = Harness(elapsed_values=deque([10, 20, 30, 40, 50]))
+    start_nonce = 2**32 - 50
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(start_nonce, 10, 5),
+        harness,
+        strategy=OrbitingBitSearchStrategy(),
+    )
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (start_nonce, start_nonce + 10),
+        (start_nonce + 40, 2**32),
+        (start_nonce + 20, start_nonce + 30),
+        (start_nonce + 10, start_nonce + 20),
+        (start_nonce + 30, start_nonce + 40),
+    ]
+    assert result.chunks_completed == 5
+    assert result.total_hashes_checked == 50
+    assert result.total_elapsed_ns == 150
+
+
+def test_orbiting_bit_difficulty_only_preserves_current_cursor() -> None:
+    harness = Harness(notifications=deque([SetDifficultyNotification(difficulty=200), None]))
+    start_nonce = 2**32 - 40
+
+    assembler, _, result = run_with_harness(
+        ContinuousMiningPlan(start_nonce, 10, 2),
+        harness,
+        strategy=OrbitingBitSearchStrategy(),
+    )
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (start_nonce, start_nonce + 10),
+        (start_nonce + 20, start_nonce + 30),
+    ]
+    assert assembler.current_difficulty == 200
+    assert result.job_replacements == 0
+
+
+def test_orbiting_bit_pool_job_has_priority_and_receives_fresh_cursor() -> None:
+    harness = Harness(notifications=deque([notification("replacement"), None]))
+    start_nonce = 2**32 - 40
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(start_nonce, 10, 2),
+        harness,
+        strategy=OrbitingBitSearchStrategy(),
+    )
+
+    assert [(work.job_id, start, stop) for work, start, stop in harness.search_calls] == [
+        ("initial-job", start_nonce, start_nonce + 10),
+        ("replacement", start_nonce, start_nonce + 10),
+    ]
+    assert result.job_replacements == 1
+
+
+def test_orbiting_bit_exhaustion_advances_work_and_resets_permutation() -> None:
+    harness = Harness()
+    start_nonce = 2**32 - 40
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(start_nonce, 10, 5),
+        harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="fe",
+        strategy=OrbitingBitSearchStrategy(),
+    )
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (start_nonce, start_nonce + 10),
+        (start_nonce + 20, start_nonce + 30),
+        (start_nonce + 10, start_nonce + 20),
+        (start_nonce + 30, 2**32),
+        (start_nonce, start_nonce + 10),
+    ]
+    assert [extra for _, extra in harness.prepare_calls] == ["fe", "ff"]
+    assert result.work_variants_used == 2
+    assert result.extra_nonce_2_advances == 1
 
 
 def test_final_nonce_space_chunk_is_shortened_without_wrap() -> None:
@@ -912,6 +995,31 @@ def test_first_candidate_submits_exact_work_once_without_polling(
     assert result.pool_accepted is accepted
 
 
+def test_orbiting_bit_candidate_is_terminal_with_exact_assignment_metadata() -> None:
+    harness = Harness(
+        notifications=deque([None, notification("must-not-be-read")]),
+        match_call=2,
+    )
+    start_nonce = 2**32 - 40
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(start_nonce, 10),
+        harness,
+        strategy=OrbitingBitSearchStrategy(),
+    )
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (start_nonce, start_nonce + 10),
+        (start_nonce + 20, start_nonce + 30),
+    ]
+    assert harness.receive_timeouts == [0.0]
+    assert len(harness.submit_calls) == 1
+    submitted_work, submitted_match = harness.submit_calls[0]
+    assert submitted_work is harness.search_calls[1][0]
+    assert submitted_match.nonce == start_nonce + 20
+    assert result.outcome is ContinuousMiningOutcome.SHARE_ACCEPTED
+
+
 def test_candidate_returned_during_stop_requested_chunk_still_submits() -> None:
     harness = Harness(match_call=1, stop_during_search_call=1)
 
@@ -1017,6 +1125,38 @@ def test_connection_loss_after_chunk_installs_fresh_session_and_preserves_totals
     assert result.failed_reconnect_attempts == 0
     assert result.sessions_established == 2
     assert strategy.create_calls == [(5, 2, 2**32)] * 2
+
+
+def test_orbiting_bit_recovery_uses_fresh_cursor_without_reselecting_strategy() -> None:
+    harness = Harness(notifications=deque([StratumConnectionError("connection closed")]))
+    session, _ = recovered_session(seed="cd")
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+    strategy = OrbitingBitSearchStrategy()
+    start_nonce = 2**32 - 40
+
+    result = run_continuous_mining(
+        ContinuousMiningPlan(start_nonce, 10, 2),
+        assembler,
+        initial_job,
+        "abababab",
+        harness.controller,
+        receive_notification=harness.receive,
+        submit_share=harness.submit,
+        observer=harness,
+        strategy=strategy,
+        prepare_work=harness.prepare,
+        search_range=harness.search,
+        recover_session=lambda error, stage: session,
+        recovery_statistics=lambda: StratumRecoveryStatistics(1, 1, 0, 2),
+    )
+
+    assert [(work.job_id, start, stop) for work, start, stop in harness.search_calls] == [
+        ("initial-job", start_nonce, start_nonce + 10),
+        ("recovered-job", start_nonce, start_nonce + 10),
+    ]
+    assert result.sessions_established == 2
+    assert result.successful_reconnects == 1
 
 
 def test_recovery_after_local_progression_discards_stale_cursor_and_keeps_counters() -> None:

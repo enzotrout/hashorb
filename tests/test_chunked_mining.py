@@ -13,8 +13,10 @@ from hashphere.mining import (
     ChunkedMiningResult,
     MiningJob,
     MiningJobAssembler,
+    MiningSearchStrategy,
     NonceSearchMatch,
     NonceSearchResult,
+    OrbitingBitSearchStrategy,
     PreparedMiningWork,
     SearchStrategyCursor,
     SearchStrategyExecutionError,
@@ -204,7 +206,7 @@ def run_with_harness(
     harness: Harness,
     *,
     difficulty: int | float = 100,
-    strategy: SequentialSearchStrategy | None = None,
+    strategy: MiningSearchStrategy | None = None,
 ) -> tuple[MiningJobAssembler, MiningJob, ChunkedMiningResult]:
     """Run orchestration against one prepared synthetic initial job."""
 
@@ -248,6 +250,49 @@ def test_exact_finite_chunk_ranges(
     assert result.total_hashes_checked == plan.max_hashes
     assert len(harness.prepare_calls) == 1
     assert harness.poll_calls == max(0, len(ranges) - 1)
+
+
+def test_orbiting_bit_ranges_use_exact_emission_order_and_budget() -> None:
+    harness = Harness(elapsed_values=deque([10, 20, 30, 40, 50]))
+
+    _, _, result = run_with_harness(
+        ChunkedMiningPlan(0, 10, 50),
+        harness,
+        strategy=OrbitingBitSearchStrategy(),
+    )
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (0, 10),
+        (40, 50),
+        (20, 30),
+        (10, 20),
+        (30, 40),
+    ]
+    assert result.chunks_completed == 5
+    assert result.total_hashes_checked == 50
+    assert result.total_elapsed_ns == 150
+
+
+def test_orbiting_bit_internal_skips_do_not_create_searches_or_events() -> None:
+    harness = Harness()
+
+    _, _, result = run_with_harness(
+        ChunkedMiningPlan(0, 10, 30),
+        harness,
+        strategy=OrbitingBitSearchStrategy(),
+    )
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (0, 10),
+        (20, 30),
+        (10, 20),
+    ]
+    assert [item for item in harness.observations if item[0] == "started"] == [
+        ("started", "initial-job", 0, 10),
+        ("started", "initial-job", 20, 30),
+        ("started", "initial-job", 10, 20),
+    ]
+    assert result.chunks_completed == 3
 
 
 @pytest.mark.parametrize(

@@ -385,15 +385,35 @@ def test_strategy_selections_are_aggregated_without_cursor_state(
                 exhaustive=False,
                 experimental=True,
             ),
+            event_record("three", 1, "command_started", command="stratum-mine"),
+            event_record(
+                "three",
+                2,
+                "search_strategy_selected",
+                command="stratum-mine",
+                strategy_name="orbiting-bit",
+                implementation="bit-reversal",
+                deterministic=True,
+                contiguous_parent_ranges=False,
+                exhaustive=True,
+                experimental=True,
+            ),
         ],
     )
 
     summary = summarize_jsonl(path)
 
-    assert summary.search_strategy_counts == (("future", 1), ("sequential", 1))
+    assert summary.search_strategy_counts == (
+        ("future", 1),
+        ("orbiting-bit", 1),
+        ("sequential", 1),
+    )
     assert summary.weighted_hashes_per_second is None
     assert cli_module.main(["logs-summary", "--log-file", str(path)]) == 0
-    assert "Search strategies:\n  future: 1\n  sequential: 1" in capsys.readouterr().out
+    assert (
+        "Search strategies:\n  future: 1\n  orbiting-bit: 1\n  sequential: 1"
+        in capsys.readouterr().out
+    )
 
 
 def test_progression_events_are_aggregated_without_affecting_weighted_rate(

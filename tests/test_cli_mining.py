@@ -149,19 +149,21 @@ def install_mining_fakes(
     monkeypatch: pytest.MonkeyPatch,
     client: FakeClient,
     harness: MiningHarness | None = None,
+    *,
+    settings: Settings | None = None,
 ) -> MiningHarness:
     """Install deterministic configuration, client, generator, and mining fakes."""
 
     configured = harness if harness is not None else MiningHarness()
-    settings = make_settings()
+    selected_settings = make_settings() if settings is None else settings
     monkeypatch.setattr(
         cli_module.Settings,
         "from_env",
-        classmethod(lambda cls: settings),
+        classmethod(lambda cls: selected_settings),
     )
 
     def client_factory(received_settings: Settings, user_agent: str) -> FakeClient:
-        assert received_settings is settings
+        assert received_settings is selected_settings
         assert user_agent == "Hashphere/0.1"
         return client
 
@@ -551,6 +553,29 @@ def test_exact_range_reaches_one_prepare_and_one_search(
     output = capsys.readouterr().out
     assert "Compute backend: python" in output
     assert "Search strategy: sequential" in output
+
+
+def test_one_shot_reports_orbiting_bit_but_preserves_explicit_range(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "orbiting-one-shot.jsonl"
+    client = FakeClient([difficulty_notification(), mining_notification()])
+    settings = replace(make_settings(), search_strategy="orbiting-bit")
+    harness = install_mining_fakes(monkeypatch, client, settings=settings)
+
+    assert cli_module.main(mining_arguments("5", "9", path)) == 0
+
+    assert harness.search_calls[0][1:] == (9, 14)
+    assert "Search strategy: orbiting-bit" in capsys.readouterr().out
+    strategy_record = read_event_log(path)[2]
+    assert strategy_record["strategy_name"] == "orbiting-bit"
+    assert strategy_record["implementation"] == "bit-reversal"
+    assert strategy_record["deterministic"] is True
+    assert strategy_record["contiguous_parent_ranges"] is False
+    assert strategy_record["exhaustive"] is True
+    assert strategy_record["experimental"] is True
 
 
 @pytest.mark.parametrize(

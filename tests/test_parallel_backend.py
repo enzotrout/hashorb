@@ -18,7 +18,12 @@ from hashphere.compute import (
     NativeSequentialBackend,
     PythonSequentialBackend,
 )
-from hashphere.mining import NonceSearchResult, PreparedMiningWork, hash_block_header
+from hashphere.mining import (
+    NonceSearchResult,
+    OrbitingBitSearchCursor,
+    PreparedMiningWork,
+    hash_block_header,
+)
 
 _MAX_UINT256 = (1 << 256) - 1
 
@@ -149,6 +154,39 @@ def test_parallel_exhaustion_searches_every_assignment_once_and_uses_wall_clock(
     assert sorted(calls) == [(7, 10), (10, 13), (13, 15), (15, 17)]
     assert len(calls) == len(set(calls)) == 4
     assert work == prepared_work()
+
+
+def test_parallel_backend_preserves_orbiting_parent_order_and_owns_worker_partitions() -> None:
+    worker_calls: list[tuple[int, int]] = []
+    ticks = iter(range(8))
+    backend = NativeParallelBackend(
+        2,
+        NativeSequentialBackend(reference_native_searcher(worker_calls)),
+        clock=lambda: next(ticks),
+    )
+    cursor = OrbitingBitSearchCursor(0, 10, nonce_limit=40)
+    parent_ranges: list[tuple[int, int]] = []
+
+    while (assignment := cursor.next_assignment()) is not None:
+        result = backend.search_nonce_range(
+            prepared_work(),
+            assignment.start_nonce,
+            assignment.stop_nonce,
+        )
+        parent_ranges.append((result.start_nonce, result.stop_nonce))
+    backend.close()
+
+    assert parent_ranges == [(0, 10), (20, 30), (10, 20), (30, 40)]
+    assert sorted(worker_calls) == [
+        (0, 5),
+        (5, 10),
+        (10, 15),
+        (15, 20),
+        (20, 25),
+        (25, 30),
+        (30, 35),
+        (35, 40),
+    ]
 
 
 def test_parallel_result_is_independent_of_worker_completion_order() -> None:

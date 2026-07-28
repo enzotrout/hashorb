@@ -6,7 +6,7 @@ import json
 import signal
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
@@ -219,21 +219,22 @@ def install_fakes(
     *,
     deterministic_log: bool = False,
     additional_clients: list[FakeClient] | None = None,
+    settings: Settings | None = None,
 ) -> tuple[SearchHarness, SignalHarness]:
     """Install settings, client, signal, and cryptography-free search fakes."""
 
     configured = search_harness if search_harness is not None else SearchHarness()
-    settings = make_settings()
+    selected_settings = make_settings() if settings is None else settings
     monkeypatch.setattr(
         cli_module.Settings,
         "from_env",
-        classmethod(lambda cls: settings),
+        classmethod(lambda cls: selected_settings),
     )
 
     clients = deque([client, *(additional_clients or [])])
 
     def client_factory(received_settings: Settings, user_agent: str) -> FakeClient:
-        assert received_settings is settings
+        assert received_settings is selected_settings
         assert user_agent == "Hashphere/0.1"
         if not clients:
             raise AssertionError("unexpected Stratum client creation")
@@ -513,6 +514,28 @@ def test_three_chunk_limit_prints_sanitized_aggregate_and_closes(
     assert settings.stratum_password not in output
     assert settings.stratum_username not in output
     assert harness.generated_extra_nonce_2 not in output
+
+
+def test_continuous_cli_uses_orbiting_bit_order_with_unchanged_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient()
+    settings = replace(make_settings(), search_strategy="orbiting-bit")
+    harness, _ = install_fakes(monkeypatch, client, settings=settings)
+    start_nonce = 2**32 - 8
+
+    assert cli_module.main(arguments(chunk_size="2", start_nonce=str(start_nonce))) == 0
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (start_nonce, start_nonce + 2),
+        (start_nonce + 4, start_nonce + 6),
+        (start_nonce + 2, start_nonce + 4),
+    ]
+    output = capsys.readouterr().out
+    assert "Compute backend: python" in output
+    assert "Search strategy: orbiting-bit" in output
+    assert "Chunks completed: 3" in output
 
 
 def test_controlled_nonce_boundary_plan_reports_safe_progression_totals(

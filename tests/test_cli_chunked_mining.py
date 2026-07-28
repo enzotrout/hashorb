@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -170,19 +170,20 @@ def install_fakes(
     harness: Harness | None = None,
     *,
     deterministic_log: bool = False,
+    settings: Settings | None = None,
 ) -> Harness:
     """Install client, crypto-free mining, settings, and optional sink fakes."""
 
     configured = harness if harness is not None else Harness()
-    settings = make_settings()
+    selected_settings = make_settings() if settings is None else settings
     monkeypatch.setattr(
         cli_module.Settings,
         "from_env",
-        classmethod(lambda cls: settings),
+        classmethod(lambda cls: selected_settings),
     )
 
     def client_factory(received_settings: Settings, user_agent: str) -> FakeClient:
-        assert received_settings is settings
+        assert received_settings is selected_settings
         assert user_agent == "Hashphere/0.1"
         return client
 
@@ -567,6 +568,29 @@ def test_zero_elapsed_rate_is_unavailable(
 
     assert cli_module.main(arguments(max_hashes="1", chunk_size="1")) == 0
     assert "Hashes per second: unavailable" in capsys.readouterr().out
+
+
+def test_chunked_cli_uses_orbiting_bit_parent_order_and_reports_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient()
+    settings = replace(make_settings(), search_strategy="orbiting-bit")
+    harness = install_fakes(monkeypatch, client, settings=settings)
+
+    assert cli_module.main(arguments(max_hashes="50", chunk_size="10")) == 0
+
+    assert [(start, stop) for _, start, stop in harness.search_calls] == [
+        (0, 10),
+        (40, 50),
+        (20, 30),
+        (10, 20),
+        (30, 40),
+    ]
+    output = capsys.readouterr().out
+    assert "Search strategy: orbiting-bit" in output
+    assert "Chunks completed: 5" in output
+    assert "Hashes checked: 50" in output
 
 
 @pytest.mark.parametrize("clean_jobs", [True, False])
