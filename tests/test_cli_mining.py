@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import hashphere.__main__ as cli_module
-from hashphere.compute import ComputeBackendSelectionError
+from hashphere.compute import ComputeBackendCapabilities, ComputeBackendSelectionError
 from hashphere.config import Settings
 from hashphere.mining import (
     CoinbaseError,
@@ -365,6 +365,22 @@ def test_configured_backend_selectors_resolve_to_python(selector: str) -> None:
     assert settings.compute_profile == "lite"
 
 
+def test_explicit_native_selector_resolves_only_when_extension_is_available() -> None:
+    settings = replace(make_settings(), compute_backend="native")
+    capabilities = {
+        item.backend_name: item
+        for item in cli_module.builtin_compute_backend_registry().list_capabilities()
+    }
+    if not capabilities["native"].available:
+        pytest.skip("optional native extension is not built")
+
+    backend = cli_module._select_configured_compute_backend(settings)
+
+    assert backend.capabilities.backend_name == "native"
+    assert backend.capabilities.implementation == "c"
+    assert settings.compute_profile == "lite"
+
+
 def test_unknown_backend_fails_before_client_construction_without_echoing_selector(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -453,6 +469,62 @@ def test_exact_range_reaches_one_prepare_and_one_search(
     assert client.submit_calls == []
     assert client.close_calls == 1
     assert "Compute backend: python" in capsys.readouterr().out
+
+
+def test_one_shot_uses_one_selected_native_backend_and_emits_safe_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "native-one-shot.jsonl"
+    client = FakeClient([difficulty_notification(), mining_notification()])
+    harness = install_mining_fakes(monkeypatch, client)
+    searcher = cli_module.search_nonce_range
+
+    class NativeFakeBackend:
+        capabilities = ComputeBackendCapabilities(
+            backend_name="native",
+            display_name="Native fake",
+            backend_kind="cpu",
+            implementation="c",
+            supports_parallel_search=False,
+            supports_cooperative_cancellation=False,
+            supports_device_selection=False,
+            deterministic_search_order=True,
+            preferred_batch_size=None,
+            available=True,
+        )
+
+        def search_nonce_range(
+            self,
+            work: PreparedMiningWork,
+            start_nonce: int,
+            stop_nonce: int,
+        ) -> NonceSearchResult:
+            return searcher(work, start_nonce, stop_nonce)
+
+    backend = NativeFakeBackend()
+
+    def select(settings: Settings) -> NativeFakeBackend:
+        del settings
+        harness.backend_selection_calls += 1
+        return backend
+
+    harness.backend_selection_calls = 0
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select)
+
+    assert cli_module.main(mining_arguments("3", "7", path)) == 0
+
+    assert harness.backend_selection_calls == 1
+    assert len(harness.search_calls) == 1
+    assert "Compute backend: native" in capsys.readouterr().out
+    selected = read_event_log(path)[1]
+    assert selected["event"] == "compute_backend_selected"
+    assert selected["backend_name"] == "native"
+    assert selected["backend_kind"] == "cpu"
+    assert selected["implementation"] == "c"
+    assert selected["supports_parallel_search"] is False
+    assert selected["supports_cooperative_cancellation"] is False
 
 
 @pytest.mark.parametrize(

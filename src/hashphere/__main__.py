@@ -16,6 +16,7 @@ from hashphere.compute import (
     ComputeBackendValidationError,
     MiningComputeBackend,
     builtin_compute_backend_registry,
+    deterministic_benchmark_work,
     select_compute_backend,
 )
 from hashphere.config import Settings
@@ -90,7 +91,7 @@ _KNOWN_LOG_COMMANDS = (
 _USAGE = (
     "Usage: python -m hashphere "
     "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-    "stratum-mine,logs-summary} [options]"
+    "stratum-mine,logs-summary,compute-benchmark} [options]"
 )
 
 type _PythonSignalHandler = Callable[[int, FrameType | None], object]
@@ -475,6 +476,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected Hashphere command and return its process status."""
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "compute-benchmark":
+        try:
+            backend_name, start_nonce, stop_nonce = _parse_compute_benchmark_arguments(
+                arguments[1:]
+            )
+        except ValueError as exc:
+            print(f"Argument error: {exc}", file=sys.stderr)
+            print(_USAGE, file=sys.stderr)
+            return 2
+        return _run_compute_benchmark(backend_name, start_nonce, stop_nonce)
     if arguments and arguments[0] == "logs-summary":
         try:
             summary_log_file = _parse_summary_command_arguments(arguments[1:])
@@ -554,6 +565,57 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(_USAGE, file=sys.stderr)
     return 2
+
+
+def _run_compute_benchmark(
+    backend_name: str,
+    start_nonce: int,
+    stop_nonce: int,
+) -> int:
+    """Run one offline synthetic range through an explicitly selected backend."""
+
+    try:
+        backend = _select_benchmark_compute_backend(backend_name)
+    except (ComputeBackendSelectionError, ComputeBackendValidationError):
+        print("Compute benchmark backend is unavailable or invalid.", file=sys.stderr)
+        return 2
+
+    try:
+        result = backend.search_nonce_range(
+            deterministic_benchmark_work(),
+            start_nonce,
+            stop_nonce,
+        )
+    except ComputeBackendError:
+        print("Compute benchmark failed.", file=sys.stderr)
+        return 1
+
+    _print_compute_benchmark(backend, result)
+    return 0
+
+
+def _select_benchmark_compute_backend(backend_name: str) -> MiningComputeBackend:
+    """Select one offline backend without loading runtime configuration."""
+
+    registry = builtin_compute_backend_registry(python_searcher=search_nonce_range)
+    return select_compute_backend(backend_name, registry)
+
+
+def _print_compute_benchmark(
+    backend: MiningComputeBackend,
+    result: NonceSearchResult,
+) -> None:
+    """Print stable aggregate benchmark data without candidate or fixture values."""
+
+    capabilities = backend.capabilities
+    rate = result.hashes_per_second
+    print("Hashphere compute benchmark completed.")
+    print(f"Backend: {capabilities.backend_name}")
+    print(f"Implementation: {capabilities.implementation}")
+    print(f"Hashes checked: {result.hashes_checked}")
+    print(f"Elapsed time: {result.elapsed_ns} ns")
+    print(f"Hashes per second: {'unavailable' if rate is None else f'{rate:.2f}'}")
+    print(f"Result: {'candidate found' if result.match is not None else 'range exhausted'}")
 
 
 def _run_log_summary(log_file: str) -> int:
@@ -1223,6 +1285,41 @@ def _parse_summary_command_arguments(arguments: Sequence[str]) -> str:
     if "--log-file" not in option_values:
         raise ValueError("--log-file is required")
     return _validate_log_file_path(option_values["--log-file"])
+
+
+def _parse_compute_benchmark_arguments(
+    arguments: Sequence[str],
+) -> tuple[str, int, int]:
+    """Parse strict offline backend and half-open benchmark-range options."""
+
+    option_values = _parse_option_values(
+        arguments,
+        {"--backend", "--start-nonce", "--hash-count"},
+        unsupported_message="unsupported compute-benchmark argument",
+    )
+    if "--backend" not in option_values:
+        raise ValueError("--backend is required")
+    if "--hash-count" not in option_values:
+        raise ValueError("--hash-count is required")
+    backend_name = option_values["--backend"]
+    if backend_name not in {"python", "native"}:
+        raise ValueError("--backend must be python or native")
+    start_nonce = _parse_unpadded_decimal_option(
+        "--start-nonce",
+        option_values.get("--start-nonce", "0"),
+        minimum=0,
+        maximum=_MAX_NONCE,
+    )
+    hash_count = _parse_unpadded_decimal_option(
+        "--hash-count",
+        option_values["--hash-count"],
+        minimum=1,
+        maximum=_NONCE_LIMIT,
+    )
+    stop_nonce = start_nonce + hash_count
+    if stop_nonce > _NONCE_LIMIT:
+        raise ValueError("the requested benchmark range exceeds 2**32")
+    return backend_name, start_nonce, stop_nonce
 
 
 def _parse_mining_command_arguments(

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import hashphere.__main__ as cli_module
+from hashphere.compute import ComputeBackendCapabilities
 from hashphere.config import Settings
 from hashphere.mining import (
     ChunkedMiningPlan,
@@ -463,6 +464,39 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
         client,
         Harness(elapsed_values=deque([100, 200, 700])),
     )
+    searcher = cli_module.search_nonce_range
+
+    class NativeFakeBackend:
+        capabilities = ComputeBackendCapabilities(
+            backend_name="native",
+            display_name="Native fake",
+            backend_kind="cpu",
+            implementation="c",
+            supports_parallel_search=False,
+            supports_cooperative_cancellation=False,
+            supports_device_selection=False,
+            deterministic_search_order=True,
+            preferred_batch_size=None,
+            available=True,
+        )
+
+        def search_nonce_range(
+            self,
+            work: PreparedMiningWork,
+            start_nonce: int,
+            stop_nonce: int,
+        ) -> NonceSearchResult:
+            return searcher(work, start_nonce, stop_nonce)
+
+    backend = NativeFakeBackend()
+
+    def select(settings: Settings) -> NativeFakeBackend:
+        del settings
+        harness.backend_selection_calls += 1
+        return backend
+
+    harness.backend_selection_calls = 0
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select)
 
     assert cli_module.main(arguments(max_hashes="5", chunk_size="2", start_nonce="7")) == 0
 
@@ -479,7 +513,7 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
     assert client.close_calls == 1
     output = capsys.readouterr().out
     assert "Chunk size: 2" in output
-    assert "Compute backend: python" in output
+    assert "Compute backend: native" in output
     assert "Maximum hash budget: 5" in output
     assert "Chunks completed: 3" in output
     assert "Jobs used: 1" in output

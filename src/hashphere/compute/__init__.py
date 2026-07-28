@@ -8,6 +8,7 @@ from hashphere.compute.backend import (
     ComputeBackendValidationError,
     MiningComputeBackend,
 )
+from hashphere.compute.benchmark import deterministic_benchmark_work
 from hashphere.compute.native import NativeSequentialBackend
 from hashphere.compute.python import PythonSequentialBackend
 from hashphere.compute.registry import (
@@ -28,6 +29,7 @@ __all__ = [
     "NativeSequentialBackend",
     "PythonSequentialBackend",
     "builtin_compute_backend_registry",
+    "deterministic_benchmark_work",
     "list_compute_backends",
     "select_compute_backend",
 ]

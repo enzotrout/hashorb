@@ -214,7 +214,7 @@ def test_non_mining_log_file_argument_errors_are_rejected(
     assert capsys.readouterr().err == (
         "Usage: python -m hashphere "
         "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-        "stratum-mine,logs-summary} [options]\n"
+        "stratum-mine,logs-summary,compute-benchmark} [options]\n"
     )
 
 
@@ -714,7 +714,7 @@ def test_unknown_command_prints_usage(
     assert captured.err.strip() == (
         "Usage: python -m hashphere "
         "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-        "stratum-mine,logs-summary} [options]"
+        "stratum-mine,logs-summary,compute-benchmark} [options]"
     )
 
 

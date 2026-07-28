@@ -14,7 +14,7 @@ from types import FrameType
 import pytest
 
 import hashphere.__main__ as cli_module
-from hashphere.compute import ComputeBackendExecutionError
+from hashphere.compute import ComputeBackendCapabilities, ComputeBackendExecutionError
 from hashphere.config import Settings
 from hashphere.mining import (
     ContinuousMiningPlan,
@@ -712,6 +712,39 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
         search_harness,
         additional_clients=[recovered],
     )
+    searcher = cli_module.search_nonce_range
+
+    class NativeFakeBackend:
+        capabilities = ComputeBackendCapabilities(
+            backend_name="native",
+            display_name="Native fake",
+            backend_kind="cpu",
+            implementation="c",
+            supports_parallel_search=False,
+            supports_cooperative_cancellation=False,
+            supports_device_selection=False,
+            deterministic_search_order=True,
+            preferred_batch_size=None,
+            available=True,
+        )
+
+        def search_nonce_range(
+            self,
+            work: PreparedMiningWork,
+            start_nonce: int,
+            stop_nonce: int,
+        ) -> NonceSearchResult:
+            return searcher(work, start_nonce, stop_nonce)
+
+    backend = NativeFakeBackend()
+
+    def select(settings: Settings) -> NativeFakeBackend:
+        del settings
+        harness.backend_selection_calls += 1
+        return backend
+
+    harness.backend_selection_calls = 0
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select)
 
     assert cli_module.main(arguments(max_chunks="2", max_reconnect_attempts="1")) == 0
 
@@ -728,6 +761,7 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
     assert failed.close_calls == 1
     assert recovered.close_calls == 1
     output = capsys.readouterr().out
+    assert "Compute backend: native" in output
     assert "Extra nonce 2 size: 2" in output
     assert "Reconnect attempts: 1" in output
     assert "Sessions established: 2" in output
