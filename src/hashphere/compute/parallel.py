@@ -74,9 +74,9 @@ class NativeParallelBackend:
         "_executor",
         "_executor_factory",
         "_operation_lock",
+        "_worker_count",
         "_worker_backend",
         "capabilities",
-        "worker_count",
     )
 
     def __init__(
@@ -98,7 +98,7 @@ class NativeParallelBackend:
         if not callable(clock):
             raise ComputeBackendValidationError("clock must be callable")
 
-        self.worker_count = worker_count
+        self._worker_count = worker_count
         self._worker_backend = selected_native
         self._executor_factory = executor_factory or _create_executor
         self._clock = clock
@@ -120,6 +120,12 @@ class NativeParallelBackend:
             available=native_capabilities.available,
             unavailable_reason=native_capabilities.unavailable_reason,
         )
+
+    @property
+    def worker_count(self) -> int:
+        """Return the immutable configured maximum worker count."""
+
+        return self._worker_count
 
     def search_nonce_range(
         self,

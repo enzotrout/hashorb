@@ -109,6 +109,8 @@ def test_parallel_capabilities_are_exact_and_native_availability_is_inherited() 
 
     assert isinstance(available, MiningComputeBackend)
     assert available.worker_count == 4
+    with pytest.raises(AttributeError):
+        available.worker_count = 8  # type: ignore[misc]
     assert available.capabilities.backend_name == "native-parallel"
     assert available.capabilities.backend_kind == "cpu"
     assert available.capabilities.implementation == "c-threadpool"
