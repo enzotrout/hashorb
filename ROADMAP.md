@@ -55,7 +55,8 @@ Progress:
 - ✅ Single-endpoint reconnect and fresh-session recovery
 - ✅ Compute-backend contract, deterministic registry, and Python reference backend
 - ✅ Portable optimized native C CPU backend
-- ⬜ Parallel CPU backend
+- ✅ Portable parallel native CPU backend
+- ⬜ Search-strategy abstraction
 - ⬜ Pool failover
 
 ---
@@ -95,7 +96,8 @@ Progress:
 - ✅ Single-endpoint reconnect and session recovery
 - ✅ Compute-backend abstraction and Python sequential reference backend
 - ✅ Portable optimized native C CPU mining
-- ⬜ Parallel CPU mining
+- ✅ Portable parallel native CPU mining
+- ⬜ Search-strategy abstraction
 - ⬜ Pool failover
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -161,21 +163,23 @@ Planned:
 
 # Current Milestone
 
-**Portable Optimized Native CPU Backend — Complete**
+**Portable Parallel Native CPU Backend — Complete**
 
 Objective:
 
-Implement a portable sequential C extension behind the established compute
-contract, preserve exact parity with the Python reference, and verify every
-reported candidate again through the Python hashing and target primitives.
+Partition each parent nonce range into exact nonoverlapping assignments, search
+them concurrently through the verified GIL-releasing native backend, reduce
+results deterministically by lowest qualifying nonce, and close the persistent
+worker pool on every command exit path.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
-analysis, search-space expansion, single-endpoint session recovery, and the
-compute-backend boundary, and portable native sequential execution remain
-complete. Parallel CPU execution is next. Pool failover remains a later
-recovery milestone. Sequential, partitioned, and strided strategies then
-precede orbiting-bit search, CUDA, DGX Spark/GB10, multi-GPU, and host-side
-verification. Lite/Auto/Max/Custom operating profiles,
+analysis, search-space expansion, single-endpoint session recovery, the
+compute-backend boundary, portable native sequential execution, and portable
+parallel execution remain complete. Search-strategy abstraction is next, with
+sequential, partitioned, and strided strategies preceding orbiting-bit search.
+Pool failover remains a later recovery milestone, followed by CUDA, DGX
+Spark/GB10, multi-GPU, and host-side verification. Lite/Auto/Max/Custom
+operating profiles,
 macOS/Windows/Linux/Docker packaging, broader Stratum pool support, Bitcoin
 Core true solo mining, distributed workers, adaptive tuning, and
 Prometheus/Grafana-compatible metrics remain deferred in that dependency
@@ -187,4 +191,4 @@ order.
 
 Continue with:
 
-**Implement bounded parallel CPU execution behind the verified compute contract.**
+**Implement explicit sequential, partitioned, and strided search strategies.**

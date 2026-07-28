@@ -655,12 +655,23 @@ will eventually control resource policy such as worker count, duty cycle, and
 scheduling priority; profile behavior is still deferred and is not silently
 interpreted as a backend selector.
 
+`HASHPHERE_COMPUTE_WORKERS` currently provides one explicit strict worker count
+only to `native-parallel`; it does not implement a profile or alter either
+sequential backend.
+
 The built-in `python` backend delegates to validated `search_nonce_range` and
 remains the correctness oracle. The optional built-in `native` backend performs
 the same sequential search in portable C and verifies candidates again through
 Python. The default `auto` selector deliberately remains `python`; the earlier
 `cpu` setting remains its compatibility alias. Explicit `native` selection is
 available only when the extension imports successfully.
+
+The optional `native-parallel` backend partitions the same parent range into
+exact nonoverlapping worker assignments and invokes the verified native wrapper
+for each. It reports actual aggregate hashes and parent-call wall-clock time,
+selects the lowest qualifying nonce independent of completion order, and owns
+only its reusable executor lifecycle. It is explicit, requires the native
+extension, and never changes Stratum recovery or submission semantics.
 
 CLI mining orchestration selects one backend before opening the live Stratum
 connection and reuses that same instance for every range, job replacement,
@@ -671,14 +682,16 @@ exclusive-stop bounds, then returns the existing immutable
 submission, signals, console output, or event files. Execution failures are
 terminal and do not trigger another search, fallback, or Stratum reconnect.
 
-The capability declaration is immutable and low-cardinality. Both Python and
-native backends report deterministic sequential order and no parallel search,
-cooperative mid-range cancellation, device selection, or preferred batch
-size. Parallel CPU implementations, SIMD, alternate search strategies, GPU
-execution, device probing, and Lite/Auto/Max/Custom resource profiles remain
-deferred. The compute contract and native build design are documented in
+The capability declaration is immutable and low-cardinality. Python and native
+report sequential execution; native-parallel reports parallel execution and a
+safe worker count. All three report deterministic result order and no
+cooperative mid-range cancellation, device selection, or preferred batch size.
+SIMD, alternate search strategies, GPU execution, device probing, and
+Lite/Auto/Max/Custom resource profiles remain deferred. Detailed compute
+contracts are documented in
 [`05-compute-backends.md`](05-compute-backends.md) and
-[`06-native-cpu.md`](06-native-cpu.md).
+[`06-native-cpu.md`](06-native-cpu.md), with parallel design in
+[`07-parallel-cpu.md`](07-parallel-cpu.md).
 
 ## Mining and Compute Components
 
@@ -688,6 +701,7 @@ src/hashphere/
 │   ├── backend.py
 │   ├── benchmark.py
 │   ├── native.py
+│   ├── parallel.py
 │   ├── python.py
 │   └── registry.py
 └── mining/

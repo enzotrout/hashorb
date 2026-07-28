@@ -8,7 +8,8 @@ nonce boundary and recovers fresh authorized work after single-endpoint
 Stratum connection loss. Mining commands select one compute backend per
 invocation. The Python sequential implementation is the correctness reference,
 and an explicitly selected portable native C backend provides optimized
-sequential execution.
+sequential execution. The explicit `native-parallel` backend divides each
+parent nonce interval across portable native worker threads.
 
 ## Configure the environment
 
@@ -26,25 +27,33 @@ or wallet password is needed or should be placed in `.env`.
 
 `HASHPHERE_COMPUTE_BACKEND` selects the nonce-search implementation. Its
 default, `auto`, deliberately continues to select `python`; native availability
-does not change that choice. Exact selectors `python` and `native` are
-supported, and the earlier `cpu` value remains a compatibility alias for
-`python`. `native` is selectable only when the optional compiled extension is
-available. `HASHPHERE_COMPUTE_PROFILE` remains separate configuration;
-resource-profile behavior is not implemented yet.
+does not change that choice. Exact selectors `python`, `native`, and
+`native-parallel` are supported, and the earlier `cpu` value remains a
+compatibility alias for `python`. Both native modes require the optional
+compiled extension.
+
+`HASHPHERE_COMPUTE_WORKERS` configures only `native-parallel`. It is a strict
+unpadded ASCII decimal integer from `1` through `256` and defaults to `2`.
+Ranges shorter than the configured count create fewer nonempty assignments.
+`HASHPHERE_COMPUTE_PROFILE` remains separate; future Lite/Auto/Max/Custom
+profiles may choose worker counts and resource policy, but profile behavior is
+not implemented yet.
 
 The backend is validated before a mining command opens a live connection,
 selected exactly once, and reused across every job, work variant, and Stratum
 reconnect in that invocation. An execution failure is terminal: Hashphere does
-not retry the range with another backend or silently fall back. Parallel CPU
-execution, SIMD, multiprocessing, GPU execution, device selection,
-cooperative mid-range cancellation, and Lite/Auto/Max/Custom resource profiles
+not retry the range with another backend or silently fall back. The parallel
+backend creates contiguous, balanced, nonoverlapping assignments whose union is
+the exact parent range, then deterministically chooses the lowest qualifying
+nonce after all running workers finish. SIMD, multiprocessing, GPU execution,
+device selection, cooperative mid-range cancellation, and resource profiles
 remain deferred.
 
 `uv sync --locked` attempts to compile the optional self-contained C extension
 with the platform C compiler. Python-only operation remains available if that
-optional build is unavailable; explicit `native` selection then fails safely
-before a live connection. The current source build has been validated with
-Apple Clang on Apple Silicon. See
+optional build is unavailable; explicit `native` and `native-parallel`
+selection then fail safely before a live connection. The current source build
+has been validated with Apple Clang on Apple Silicon. See
 [`docs/06-native-cpu.md`](docs/06-native-cpu.md) for build and portability
 details.
 
@@ -65,12 +74,24 @@ uv run python -m hashphere compute-benchmark \
   --hash-count 100000
 ```
 
-`--backend` must be exactly `python` or `native`. `--hash-count` is a positive
+```bash
+uv run python -m hashphere compute-benchmark \
+  --backend native-parallel \
+  --workers 4 \
+  --hash-count 1000000
+```
+
+`--backend` must be exactly `python`, `native`, or `native-parallel`.
+`--workers` is valid only for `native-parallel`, accepts the same strict range
+as production configuration, and defaults to `2`. `--hash-count` is a positive
 unpadded ASCII decimal integer; optional `--start-nonce` uses the same strict
 syntax and defaults to zero. The selected range may end at `2**32` but cannot
 exceed it. Output contains backend, implementation, hashes checked, elapsed
-nanoseconds, calculated H/s, and exhausted/candidate status. It never prints
-the fixture header, targets, digest, or candidate nonce.
+nanoseconds, calculated H/s, worker count for parallel execution, and
+exhausted/candidate status. Parallel rate is aggregate actual hashes divided by
+wall-clock elapsed time; worker times or rounded worker rates are never summed.
+The command never prints the fixture header, targets, digest, candidate nonce,
+or per-thread data.
 
 Rates are local measurements for that process, build, machine, and synthetic
 fixture. They are not pool performance guarantees and should not be converted
@@ -383,8 +404,8 @@ Malformed protocol data, authorization rejection, mining invariants, logging
 errors, and other non-connection failures remain terminal. Most importantly,
 a `mining.submit` transport failure is never retried: its outcome is uncertain,
 and resending could duplicate a submission. Pool failover, random backoff
-jitter, parallel CPU execution, SIMD, multiprocessing, and GPU execution remain
-deferred.
+jitter, cooperative mid-chunk cancellation, SIMD, multiprocessing, and GPU
+execution remain deferred.
 
 To validate explicit native selection with a bounded live gate, use:
 
@@ -403,11 +424,32 @@ uv run python -m hashphere stratum-mine \
 This command is documented for an explicitly authorized manual gate and is not
 run by automated tests.
 
+To validate the parallel backend under the same controlled gate, use:
+
+```bash
+HASHPHERE_COMPUTE_BACKEND=native-parallel \
+HASHPHERE_COMPUTE_WORKERS=4 \
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine \
+  --start-nonce 0 \
+  --chunk-size 1000000 \
+  --max-chunks 3 \
+  --max-reconnect-attempts 5 \
+  --log-file logs/hashphere.jsonl
+```
+
+The executor is reused through chunks, work changes, and reconnects, then
+closed when the command exits. A stop requested during a parallel call takes
+effect after that call completes; running native workers cannot yet be
+cooperatively interrupted.
+
 The actual generated or advanced extra nonce is never displayed or logged.
 Final output and JSONL analysis expose only safe aggregate variant, advance,
 cycle, network-time-roll, duplicate, connection-loss, and reconnect counts.
-They also report the stable backend name (`python` or `native`) without
-hardware or device identifiers.
+They also report the stable backend name (`python`, `native`, or
+`native-parallel`) and safe parallel worker count without hardware, thread, or
+device identifiers.
 
 Final output reports sanitized aggregate counters and weighted hash rate,
 including reconnect attempts, successful reconnects, failed reconnect

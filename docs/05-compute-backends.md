@@ -9,8 +9,9 @@ only that supplied interval and returns the shared result model.
 
 The existing Python sequential scanner remains the correctness reference. The
 optional `native` backend performs the same bounded sequential search through a
-self-contained portable C extension. Multiprocessing, SIMD, accelerators, and
-device discovery remain deferred.
+self-contained portable C extension. `native-parallel` divides a parent range
+among concurrent verified native calls. Multiprocessing, SIMD, accelerators,
+and device discovery remain deferred.
 
 ## Public Contract
 
@@ -30,8 +31,10 @@ exclusive stop. Backends must preserve the assignment exactly: they cannot
 wrap, extend, split invisibly, repeat, or fabricate work.
 
 The returned `NonceSearchResult` retains the existing contract: exact input
-bounds, exact hashes checked, elapsed nanoseconds, an exhausted or found
-outcome, and at most the first qualifying `NonceSearchMatch`. A match retains
+bounds, actual hashes checked, elapsed nanoseconds, an exhausted or found
+outcome, and at most the deterministic first qualifying `NonceSearchMatch`.
+Sequential backends count through their first match; a parallel backend sums
+the actual work completed by every assignment. A match retains
 the exact nonce, raw block-hash bytes, and independent inclusive share-target
 and network-target flags. Submission is never a backend responsibility.
 
@@ -42,6 +45,7 @@ A backend owns:
 - execution of one supplied prepared-work nonce interval;
 - stable identity and capability metadata;
 - backend-local invariant checks;
+- lifecycle cleanup for backend-owned execution resources;
 - translation of implementation failures into controlled compute errors.
 
 A backend does not own:
@@ -51,10 +55,10 @@ A backend does not own:
 - job, coinbase, Merkle, header, or target construction;
 - extra-nonce or network-time progression;
 - share submission or retry decisions;
-- signals, console output, event files, or cleanup.
+- signals, console output, event files, client cleanup, or event-sink cleanup.
 
-Prepared work is call-scoped. Neither sequential backend retains it after the
-search returns, and no cache contract exists.
+Prepared work is call-scoped. No built-in backend retains it after the search
+returns, and no cache contract exists.
 
 ## Capabilities
 
@@ -80,6 +84,11 @@ The `native` backend declares kind `cpu`, implementation `c`, and the same
 sequential capability flags. Its availability is true only when the compiled
 extension imports and exposes the expected callable. Otherwise it carries one
 controlled category such as `ExtensionNotInstalled`, never raw importer text.
+
+The `native-parallel` backend declares kind `cpu`, implementation
+`c-threadpool`, deterministic result order, parallel search, no cooperative
+cancellation, no device selection, and no preferred batch size. Its safe
+immutable backend metadata includes the configured worker count.
 
 ## Python Reference Backend
 
@@ -123,6 +132,39 @@ count, digest, or flag disagreement is a terminal
 `ComputeBackendExecutionError`; an unverified candidate can never reach share
 submission. Exhausted ranges avoid this rare verification work.
 
+## Portable Native Parallel Backend
+
+`NativeParallelBackend` receives the unchanged parent range and calls
+`partition_nonce_range`. For range length `L` and configured worker count `W`,
+it creates `min(L, W)` ascending contiguous half-open assignments. Division by
+that assignment count gives a base size and remainder; the first remainder
+assignments receive one additional nonce. No assignment is empty, sizes differ
+by at most one, and the exact union equals the parent range without overlap.
+
+One persistent standard-library `ThreadPoolExecutor` is created lazily per
+selected backend instance. Python threads are appropriate because the existing
+C search loop releases the GIL. Each assignment is submitted exactly once with
+the same immutable `PreparedMiningWork` to the existing
+`NativeSequentialBackend.search_nonce_range`, so native result validation and
+Python candidate verification cannot be bypassed.
+
+All running assignments finish before reduction. Worker completion order is
+irrelevant: the lowest reported qualifying nonce wins. `hashes_checked` is the
+sum of actual worker counts, including partial assignment searches that found
+candidates. Parent `elapsed_ns` is one monotonic wall-clock interval around the
+complete executor operation and never the sum of worker elapsed values.
+
+The executor survives chunks, job replacement, extra-nonce progression,
+network-time rolling, and Stratum reconnect. `close_compute_backend` shuts it
+down once on success, stop, runtime failure, or recovery exhaustion; sequential
+backends are no-ops. Running C calls do not support cooperative interruption.
+After a worker or reduction failure, pending futures are cancelled where
+possible, running work finishes safely during shutdown, and the broken backend
+cannot be reused.
+
+The complete lifecycle and benchmark boundary is also summarized in
+[`07-parallel-cpu.md`](07-parallel-cpu.md).
+
 ## Registry and Selection
 
 `ComputeBackendRegistry` snapshots an explicit iterable into isolated immutable
@@ -130,18 +172,25 @@ per-instance state. It rejects duplicates, lists capabilities in sorted exact
 backend-name order, and performs no plugin loading, entry-point discovery, dynamic
 import, or hardware probing.
 
-The built-in registry always contains `python` and also describes `native`
-whether available or unavailable. Configuration accepts:
+The built-in registry always contains `python` and also describes `native` and
+`native-parallel` whether available or unavailable. Configuration accepts:
 
 - `python`, selecting the reference backend directly;
 - `auto`, deterministically selecting `python` in this milestone;
-- `cpu`, a compatibility alias selecting `python`.
-- `native`, selecting the extension only when available.
+- `cpu`, a compatibility alias selecting `python`;
+- `native`, selecting the extension only when available;
+- `native-parallel`, selecting the thread pool only when the extension and
+  worker configuration are available.
 
 Unknown and unavailable selectors are controlled configuration errors detected
 before a mining command constructs a live client. `auto` does not currently
 benchmark or optimize for hardware. `HASHPHERE_COMPUTE_PROFILE` remains a
 separate deferred resource-policy setting.
+
+`HASHPHERE_COMPUTE_WORKERS` is a strict unpadded ASCII decimal value from 1
+through 256, defaults to 2, and configures only `native-parallel`. It does not
+alter Python or native sequential search. Profiles may own smarter resource
+policy later but do not interpret this value today.
 
 There is no native-to-Python execution fallback. `auto` intentionally remains
 `python` until parity, packaging, and live benchmark evidence justify a separate
@@ -159,6 +208,11 @@ reselect the compute backend or reset cumulative chunk, hash, elapsed-time,
 candidate, submission, or recovery totals. Newly prepared work is passed to
 the same backend as a new call.
 
+Caller-owned command cleanup closes the selected backend only after its final
+search and never during a recoverable reconnect. Cleanup is idempotent, waits
+for worker termination, and follows existing error precedence so it cannot
+obscure an earlier runtime failure.
+
 ## Failure Model
 
 Contract and input problems raise `ComputeBackendValidationError`. Unknown or
@@ -172,12 +226,17 @@ They are not converted to exhausted results, do not trigger Stratum recovery,
 and do not cause fallback or a duplicate search. Existing caller-owned cleanup
 and signal-restoration precedence remains unchanged.
 
+A parallel worker failure is sanitized, cancels futures that have not started
+where possible, waits for running calls, and permanently marks that backend
+instance unusable. It does not trigger Stratum reconnect or fallback.
+
 ## Observability and Privacy
 
 Mining commands emit one `compute_backend_selected` event after selection and
 before authorization. Safe fields are the backend name, kind, implementation,
-parallel flag, and cooperative-cancellation flag. Existing nonce-range events
-continue to describe searches; there is no event per hash.
+parallel flag, cooperative-cancellation flag, and optional worker count.
+Existing nonce-range events describe parent searches; there is no event per
+worker, assignment, or hash.
 
 The read-only log summary counts selections by stable backend name. It does not
 display hardware identifiers or availability errors, and backend aggregation
@@ -188,14 +247,25 @@ Native selection emits the same low-cardinality fields with name `native`, kind
 `cpu`, and implementation `c`. Compiler paths, CPU identity, work bytes, native
 tracebacks, and raw import errors are excluded.
 
+Parallel selection uses stable name `native-parallel`, implementation
+`c-threadpool`, and a safe worker count. Thread identifiers, assignment bounds,
+processor identity, and raw worker failures remain excluded. Log-summary
+backend aggregation naturally includes the stable name and does not aggregate
+worker counts.
+
 ## Offline Benchmark
 
-`compute-benchmark` selects an explicit `python` or `native` backend without
-loading runtime settings, credentials, event sinks, or network code. It uses
+`compute-benchmark` selects an explicit `python`, `native`, or
+`native-parallel` backend without loading runtime settings, credentials, event
+sinks, or network code. It uses
 fixed public synthetic `PreparedMiningWork`, accepts one strict half-open range,
 and prints only identity, hashes checked, elapsed nanoseconds, calculated rate,
 and exhausted/candidate status. Fixture bytes, targets, digest, and nonce are
 not printed.
+
+Parallel benchmarking accepts `--workers` only with `native-parallel` and
+reports that count. Its rate uses summed actual hashes over the parent-call
+wall-clock interval. It does not emit per-worker timing or events.
 
 The rate is calculated from unrounded totals:
 
@@ -208,15 +278,11 @@ build and machine, not a promised speedup or pool-performance claim.
 
 ## Future Extension
 
-A future parallel CPU backend must accept the same prepared work and assigned
-half-open range and return a semantically identical result. Parallel
-workers must receive nonoverlapping assignments; their scheduling and
-first-candidate rules need an explicit deterministic contract before they can
-declare deterministic search order.
-
-Cooperative mid-range cancellation is deferred. The Python backend truthfully
-declares that it cannot cancel a running range. A future cancellation input can
-be added to the execution boundary only with lifecycle and accounting tests.
+Explicit sequential, partitioned, and strided search strategies remain the
+next abstraction milestone. Cooperative mid-range cancellation is deferred;
+all current backends truthfully declare that they cannot cancel a running
+range. A future cancellation input can be added only with lifecycle and actual
+hash-accounting tests.
 
 A future CUDA backend may search one supplied interval on a selected device,
 but device probing, memory management, and host-side result verification remain

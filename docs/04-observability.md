@@ -82,11 +82,11 @@ weighted rate without a new range schema.
 
 `compute_backend_selected` is shared by all three mining commands. Its fields
 are limited to `backend_name`, `backend_kind`, `implementation`,
-`supports_parallel_search`, and `supports_cooperative_cancellation`. It is
-emitted once per invocation rather than once per range, so existing range
-events remain the authoritative per-search records. Hardware serial numbers,
-device paths, availability-error text, work bytes, and credentials are never
-included.
+`supports_parallel_search`, `supports_cooperative_cancellation`, and the safe
+optional `worker_count`. It is emitted once per invocation rather than once per
+range, so existing range events remain the authoritative parent-search records.
+Hardware serial numbers, thread identifiers, assignment bounds, device paths,
+availability-error text, work bytes, and credentials are never included.
 
 An explicitly selected native backend uses the same event with
 `backend_name=native`, `backend_kind=cpu`, and `implementation=c`. Its
@@ -94,6 +94,15 @@ capability Booleans remain false for parallel search and cooperative
 cancellation. Compiler paths, build commands, CPU identity, extension import
 details, and raw native failures are not event fields. The offline
 `compute-benchmark` command intentionally does not create JSONL events.
+
+The parallel backend uses `backend_name=native-parallel`, `backend_kind=cpu`,
+`implementation=c-threadpool`, `supports_parallel_search=true`,
+`supports_cooperative_cancellation=false`, and its configured worker count.
+There is no event per executor worker or assignment. Existing
+`nonce_range_started` and `nonce_range_completed` events continue to report the
+parent range, aggregate actual hashes, and wall-clock elapsed time. Read-only
+summary aggregation naturally counts the stable parallel backend name without
+creating worker-count aggregates.
 
 Stable lifecycle and progression events describe controlled state without
 exposing signals or raw work:

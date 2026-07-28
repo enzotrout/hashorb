@@ -24,6 +24,7 @@ src/hashphere/compute/
 ├── backend.py
 ├── benchmark.py
 ├── native.py
+├── parallel.py
 ├── python.py
 └── registry.py
 ```
@@ -33,6 +34,8 @@ src/hashphere/compute/
   result.
 - `native.py` owns loading, availability, timing, result validation, Python
   candidate verification, and public result construction.
+- `parallel.py` owns deterministic assignments and a reusable standard-library
+  thread pool around verified native calls.
 - `benchmark.py` owns the public deterministic synthetic fixture.
 - `registry.py` lists native availability and preserves `auto → python`.
 
@@ -59,7 +62,14 @@ first qualifying candidate. The result contains optional nonce and raw digest,
 both Boolean flags, and exact hashes checked.
 
 The loop releases the GIL with `Py_BEGIN_ALLOW_THREADS` and reacquires it before
-constructing Python objects. It does not create worker threads.
+constructing Python objects. It does not create worker threads itself. This
+release permits `NativeParallelBackend` to run several independent extension
+calls concurrently through portable Python `ThreadPoolExecutor` workers without
+adding a platform-specific native threading library.
+
+The parallel layer does not change the extension interface or build. It assigns
+nonoverlapping parent-range slices to the same `NativeSequentialBackend`, so
+every candidate retains the Python verification described below.
 
 ## Candidate Verification
 
@@ -95,10 +105,11 @@ are ignored by Git. Source distributions contain `_native.c`; compiled wheels
 contain the platform extension.
 
 Because the extension is optional, a compiler or extension-build failure does
-not remove the Python package. The registry then reports `native` unavailable
-with a controlled category, while `python`, `auto`, and legacy `cpu` continue to
-operate. Explicit native selection fails before live networking. There is no
-runtime fallback after native execution begins.
+not remove the Python package. The registry then reports `native` and
+`native-parallel` unavailable with a controlled category, while `python`,
+`auto`, and legacy `cpu` continue to operate. Explicit native selection fails
+before live networking. There is no runtime fallback after native execution
+begins.
 
 ## Development Prerequisites
 
@@ -153,7 +164,7 @@ and check command should be committed before enforcing it in CI.
 `deterministic_benchmark_work()` returns immutable synthetic work with public
 fixed bytes and minimum positive targets. It contains no pool job, credential,
 address, session nonce, or protocol payload and is unsuitable for submission.
-Both benchmark commands search the same fixture and range:
+All benchmark commands search the same fixture and requested range:
 
 ```bash
 uv run python -m hashphere compute-benchmark \
@@ -163,12 +174,19 @@ uv run python -m hashphere compute-benchmark \
 uv run python -m hashphere compute-benchmark \
   --backend native \
   --hash-count 100000
+
+uv run python -m hashphere compute-benchmark \
+  --backend native-parallel \
+  --workers 4 \
+  --hash-count 1000000
 ```
 
 The command reports actual local elapsed nanoseconds and calculates rate from
 unrounded totals. Automated tests assert correctness and deterministic output
 shape, not a fragile performance threshold. One machine's result is not a
-general speedup claim or evidence of live pool behavior.
+general speedup claim or evidence of live pool behavior. Parallel measurements
+report summed actual hashes divided by one parent-call wall-clock interval;
+they never sum worker times or average rounded worker rates.
 
 ## Correctness Policy
 
@@ -177,7 +195,10 @@ matches, start and final included nonces, one-nonce ranges, ranges ending at
 `2**32`, exact counts and flags, and fixed-seed randomized small ranges. Direct
 extension tests cover boundary representation and raw digest parity. Wrapper
 tests inject malformed results, exceptions, digest mismatches, nonce/count
-disagreements, and flag mismatches.
+disagreements, and flag mismatches. Parallel parity adds exact partition union,
+nonoverlap, lowest-nonce reduction under reversed completion, actual aggregate
+hash counts, executor reuse and termination, failure cancellation, and cleanup
+across stop and reconnect paths.
 
 Every future native optimization must keep the Python backend as oracle and
 pass the same tests. No performance change may weaken candidate verification,
@@ -190,6 +211,9 @@ wheel on macOS ARM64 and x86-64, Windows x86-64, and Linux x86-64 and ARM64,
 then run parity tests against the installed artifact. Python-only artifacts or
 source installation must also be tested with the extension unavailable.
 
-Parallel CPU assignments, SIMD dispatch, cooperative cancellation, GPU/CUDA,
+Search-strategy abstraction, SIMD dispatch, cooperative cancellation, GPU/CUDA,
 device selection, Lite/Auto/Max/Custom profiles, and automatic native selection
-remain separate milestones.
+remain separate milestones. Cross-platform thread behavior uses only Python's
+standard executor API; native wheel targets and build requirements are
+unchanged. See [`07-parallel-cpu.md`](07-parallel-cpu.md) for the assignment,
+reduction, and lifecycle contract.

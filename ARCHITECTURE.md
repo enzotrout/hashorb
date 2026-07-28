@@ -110,13 +110,15 @@ errors. A backend receives one validated `PreparedMiningWork` plus an exact
 half-open nonce interval and returns the existing immutable
 `NonceSearchResult`. It does not construct Bitcoin work or own Stratum,
 progression, recovery, submission, settings, signals, console output, event
-files, or cleanup.
+files, client cleanup, or event-sink cleanup. A resource-owning backend does
+own its executor cleanup behind the shared close boundary.
 
 The built-in registry is created per invocation and contains the always
-available `python` backend plus `native`, whose availability is determined by a
-controlled optional-extension import. `auto` deterministically remains
-`python`; `cpu` is retained as a configuration compatibility alias. Explicit
-unavailable `native` selection fails before a live mining connection is opened.
+available `python` backend plus `native` and `native-parallel`, whose
+availability is determined by one controlled optional-extension import. `auto`
+deterministically remains `python`; `cpu` is retained as a configuration
+compatibility alias. Explicit unavailable native selection fails before a live
+mining connection is opened, as does invalid parallel worker configuration.
 The same selected instance survives job changes, local work progression, and
 fresh Stratum sessions, while each prepared work value remains call-scoped and
 is not retained after search.
@@ -134,12 +136,32 @@ digest and both target flags with existing Python primitives before the
 candidate can reach submission. The C loop releases the GIL but creates no
 thread and uses no assembly or platform library.
 
+`NativeParallelBackend` owns one persistent Python `ThreadPoolExecutor` per
+selected backend instance. It divides the orchestration-owned parent interval
+into deterministic ascending, contiguous, balanced half-open assignments whose
+union is exact and whose intersections are empty. Every assignment calls the
+same verified native wrapper exactly once. Completion order cannot affect the
+result: reduction selects the lowest qualifying nonce, sums actual worker hash
+counts, and records one parent-call wall-clock interval rather than summed
+worker time.
+
+The pool is created lazily, survives chunks, work changes, local progression,
+and recovered Stratum sessions, and is closed once by caller-owned backend
+cleanup. It never owns settings loading, job state, reconnect, submission,
+events, signals, or client cleanup. Running native calls cannot yet be
+cooperatively interrupted; a stop prevents the next chunk after the current
+parallel call finishes. `HASHPHERE_COMPUTE_WORKERS` is validated by
+configuration and passed into backend construction without being interpreted
+by mining orchestration.
+
 The native extension is optional at build and import time, preserving
-Python-only installs. Future parallel CPU and GPU implementations must preserve
-the same range and result semantics and remain unaware of network and
-logging-file ownership. Detailed contracts are in
+Python-only installs; both native modes then report controlled unavailability.
+Future search-strategy and GPU implementations must preserve the same range and
+result semantics and remain unaware of network and logging-file ownership.
+Detailed contracts are in
 [`docs/05-compute-backends.md`](docs/05-compute-backends.md) and
-[`docs/06-native-cpu.md`](docs/06-native-cpu.md).
+[`docs/06-native-cpu.md`](docs/06-native-cpu.md), with parallel lifecycle detail
+in [`docs/07-parallel-cpu.md`](docs/07-parallel-cpu.md).
 
 ---
 
