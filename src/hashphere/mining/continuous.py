@@ -27,6 +27,14 @@ from hashphere.mining.search import (
     prepare_mining_work,
     search_nonce_range,
 )
+from hashphere.mining.strategy import (
+    MiningSearchStrategy,
+    SearchAssignment,
+    SearchStrategyCursor,
+    SearchStrategyExecutionError,
+    SearchStrategyValidationError,
+    SequentialSearchStrategy,
+)
 from hashphere.network.stratum.messages import (
     MiningNotifyNotification,
     SetDifficultyNotification,
@@ -389,12 +397,17 @@ def run_continuous_mining(
     receive_notification: NotificationReceiver,
     submit_share: ShareSubmitter,
     observer: ContinuousMiningObserver | None = None,
+    strategy: MiningSearchStrategy | None = None,
     prepare_work: WorkPreparer = prepare_mining_work,
     search_range: RangeSearcher = search_nonce_range,
     recover_session: SessionRecoverer | None = None,
     recovery_statistics: RecoveryStatisticsProvider | None = None,
 ) -> ContinuousMiningResult:
-    """Mine sequential chunks until a controlled terminal outcome occurs."""
+    """Mine strategy-scheduled chunks until a controlled terminal outcome occurs."""
+
+    selected_strategy: MiningSearchStrategy = (
+        SequentialSearchStrategy() if strategy is None else strategy
+    )
 
     _validate_run_inputs(
         plan,
@@ -404,6 +417,7 @@ def run_continuous_mining(
         stop_token,
         receive_notification,
         submit_share,
+        selected_strategy,
         prepare_work,
         search_range,
         recover_session,
@@ -449,7 +463,7 @@ def run_continuous_mining(
     current_pool_identity = mining_job_context_identity(current_job)
     last_ignored_pool_identity: MiningJobContextIdentity | None = None
     current_variant_reason = "initial_job"
-    next_nonce = plan.start_nonce
+    strategy_cursor = _create_strategy_cursor(selected_strategy, plan)
     current_work_searched = False
     current_job_searched = False
     chunks_completed = 0
@@ -532,8 +546,8 @@ def run_continuous_mining(
         nonlocal current_work_identity
         nonlocal current_work_searched
         nonlocal last_ignored_pool_identity
-        nonlocal next_nonce
         nonlocal replacements
+        nonlocal strategy_cursor
 
         selected_identity = mining_job_context_identity(selected_job)
         if selected_identity in {current_pool_identity, last_ignored_pool_identity}:
@@ -563,7 +577,7 @@ def run_continuous_mining(
         current_pool_identity = selected_identity
         last_ignored_pool_identity = None
         current_variant_reason = "pool_job"
-        next_nonce = plan.start_nonce
+        strategy_cursor = _create_strategy_cursor(selected_strategy, plan)
         current_work_searched = False
         current_job_searched = False
         return True
@@ -582,8 +596,8 @@ def run_continuous_mining(
         nonlocal current_work_identity
         nonlocal current_work_searched
         nonlocal last_ignored_pool_identity
-        nonlocal next_nonce
         nonlocal replacements
+        nonlocal strategy_cursor
 
         recovered_cursor = MiningWorkCursor.start(
             session.initial_job,
@@ -625,7 +639,7 @@ def run_continuous_mining(
         current_work_identity = mining_work_identity(recovered_work)
         current_work_searched = False
         last_ignored_pool_identity = None
-        next_nonce = plan.start_nonce
+        strategy_cursor = _create_strategy_cursor(selected_strategy, plan)
 
     def recover_connection(
         error: StratumConnectionError,
@@ -649,7 +663,9 @@ def run_continuous_mining(
         if plan.max_chunks is not None and chunks_completed >= plan.max_chunks:
             return finish(ContinuousMiningOutcome.CHUNK_LIMIT_REACHED)
 
-        stop_nonce = min(next_nonce + plan.chunk_size, _NONCE_LIMIT)
+        assignment = _next_strategy_assignment(strategy_cursor)
+        start_nonce = assignment.start_nonce
+        stop_nonce = assignment.stop_nonce
         if not current_work_searched:
             work_variants += 1
             event_observer.work_advanced(
@@ -662,9 +678,9 @@ def run_continuous_mining(
         if not current_job_searched:
             jobs_used += 1
             current_job_searched = True
-        event_observer.chunk_started(current_work, next_nonce, stop_nonce)
-        chunk_result = search_range(current_work, next_nonce, stop_nonce)
-        _validate_search_result(chunk_result, next_nonce, stop_nonce)
+        event_observer.chunk_started(current_work, start_nonce, stop_nonce)
+        chunk_result = search_range(current_work, start_nonce, stop_nonce)
+        _validate_search_result(chunk_result, start_nonce, stop_nonce)
         event_observer.chunk_completed(current_work, chunk_result)
         chunks_completed += 1
         total_hashes += chunk_result.hashes_checked
@@ -692,13 +708,12 @@ def run_continuous_mining(
             )
             return finish(outcome, match=match, pool_accepted=accepted)
 
-        next_nonce = stop_nonce
         if stop_token.stop_requested:
             return finish_stopped()
         if plan.max_chunks is not None and chunks_completed >= plan.max_chunks:
             return finish(ContinuousMiningOutcome.CHUNK_LIMIT_REACHED)
 
-        if next_nonce == _NONCE_LIMIT:
+        if strategy_cursor.exhausted:
             event_observer.nonce_space_exhausted(current_work)
 
         try:
@@ -718,7 +733,7 @@ def run_continuous_mining(
             if select_pool_job(selected_job):
                 continue
 
-        if next_nonce < _NONCE_LIMIT:
+        if not strategy_cursor.exhausted:
             continue
 
         progress = current_cursor.advance()
@@ -749,7 +764,7 @@ def run_continuous_mining(
                 "network_time" if progress.network_time_rolled else "extra_nonce_2"
             )
             current_work_searched = False
-            next_nonce = plan.start_nonce
+            strategy_cursor = _create_strategy_cursor(selected_strategy, plan)
             continue
 
         event_observer.waiting_for_job(current_work)
@@ -830,6 +845,7 @@ def _validate_run_inputs(
     stop_token: object,
     receive_notification: object,
     submit_share: object,
+    strategy: object,
     prepare_work: object,
     search_range: object,
     recover_session: object,
@@ -845,6 +861,8 @@ def _validate_run_inputs(
         raise ContinuousMiningValidationError("extra_nonce_2 must be a nonempty string")
     if not isinstance(stop_token, StopToken):
         raise ContinuousMiningValidationError("stop_token must expose stop_requested")
+    if not isinstance(strategy, MiningSearchStrategy):
+        raise ContinuousMiningValidationError("strategy must implement MiningSearchStrategy")
     for callback, name in (
         (receive_notification, "receive_notification"),
         (submit_share, "submit_share"),
@@ -876,6 +894,33 @@ def _validate_search_result(
         raise ContinuousMiningValidationError(
             "search_range result must describe the requested nonce range"
         )
+
+
+def _create_strategy_cursor(
+    strategy: MiningSearchStrategy,
+    plan: ContinuousMiningPlan,
+) -> SearchStrategyCursor:
+    try:
+        cursor = strategy.create_cursor(plan.start_nonce, plan.chunk_size)
+    except (SearchStrategyValidationError, SearchStrategyExecutionError):
+        raise
+    except Exception as exc:
+        raise SearchStrategyExecutionError("search strategy cursor creation failed") from exc
+    if not isinstance(cursor, SearchStrategyCursor):
+        raise SearchStrategyExecutionError("search strategy returned an invalid cursor")
+    return cursor
+
+
+def _next_strategy_assignment(cursor: SearchStrategyCursor) -> SearchAssignment:
+    try:
+        assignment = cursor.next_assignment()
+    except (SearchStrategyValidationError, SearchStrategyExecutionError):
+        raise
+    except Exception as exc:
+        raise SearchStrategyExecutionError("search strategy assignment failed") from exc
+    if not isinstance(assignment, SearchAssignment):
+        raise SearchStrategyExecutionError("search strategy exhausted without new work")
+    return assignment
 
 
 def _validate_integer(value: object, name: str) -> int:

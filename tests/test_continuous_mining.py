@@ -18,6 +18,9 @@ from hashphere.mining import (
     NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
+    SearchStrategyCursor,
+    SearchStrategyExecutionError,
+    SequentialSearchStrategy,
     StopController,
     StratumMiningSession,
     StratumRecoveryStage,
@@ -247,6 +250,23 @@ class Harness:
         self.observations.append(("duplicate", duplicate_count, reason))
 
 
+class TrackingStrategy(SequentialSearchStrategy):
+    """Record each legitimate per-work cursor reset."""
+
+    def __init__(self) -> None:
+        self.create_calls: list[tuple[int, int, int]] = []
+
+    def create_cursor(
+        self,
+        start_nonce: int,
+        chunk_size: int,
+        *,
+        nonce_limit: int = 1 << 32,
+    ) -> SearchStrategyCursor:
+        self.create_calls.append((start_nonce, chunk_size, nonce_limit))
+        return super().create_cursor(start_nonce, chunk_size, nonce_limit=nonce_limit)
+
+
 class RecoveredClient:
     """Authorized socket-free client owned by one recovered test session."""
 
@@ -343,6 +363,7 @@ def run_with_harness(
     extra_nonce_2_size: int = 4,
     extra_nonce_2: str | None = None,
     network_time: str = "65f04abc",
+    strategy: SequentialSearchStrategy | None = None,
 ) -> tuple[MiningJobAssembler, MiningJob, ContinuousMiningResult]:
     """Run continuous orchestration against one synthetic initial job."""
 
@@ -360,6 +381,7 @@ def run_with_harness(
         receive_notification=harness.receive,
         submit_share=harness.submit,
         observer=harness,
+        strategy=strategy,
         prepare_work=harness.prepare,
         search_range=harness.search,
     )
@@ -613,12 +635,14 @@ def test_immediately_available_replacement_still_reports_nonce_exhaustion() -> N
 
 def test_nonce_boundary_advances_extra_nonce_and_restarts_configured_range() -> None:
     harness = Harness(elapsed_values=deque([10, 20, 30]))
+    strategy = TrackingStrategy()
 
     _, _, result = run_with_harness(
         ContinuousMiningPlan(0xFFFFFFFF, 1, 3),
         harness,
         extra_nonce_2_size=1,
         extra_nonce_2="fe",
+        strategy=strategy,
     )
 
     assert [extra for _, extra in harness.prepare_calls] == ["fe", "ff", "00"]
@@ -640,6 +664,7 @@ def test_nonce_boundary_advances_extra_nonce_and_restarts_configured_range() -> 
         "extra_nonce_2",
         "extra_nonce_2",
     ]
+    assert strategy.create_calls == [(0xFFFFFFFF, 1, 2**32)] * 3
 
 
 def test_identical_pool_job_is_ignored_without_restarting_completed_work() -> None:
@@ -704,12 +729,14 @@ def test_pool_job_has_priority_over_local_extra_nonce_advancement() -> None:
             ]
         )
     )
+    strategy = TrackingStrategy()
 
     _, _, result = run_with_harness(
         ContinuousMiningPlan(0xFFFFFFFF, 1, 2),
         harness,
         extra_nonce_2_size=1,
         extra_nonce_2="7f",
+        strategy=strategy,
     )
 
     assert [(job.job_id, extra) for job, extra in harness.prepare_calls] == [
@@ -722,6 +749,53 @@ def test_pool_job_has_priority_over_local_extra_nonce_advancement() -> None:
     ]
     assert result.extra_nonce_2_advances == 0
     assert result.job_replacements == 1
+    assert strategy.create_calls == [(0xFFFFFFFF, 1, 2**32)] * 2
+
+
+def test_strategy_failure_is_terminal_without_search_or_recovery() -> None:
+    class FailingStrategy(SequentialSearchStrategy):
+        def create_cursor(
+            self,
+            start_nonce: int,
+            chunk_size: int,
+            *,
+            nonce_limit: int = 1 << 32,
+        ) -> SearchStrategyCursor:
+            del start_nonce, chunk_size, nonce_limit
+            raise SearchStrategyExecutionError("failed")
+
+    harness = Harness()
+    recover_calls = 0
+
+    def recover(
+        error: StratumConnectionError,
+        stage: StratumRecoveryStage,
+    ) -> StratumMiningSession | None:
+        nonlocal recover_calls
+        del error, stage
+        recover_calls += 1
+        return None
+
+    assembler = make_assembler()
+    initial_job = assembler.build_job(notification("initial-job"))
+    with pytest.raises(SearchStrategyExecutionError, match="failed"):
+        run_continuous_mining(
+            ContinuousMiningPlan(0, 1, 1),
+            assembler,
+            initial_job,
+            "abababab",
+            harness.controller,
+            receive_notification=harness.receive,
+            submit_share=harness.submit,
+            strategy=FailingStrategy(),
+            prepare_work=harness.prepare,
+            search_range=harness.search,
+            recover_session=recover,
+            recovery_statistics=lambda: StratumRecoveryStatistics(0, 0, 0, 1),
+        )
+
+    assert harness.search_calls == []
+    assert recover_calls == 0
 
 
 def test_network_time_roll_reuses_seed_and_exact_variant_is_submitted() -> None:
@@ -900,6 +974,7 @@ def test_connection_loss_after_chunk_installs_fresh_session_and_preserves_totals
     statistics = StratumRecoveryStatistics(1, 1, 0, 2)
     assembler = make_assembler()
     initial_job = assembler.build_job(notification("initial-job"))
+    strategy = TrackingStrategy()
 
     def recover(
         error: StratumConnectionError,
@@ -917,6 +992,7 @@ def test_connection_loss_after_chunk_installs_fresh_session_and_preserves_totals
         receive_notification=harness.receive,
         submit_share=harness.submit,
         observer=harness,
+        strategy=strategy,
         prepare_work=harness.prepare,
         search_range=harness.search,
         recover_session=recover,
@@ -940,6 +1016,7 @@ def test_connection_loss_after_chunk_installs_fresh_session_and_preserves_totals
     assert result.successful_reconnects == 1
     assert result.failed_reconnect_attempts == 0
     assert result.sessions_established == 2
+    assert strategy.create_calls == [(5, 2, 2**32)] * 2
 
 
 def test_recovery_after_local_progression_discards_stale_cursor_and_keeps_counters() -> None:

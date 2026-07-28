@@ -14,6 +14,14 @@ from hashphere.mining.search import (
     prepare_mining_work,
     search_nonce_range,
 )
+from hashphere.mining.strategy import (
+    MiningSearchStrategy,
+    SearchAssignment,
+    SearchStrategyCursor,
+    SearchStrategyExecutionError,
+    SearchStrategyValidationError,
+    SequentialSearchStrategy,
+)
 from hashphere.network.stratum.messages import (
     MiningNotifyNotification,
     SetDifficultyNotification,
@@ -237,6 +245,7 @@ def run_chunked_mining(
     poll_notification: NotificationPoll,
     submit_share: ShareSubmitter,
     observer: ChunkedMiningObserver | None = None,
+    strategy: MiningSearchStrategy | None = None,
     prepare_work: WorkPreparer = prepare_mining_work,
     search_range: RangeSearcher = search_nonce_range,
 ) -> ChunkedMiningResult:
@@ -259,12 +268,22 @@ def run_chunked_mining(
         if not callable(callback):
             raise ChunkedMiningValidationError(f"{name} must be callable")
 
+    selected_strategy: MiningSearchStrategy = (
+        SequentialSearchStrategy() if strategy is None else strategy
+    )
+    if not isinstance(selected_strategy, MiningSearchStrategy):
+        raise ChunkedMiningValidationError("strategy must implement MiningSearchStrategy")
+
     event_observer: ChunkedMiningObserver = (
         NullChunkedMiningObserver() if observer is None else observer
     )
     current_job = initial_job
     current_work = prepare_work(current_job, extra_nonce_2)
-    next_nonce = plan.start_nonce
+    strategy_cursor = _create_strategy_cursor(
+        selected_strategy,
+        plan,
+        remaining_hashes=plan.max_hashes,
+    )
     current_work_searched = False
     chunks_completed = 0
     jobs_used = 0
@@ -273,18 +292,16 @@ def run_chunked_mining(
     total_elapsed_ns = 0
 
     while total_hashes < plan.max_hashes:
-        remaining_budget = plan.max_hashes - total_hashes
-        hashes_in_chunk = min(plan.chunk_size, remaining_budget)
-        stop_nonce = next_nonce + hashes_in_chunk
-        if stop_nonce > _NONCE_LIMIT:
-            raise ChunkedMiningError("next chunk exceeds the unsigned 32-bit nonce space")
+        assignment = _next_strategy_assignment(strategy_cursor)
+        start_nonce = assignment.start_nonce
+        stop_nonce = assignment.stop_nonce
 
         if not current_work_searched:
             jobs_used += 1
             current_work_searched = True
-        event_observer.chunk_started(current_work, next_nonce, stop_nonce)
-        chunk_result = search_range(current_work, next_nonce, stop_nonce)
-        _validate_search_result(chunk_result, next_nonce, stop_nonce)
+        event_observer.chunk_started(current_work, start_nonce, stop_nonce)
+        chunk_result = search_range(current_work, start_nonce, stop_nonce)
+        _validate_search_result(chunk_result, start_nonce, stop_nonce)
         event_observer.chunk_completed(current_work, chunk_result)
         chunks_completed += 1
         total_hashes += chunk_result.hashes_checked
@@ -309,7 +326,6 @@ def run_chunked_mining(
                 total_elapsed_ns=total_elapsed_ns,
             )
 
-        next_nonce = stop_nonce
         if total_hashes == plan.max_hashes:
             break
 
@@ -340,7 +356,11 @@ def run_chunked_mining(
             )
             current_job = selected_replacement
             current_work = replacement_work
-            next_nonce = plan.start_nonce
+            strategy_cursor = _create_strategy_cursor(
+                selected_strategy,
+                plan,
+                remaining_hashes=plan.max_hashes - total_hashes,
+            )
             current_work_searched = False
 
     return ChunkedMiningResult(
@@ -367,6 +387,40 @@ def _validate_search_result(
         raise ChunkedMiningValidationError(
             "search_range result must describe the requested nonce range"
         )
+
+
+def _create_strategy_cursor(
+    strategy: MiningSearchStrategy,
+    plan: ChunkedMiningPlan,
+    *,
+    remaining_hashes: int,
+) -> SearchStrategyCursor:
+    nonce_limit = plan.start_nonce + remaining_hashes
+    try:
+        cursor = strategy.create_cursor(
+            plan.start_nonce,
+            plan.chunk_size,
+            nonce_limit=nonce_limit,
+        )
+    except (SearchStrategyValidationError, SearchStrategyExecutionError):
+        raise
+    except Exception as exc:
+        raise SearchStrategyExecutionError("search strategy cursor creation failed") from exc
+    if not isinstance(cursor, SearchStrategyCursor):
+        raise SearchStrategyExecutionError("search strategy returned an invalid cursor")
+    return cursor
+
+
+def _next_strategy_assignment(cursor: SearchStrategyCursor) -> SearchAssignment:
+    try:
+        assignment = cursor.next_assignment()
+    except (SearchStrategyValidationError, SearchStrategyExecutionError):
+        raise
+    except Exception as exc:
+        raise SearchStrategyExecutionError("search strategy assignment failed") from exc
+    if not isinstance(assignment, SearchAssignment):
+        raise SearchStrategyExecutionError("search strategy exhausted before the hash budget")
+    return assignment
 
 
 def _validate_integer(value: object, name: str) -> int:

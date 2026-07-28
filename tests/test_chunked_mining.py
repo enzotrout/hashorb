@@ -16,6 +16,9 @@ from hashphere.mining import (
     NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
+    SearchStrategyCursor,
+    SearchStrategyExecutionError,
+    SequentialSearchStrategy,
     run_chunked_mining,
 )
 from hashphere.mining.chunks import MiningNotification
@@ -179,11 +182,29 @@ class Harness:
         self.observations.append(("submitted", work.job_id, match.nonce, accepted))
 
 
+class TrackingStrategy(SequentialSearchStrategy):
+    """Record fresh cursor creation without changing sequential behavior."""
+
+    def __init__(self) -> None:
+        self.create_calls: list[tuple[int, int, int]] = []
+
+    def create_cursor(
+        self,
+        start_nonce: int,
+        chunk_size: int,
+        *,
+        nonce_limit: int = 1 << 32,
+    ) -> SearchStrategyCursor:
+        self.create_calls.append((start_nonce, chunk_size, nonce_limit))
+        return super().create_cursor(start_nonce, chunk_size, nonce_limit=nonce_limit)
+
+
 def run_with_harness(
     plan: ChunkedMiningPlan,
     harness: Harness,
     *,
     difficulty: int | float = 100,
+    strategy: SequentialSearchStrategy | None = None,
 ) -> tuple[MiningJobAssembler, MiningJob, ChunkedMiningResult]:
     """Run orchestration against one prepared synthetic initial job."""
 
@@ -197,6 +218,7 @@ def run_with_harness(
         poll_notification=harness.poll,
         submit_share=harness.submit,
         observer=harness,
+        strategy=strategy,
         prepare_work=harness.prepare,
         search_range=harness.search,
     )
@@ -290,7 +312,12 @@ def test_zero_total_elapsed_has_unavailable_rate() -> None:
 
 def test_difficulty_alone_does_not_rebuild_or_reset_current_work() -> None:
     harness = Harness(notifications=deque([SetDifficultyNotification(difficulty=200), None]))
-    assembler, _, result = run_with_harness(ChunkedMiningPlan(5, 2, 4), harness)
+    strategy = TrackingStrategy()
+    assembler, _, result = run_with_harness(
+        ChunkedMiningPlan(5, 2, 4),
+        harness,
+        strategy=strategy,
+    )
 
     assert [(start, stop) for _, start, stop in harness.search_calls] == [
         (5, 7),
@@ -299,6 +326,7 @@ def test_difficulty_alone_does_not_rebuild_or_reset_current_work() -> None:
     assert len(harness.prepare_calls) == 1
     assert result.job_replacements == 0
     assert assembler.current_difficulty == 200
+    assert strategy.create_calls == [(5, 2, 9)]
 
 
 @pytest.mark.parametrize("clean_jobs", [True, False])
@@ -308,8 +336,13 @@ def test_new_job_replaces_work_and_restarts_nonce_for_both_clean_values(
     harness = Harness(
         notifications=deque([notification("replacement", clean_jobs=clean_jobs), None])
     )
+    strategy = TrackingStrategy()
 
-    _, _, result = run_with_harness(ChunkedMiningPlan(5, 2, 4), harness)
+    _, _, result = run_with_harness(
+        ChunkedMiningPlan(5, 2, 4),
+        harness,
+        strategy=strategy,
+    )
 
     assert [(work.job_id, start, stop) for work, start, stop in harness.search_calls] == [
         ("initial-job", 5, 7),
@@ -322,6 +355,31 @@ def test_new_job_replaces_work_and_restarts_nonce_for_both_clean_values(
     assert result.jobs_used == 2
     assert result.job_replacements == 1
     assert result.total_hashes_checked == 4
+    assert strategy.create_calls == [(5, 2, 9), (5, 2, 7)]
+
+
+def test_strategy_failure_is_terminal_before_backend_search() -> None:
+    class FailingStrategy(SequentialSearchStrategy):
+        def create_cursor(
+            self,
+            start_nonce: int,
+            chunk_size: int,
+            *,
+            nonce_limit: int = 1 << 32,
+        ) -> SearchStrategyCursor:
+            del start_nonce, chunk_size, nonce_limit
+            raise SearchStrategyExecutionError("failed")
+
+    harness = Harness()
+
+    with pytest.raises(SearchStrategyExecutionError, match="failed"):
+        run_with_harness(
+            ChunkedMiningPlan(0, 1, 1),
+            harness,
+            strategy=FailingStrategy(),
+        )
+
+    assert harness.search_calls == []
 
 
 def test_notification_order_snapshots_difficulty_and_uses_only_final_job() -> None:
