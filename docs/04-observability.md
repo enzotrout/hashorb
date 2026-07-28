@@ -88,6 +88,13 @@ events remain the authoritative per-search records. Hardware serial numbers,
 device paths, availability-error text, work bytes, and credentials are never
 included.
 
+An explicitly selected native backend uses the same event with
+`backend_name=native`, `backend_kind=cpu`, and `implementation=c`. Its
+capability Booleans remain false for parallel search and cooperative
+cancellation. Compiler paths, build commands, CPU identity, extension import
+details, and raw native failures are not event fields. The offline
+`compute-benchmark` command intentionally does not create JSONL events.
+
 Stable lifecycle and progression events describe controlled state without
 exposing signals or raw work:
 

@@ -112,22 +112,34 @@ half-open nonce interval and returns the existing immutable
 progression, recovery, submission, settings, signals, console output, event
 files, or cleanup.
 
-The built-in registry is created per invocation and contains the `python`
-backend. `auto` deterministically resolves to `python`; `cpu` is retained as a
-configuration compatibility alias. Selection is performed once before a live
-mining connection is opened. That same backend instance survives job changes,
-local work progression, and fresh Stratum sessions, while each prepared work
-value remains call-scoped and is not retained after search.
+The built-in registry is created per invocation and contains the always
+available `python` backend plus `native`, whose availability is determined by a
+controlled optional-extension import. `auto` deterministically remains
+`python`; `cpu` is retained as a configuration compatibility alias. Explicit
+unavailable `native` selection fails before a live mining connection is opened.
+The same selected instance survives job changes, local work progression, and
+fresh Stratum sessions, while each prepared work value remains call-scoped and
+is not retained after search.
 
 `PythonSequentialBackend` delegates to the existing validated
 `search_nonce_range` function and is the correctness oracle for future
 implementations. It declares deterministic sequential order with no parallel
 search, device selection, or cooperative mid-range cancellation. Execution
 errors are terminal and never cause automatic fallback or Stratum reconnect.
-Future native, parallel CPU, and GPU implementations must preserve the same
-range and result semantics and remain unaware of network and logging-file
-ownership. The detailed contract is in
-[`docs/05-compute-backends.md`](docs/05-compute-backends.md).
+
+The portable C extension receives only the 76-byte header prefix, two lossless
+32-byte little-endian targets, and exact nonce bounds. Its Python wrapper owns
+timing and constructs the public result. It recomputes any reported candidate
+digest and both target flags with existing Python primitives before the
+candidate can reach submission. The C loop releases the GIL but creates no
+thread and uses no assembly or platform library.
+
+The native extension is optional at build and import time, preserving
+Python-only installs. Future parallel CPU and GPU implementations must preserve
+the same range and result semantics and remain unaware of network and
+logging-file ownership. Detailed contracts are in
+[`docs/05-compute-backends.md`](docs/05-compute-backends.md) and
+[`docs/06-native-cpu.md`](docs/06-native-cpu.md).
 
 ---
 

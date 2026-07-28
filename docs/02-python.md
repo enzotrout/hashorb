@@ -44,6 +44,12 @@ Install project dependencies:
 uv sync --locked
 ```
 
+This also attempts to build Hashphere's optional portable native C extension
+when a platform compiler is available. The extension is not required for the
+default Python backend or a Python-only installation. Native development and
+clean-build instructions are documented in
+[`06-native-cpu.md`](06-native-cpu.md).
+
 ---
 
 ## Verification

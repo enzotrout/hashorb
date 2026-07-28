@@ -655,11 +655,12 @@ will eventually control resource policy such as worker count, duty cycle, and
 scheduling priority; profile behavior is still deferred and is not silently
 interpreted as a backend selector.
 
-The implemented built-in backend has the exact name `python` and delegates to
-the validated sequential `search_nonce_range` implementation. The default
-`auto` selector resolves deterministically to `python` because no other
-production backend exists. The earlier `cpu` setting remains a compatibility
-alias for `python`; `gpu` is not accepted as an available backend.
+The built-in `python` backend delegates to validated `search_nonce_range` and
+remains the correctness oracle. The optional built-in `native` backend performs
+the same sequential search in portable C and verifies candidates again through
+Python. The default `auto` selector deliberately remains `python`; the earlier
+`cpu` setting remains its compatibility alias. Explicit `native` selection is
+available only when the extension imports successfully.
 
 CLI mining orchestration selects one backend before opening the live Stratum
 connection and reuses that same instance for every range, job replacement,
@@ -670,13 +671,14 @@ exclusive-stop bounds, then returns the existing immutable
 submission, signals, console output, or event files. Execution failures are
 terminal and do not trigger another search, fallback, or Stratum reconnect.
 
-The capability declaration is immutable and low-cardinality. The Python
-reference reports deterministic sequential order and no parallel search,
+The capability declaration is immutable and low-cardinality. Both Python and
+native backends report deterministic sequential order and no parallel search,
 cooperative mid-range cancellation, device selection, or preferred batch
-size. Native and parallel CPU implementations, alternate search strategies,
-GPU execution, device probing, and Lite/Auto/Max/Custom resource profiles
-remain deferred. The complete extension and failure contract is documented in
-[`05-compute-backends.md`](05-compute-backends.md).
+size. Parallel CPU implementations, SIMD, alternate search strategies, GPU
+execution, device probing, and Lite/Auto/Max/Custom resource profiles remain
+deferred. The compute contract and native build design are documented in
+[`05-compute-backends.md`](05-compute-backends.md) and
+[`06-native-cpu.md`](06-native-cpu.md).
 
 ## Mining and Compute Components
 
@@ -684,6 +686,8 @@ remain deferred. The complete extension and failure contract is documented in
 src/hashphere/
 ├── compute/
 │   ├── backend.py
+│   ├── benchmark.py
+│   ├── native.py
 │   ├── python.py
 │   └── registry.py
 └── mining/

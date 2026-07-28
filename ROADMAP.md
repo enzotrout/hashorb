@@ -54,7 +54,7 @@ Progress:
 - ✅ Duplicate-work prevention across local progression and pool reannouncements
 - ✅ Single-endpoint reconnect and fresh-session recovery
 - ✅ Compute-backend contract, deterministic registry, and Python reference backend
-- ⬜ Native optimized CPU backend
+- ✅ Portable optimized native C CPU backend
 - ⬜ Parallel CPU backend
 - ⬜ Pool failover
 
@@ -94,7 +94,7 @@ Progress:
 - ✅ Extra-nonce progression, network-time rolling, and duplicate-work prevention
 - ✅ Single-endpoint reconnect and session recovery
 - ✅ Compute-backend abstraction and Python sequential reference backend
-- ⬜ Native optimized CPU mining
+- ✅ Portable optimized native C CPU mining
 - ⬜ Parallel CPU mining
 - ⬜ Pool failover
 - ⬜ Direct block submission
@@ -161,19 +161,18 @@ Planned:
 
 # Current Milestone
 
-**Compute-Backend Abstraction — Complete**
+**Portable Optimized Native CPU Backend — Complete**
 
 Objective:
 
-Decouple mining orchestration from nonce-search execution through a stable
-prepared-work, half-open-range, and immutable-result contract. Retain the
-existing Python sequential scanner as the deterministic correctness reference
-and default operational backend.
+Implement a portable sequential C extension behind the established compute
+contract, preserve exact parity with the Python reference, and verify every
+reported candidate again through the Python hashing and target primitives.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, and the
-compute-backend boundary remain complete. A native optimized CPU backend is
-next, followed by parallel CPU execution. Pool failover remains a later
+compute-backend boundary, and portable native sequential execution remain
+complete. Parallel CPU execution is next. Pool failover remains a later
 recovery milestone. Sequential, partitioned, and strided strategies then
 precede orbiting-bit search, CUDA, DGX Spark/GB10, multi-GPU, and host-side
 verification. Lite/Auto/Max/Custom operating profiles,
@@ -188,4 +187,4 @@ order.
 
 Continue with:
 
-**Implement a native optimized CPU backend behind the verified compute contract.**
+**Implement bounded parallel CPU execution behind the verified compute contract.**

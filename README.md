@@ -2,12 +2,13 @@
 
 Hashphere is an experimental Python Bitcoin mining project. Live operations are
 explicitly opt-in and include Stratum inspection, bounded mining, and a
-synchronous continuous lifecycle that searches one Python nonce chunk at a
-time. Continuous mining now expands deterministic Bitcoin work space after a
+synchronous continuous lifecycle that searches one nonce chunk at a time.
+Continuous mining now expands deterministic Bitcoin work space after a
 nonce boundary and recovers fresh authorized work after single-endpoint
 Stratum connection loss. Mining commands select one compute backend per
-invocation; the verified Python sequential implementation is the current
-reference and operational backend.
+invocation. The Python sequential implementation is the correctness reference,
+and an explicitly selected portable native C backend provides optimized
+sequential execution.
 
 ## Configure the environment
 
@@ -24,18 +25,56 @@ derives a sanitized worker name from the hostname. No seed phrase, private key,
 or wallet password is needed or should be placed in `.env`.
 
 `HASHPHERE_COMPUTE_BACKEND` selects the nonce-search implementation. Its
-default, `auto`, deterministically selects `python` because that is the only
-production backend in this milestone. The exact selector `python` is also
-supported, and the earlier `cpu` value remains a compatibility alias for the
-same backend. `HASHPHERE_COMPUTE_PROFILE` remains separate configuration;
+default, `auto`, deliberately continues to select `python`; native availability
+does not change that choice. Exact selectors `python` and `native` are
+supported, and the earlier `cpu` value remains a compatibility alias for
+`python`. `native` is selectable only when the optional compiled extension is
+available. `HASHPHERE_COMPUTE_PROFILE` remains separate configuration;
 resource-profile behavior is not implemented yet.
 
 The backend is validated before a mining command opens a live connection,
 selected exactly once, and reused across every job, work variant, and Stratum
 reconnect in that invocation. An execution failure is terminal: Hashphere does
-not retry the range with another backend or silently fall back. Native CPU,
-multiprocessing, GPU execution, device selection, cooperative mid-range
-cancellation, and Lite/Auto/Max/Custom resource profiles remain deferred.
+not retry the range with another backend or silently fall back. Parallel CPU
+execution, SIMD, multiprocessing, GPU execution, device selection,
+cooperative mid-range cancellation, and Lite/Auto/Max/Custom resource profiles
+remain deferred.
+
+`uv sync --locked` attempts to compile the optional self-contained C extension
+with the platform C compiler. Python-only operation remains available if that
+optional build is unavailable; explicit `native` selection then fails safely
+before a live connection. The current source build has been validated with
+Apple Clang on Apple Silicon. See
+[`docs/06-native-cpu.md`](docs/06-native-cpu.md) for build and portability
+details.
+
+## Benchmark compute backends offline
+
+The benchmark command requires no `.env`, live opt-in, Stratum connection, or
+event log. It searches fixed public synthetic work that is not valid pool work:
+
+```bash
+uv run python -m hashphere compute-benchmark \
+  --backend python \
+  --hash-count 100000
+```
+
+```bash
+uv run python -m hashphere compute-benchmark \
+  --backend native \
+  --hash-count 100000
+```
+
+`--backend` must be exactly `python` or `native`. `--hash-count` is a positive
+unpadded ASCII decimal integer; optional `--start-nonce` uses the same strict
+syntax and defaults to zero. The selected range may end at `2**32` but cannot
+exceed it. Output contains backend, implementation, hashes checked, elapsed
+nanoseconds, calculated H/s, and exhausted/candidate status. It never prints
+the fixture header, targets, digest, or candidate nonce.
+
+Rates are local measurements for that process, build, machine, and synthetic
+fixture. They are not pool performance guarantees and should not be converted
+into a general speedup claim without controlled evidence.
 
 ## Run a live Stratum handshake
 
@@ -344,13 +383,31 @@ Malformed protocol data, authorization rejection, mining invariants, logging
 errors, and other non-connection failures remain terminal. Most importantly,
 a `mining.submit` transport failure is never retried: its outcome is uncertain,
 and resending could duplicate a submission. Pool failover, random backoff
-jitter, multiprocessing, native backends, and GPU execution remain deferred.
+jitter, parallel CPU execution, SIMD, multiprocessing, and GPU execution remain
+deferred.
+
+To validate explicit native selection with a bounded live gate, use:
+
+```bash
+HASHPHERE_COMPUTE_BACKEND=native \
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine \
+  --start-nonce 0 \
+  --chunk-size 100000 \
+  --max-chunks 3 \
+  --max-reconnect-attempts 5 \
+  --log-file logs/hashphere.jsonl
+```
+
+This command is documented for an explicitly authorized manual gate and is not
+run by automated tests.
 
 The actual generated or advanced extra nonce is never displayed or logged.
 Final output and JSONL analysis expose only safe aggregate variant, advance,
 cycle, network-time-roll, duplicate, connection-loss, and reconnect counts.
-They also report the stable backend name (`python`) without hardware or device
-identifiers.
+They also report the stable backend name (`python` or `native`) without
+hardware or device identifiers.
 
 Final output reports sanitized aggregate counters and weighted hash rate,
 including reconnect attempts, successful reconnects, failed reconnect
