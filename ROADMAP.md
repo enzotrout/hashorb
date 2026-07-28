@@ -53,8 +53,10 @@ Progress:
 - ✅ Search-space expansion with extra-nonce and network-time progression
 - ✅ Duplicate-work prevention across local progression and pool reannouncements
 - ✅ Single-endpoint reconnect and fresh-session recovery
+- ✅ Compute-backend contract, deterministic registry, and Python reference backend
+- ⬜ Native optimized CPU backend
+- ⬜ Parallel CPU backend
 - ⬜ Pool failover
-- ⬜ Multiprocess CPU backend
 
 ---
 
@@ -91,8 +93,10 @@ Progress:
 - ✅ Continuous mining lifecycle
 - ✅ Extra-nonce progression, network-time rolling, and duplicate-work prevention
 - ✅ Single-endpoint reconnect and session recovery
+- ✅ Compute-backend abstraction and Python sequential reference backend
+- ⬜ Native optimized CPU mining
+- ⬜ Parallel CPU mining
 - ⬜ Pool failover
-- ⬜ Multi-process mining
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
 
@@ -157,24 +161,25 @@ Planned:
 
 # Current Milestone
 
-**Resilient Single-Endpoint Stratum Recovery — Complete**
+**Compute-Backend Abstraction — Complete**
 
 Objective:
 
-Recover continuous mining from genuine Stratum connection loss through a
-bounded deterministic retry policy. Establish a fresh authorized session,
-fresh difficulty and job, and one newly negotiated extra-nonce seed while
-preserving invocation-wide mining and recovery counters.
+Decouple mining orchestration from nonce-search execution through a stable
+prepared-work, half-open-range, and immutable-result contract. Retain the
+existing Python sequential scanner as the deterministic correctness reference
+and default operational backend.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
-analysis, search-space expansion, and single-endpoint session recovery remain
-complete. A compute-backend abstraction is next and precedes native and
-parallel CPU backends. Pool failover remains a later recovery milestone.
-Sequential, partitioned, strided, and orbiting-bit strategies precede CUDA,
-DGX Spark/GB10, multi-GPU, and host-side verification. Lite/Auto/Max/Custom
-operating profiles, macOS/Windows/Linux/Docker packaging, broader Stratum pool
-support, Bitcoin Core true solo mining, distributed workers, adaptive tuning,
-and Prometheus/Grafana-compatible metrics remain deferred in that dependency
+analysis, search-space expansion, single-endpoint session recovery, and the
+compute-backend boundary remain complete. A native optimized CPU backend is
+next, followed by parallel CPU execution. Pool failover remains a later
+recovery milestone. Sequential, partitioned, and strided strategies then
+precede orbiting-bit search, CUDA, DGX Spark/GB10, multi-GPU, and host-side
+verification. Lite/Auto/Max/Custom operating profiles,
+macOS/Windows/Linux/Docker packaging, broader Stratum pool support, Bitcoin
+Core true solo mining, distributed workers, adaptive tuning, and
+Prometheus/Grafana-compatible metrics remain deferred in that dependency
 order.
 
 ---
@@ -183,4 +188,4 @@ order.
 
 Continue with:
 
-**Define the compute-backend abstraction without changing mining semantics.**
+**Implement a native optimized CPU backend behind the verified compute contract.**

@@ -649,101 +649,61 @@ deferred.
 
 ## Compute Backend and Compute Profile
 
-Compute backend and compute profile are separate settings.
+Compute backend and compute profile remain separate settings. The backend
+selects how one already-prepared half-open nonce range is executed. The profile
+will eventually control resource policy such as worker count, duty cycle, and
+scheduling priority; profile behavior is still deferred and is not silently
+interpreted as a backend selector.
 
-### Backends
+The implemented built-in backend has the exact name `python` and delegates to
+the validated sequential `search_nonce_range` implementation. The default
+`auto` selector resolves deterministically to `python` because no other
+production backend exists. The earlier `cpu` setting remains a compatibility
+alias for `python`; `gpu` is not accepted as an available backend.
 
-- `cpu`: use the CPU hashing backend
-- `gpu`: use a supported GPU backend
-- `auto`: choose the best available supported backend
+CLI mining orchestration selects one backend before opening the live Stratum
+connection and reuses that same instance for every range, job replacement,
+extra-nonce or network-time variant, and recovered Stratum session. The backend
+receives immutable `PreparedMiningWork` and exact inclusive-start,
+exclusive-stop bounds, then returns the existing immutable
+`NonceSearchResult`. It does not own work construction, progression, recovery,
+submission, signals, console output, or event files. Execution failures are
+terminal and do not trigger another search, fallback, or Stratum reconnect.
 
-The first implementation will support the CPU backend.
+The capability declaration is immutable and low-cardinality. The Python
+reference reports deterministic sequential order and no parallel search,
+cooperative mid-range cancellation, device selection, or preferred batch
+size. Native and parallel CPU implementations, alternate search strategies,
+GPU execution, device probing, and Lite/Auto/Max/Custom resource profiles
+remain deferred. The complete extension and failure contract is documented in
+[`05-compute-backends.md`](05-compute-backends.md).
 
-GPU support is an architectural requirement, but it will be implemented
-after the CPU mining path is correct, tested, and benchmarked.
+## Mining and Compute Components
 
-### Profiles
-
-#### Lite
-
-Designed for normal computer use while Hashphere runs in the background.
-
-Initial policy:
-
-- use approximately 25 percent of logical CPU capacity
-- run workers at a reduced duty cycle
-- use low process priority where supported
-- reserve substantial capacity for the user and operating system
-
-#### Auto
-
-Designed to adapt to current system activity.
-
-Initial policy:
-
-- begin near 50 percent of logical CPU capacity
-- monitor system load and responsiveness
-- reduce mining activity when the computer becomes busy
-- cautiously increase activity when capacity becomes available
-- never exceed the limits of the Max profile
-
-#### Max
-
-Designed for the highest practical hashrate without intentionally making
-the operating system unusable.
-
-Initial policy:
-
-- use most logical CPUs
-- reserve at least one logical CPU for the operating system
-- avoid real-time scheduling priority
-- allow thermal and load safeguards to reduce activity
-
-## Power Terminology
-
-The compute profiles control:
-
-- worker count
-- worker duty cycle
-- scheduling priority
-
-They do not promise an exact electrical-power percentage.
-
-Exact power measurement and control are platform-specific and may not be
-available consistently on macOS, Windows, Linux, Docker, and DGX Spark.
-
-## Proposed Mining Components
-
-    src/hashphere/mining/
+```text
+src/hashphere/
+├── compute/
+│   ├── backend.py
+│   ├── python.py
+│   └── registry.py
+└── mining/
+    ├── chunks.py
     ├── coinbase.py
+    ├── continuous.py
     ├── header.py
     ├── job.py
     ├── merkle.py
     ├── progression.py
+    ├── recovery.py
     ├── search.py
-    ├── target.py
-    ├── engine.py
-    ├── profiles.py
-    ├── scheduler.py
-    └── backends/
-        ├── __init__.py
-        ├── cpu.py
-        └── gpu.py
+    └── target.py
+```
 
-Responsibilities:
-
-- `coinbase.py`: assemble and hash raw coinbase transaction bytes
-- `header.py`: serialize and hash raw 80-byte block headers
-- `job.py`: validate and assemble immutable mining-job snapshots
-- `merkle.py`: reduce a raw coinbase hash and ordered branches to a raw Merkle root
-- `progression.py`: advance immutable extra-nonce and network-time work variants
-- `search.py`: prepare fixed mining work and search bounded sequential nonce ranges
-- `target.py`: calculate targets and compare raw block-hash integers
-- `engine.py`: coordinate mining jobs and search operations
-- `profiles.py`: define Lite, Auto, and Max policies
-- `scheduler.py`: control worker allocation and duty cycles
-- `backends/cpu.py`: implement CPU hashing
-- `backends/gpu.py`: implement future GPU hashing
+The mining package owns Bitcoin work construction, targets, progression,
+session recovery, and lifecycle orchestration. The compute package owns only
+the execution boundary for a supplied prepared range, stable capabilities, and
+deterministic backend selection. This separation allows later native or GPU
+execution without changing Stratum or Bitcoin-domain semantics.
 
 ## Cryptographic Components
 

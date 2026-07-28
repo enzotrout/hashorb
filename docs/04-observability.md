@@ -53,6 +53,8 @@ The observer also emits:
 
 Bounded mining also emits:
 
+- `compute_backend_selected` once after backend selection and before the live
+  connection
 - `difficulty_received`
 - `mining_job_received`
 - `nonce_range_started`
@@ -77,6 +79,14 @@ search still has exactly one ordered `nonce_range_started` and
 `nonce_range_completed` pair whose bounds match the invoked half-open range.
 The analyzer therefore aggregates continuous hashes, elapsed nanoseconds, and
 weighted rate without a new range schema.
+
+`compute_backend_selected` is shared by all three mining commands. Its fields
+are limited to `backend_name`, `backend_kind`, `implementation`,
+`supports_parallel_search`, and `supports_cooperative_cancellation`. It is
+emitted once per invocation rather than once per range, so existing range
+events remain the authoritative per-search records. Hardware serial numbers,
+device paths, availability-error text, work bytes, and credentials are never
+included.
 
 Stable lifecycle and progression events describe controlled state without
 exposing signals or raw work:
@@ -222,7 +232,8 @@ acceptance.
 ## Aggregation and Privacy
 
 The immutable summary reports record and run status counts, chronological
-first and last UTC timestamps, sorted command and completion-outcome counts,
+first and last UTC timestamps, sorted command, compute-backend, and
+completion-outcome counts,
 known mining event counts, work variants searched, extra-nonce advances and
 cycles, network-time rolls, duplicate work ignored, connection losses,
 reconnect attempts, reconnect successes, reconnect failures, reconnect
@@ -231,6 +242,12 @@ sorted controlled failure-stage/category counts. Command counts
 are per distinct run ID rather than per record. The human-readable CLI always
 shows the five currently known commands in a stable order, including zero
 counts, followed by any future command names in sorted order.
+
+Backend aggregates count validated `compute_backend_selected` events by their
+stable name and are displayed only when present. Future backend names remain
+forward-compatible. The summary does not expose implementation errors or
+hardware identifiers, and backend counts do not affect nonce-range totals or
+weighted hash rate.
 
 The analyzer treats progression events as stable known records and validates
 only their safe fields. It counts event occurrences rather than trusting or

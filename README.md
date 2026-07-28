@@ -5,7 +5,9 @@ explicitly opt-in and include Stratum inspection, bounded mining, and a
 synchronous continuous lifecycle that searches one Python nonce chunk at a
 time. Continuous mining now expands deterministic Bitcoin work space after a
 nonce boundary and recovers fresh authorized work after single-endpoint
-Stratum connection loss.
+Stratum connection loss. Mining commands select one compute backend per
+invocation; the verified Python sequential implementation is the current
+reference and operational backend.
 
 ## Configure the environment
 
@@ -20,6 +22,20 @@ default endpoint is Solo CKPool at `stratum.ckpool.org:3333`, the default
 password is CKPool's conventional `x`, and `HASHPHERE_WORKER_NAME=auto`
 derives a sanitized worker name from the hostname. No seed phrase, private key,
 or wallet password is needed or should be placed in `.env`.
+
+`HASHPHERE_COMPUTE_BACKEND` selects the nonce-search implementation. Its
+default, `auto`, deterministically selects `python` because that is the only
+production backend in this milestone. The exact selector `python` is also
+supported, and the earlier `cpu` value remains a compatibility alias for the
+same backend. `HASHPHERE_COMPUTE_PROFILE` remains separate configuration;
+resource-profile behavior is not implemented yet.
+
+The backend is validated before a mining command opens a live connection,
+selected exactly once, and reused across every job, work variant, and Stratum
+reconnect in that invocation. An execution failure is terminal: Hashphere does
+not retry the range with another backend or silently fall back. Native CPU,
+multiprocessing, GPU execution, device selection, cooperative mid-range
+cancellation, and Lite/Auto/Max/Custom resource profiles remain deferred.
 
 ## Run a live Stratum handshake
 
@@ -130,6 +146,7 @@ once. A typical exhausted result is:
 Bounded Stratum mining completed.
 Endpoint: stratum.ckpool.org:3333
 Username: bc1q…ook1
+Compute backend: python
 Job ID: 1a2b3c
 Difficulty: 10000
 Network bits: 17023ad4
@@ -250,6 +267,7 @@ failover. Ctrl-C interrupts backoff before another client is created.
 For a controlled live validation, cap the number of actual searches:
 
 ```bash
+HASHPHERE_COMPUTE_BACKEND=python \
 HASHPHERE_ENABLE_LIVE_STRATUM=1 \
 HASHPHERE_ENABLE_LIVE_MINING=1 \
 uv run python -m hashphere stratum-mine \
@@ -331,6 +349,8 @@ jitter, multiprocessing, native backends, and GPU execution remain deferred.
 The actual generated or advanced extra nonce is never displayed or logged.
 Final output and JSONL analysis expose only safe aggregate variant, advance,
 cycle, network-time-roll, duplicate, connection-loss, and reconnect counts.
+They also report the stable backend name (`python`) without hardware or device
+identifiers.
 
 Final output reports sanitized aggregate counters and weighted hash rate,
 including reconnect attempts, successful reconnects, failed reconnect

@@ -25,6 +25,7 @@ The project follows the Python `src` layout to clearly separate the reusable pac
 
 Major packages:
 
+- `compute`
 - `config`
 - `core`
 - `crypto`
@@ -100,6 +101,36 @@ small injectable boundaries for deterministic tests.
 
 ---
 
+# Compute Backend Boundary
+
+`hashphere.compute` owns nonce-search execution contracts, immutable
+low-cardinality capabilities, deterministic built-in registration and
+selection, and translation of backend-local failures into controlled compute
+errors. A backend receives one validated `PreparedMiningWork` plus an exact
+half-open nonce interval and returns the existing immutable
+`NonceSearchResult`. It does not construct Bitcoin work or own Stratum,
+progression, recovery, submission, settings, signals, console output, event
+files, or cleanup.
+
+The built-in registry is created per invocation and contains the `python`
+backend. `auto` deterministically resolves to `python`; `cpu` is retained as a
+configuration compatibility alias. Selection is performed once before a live
+mining connection is opened. That same backend instance survives job changes,
+local work progression, and fresh Stratum sessions, while each prepared work
+value remains call-scoped and is not retained after search.
+
+`PythonSequentialBackend` delegates to the existing validated
+`search_nonce_range` function and is the correctness oracle for future
+implementations. It declares deterministic sequential order with no parallel
+search, device selection, or cooperative mid-range cancellation. Execution
+errors are terminal and never cause automatic fallback or Stratum reconnect.
+Future native, parallel CPU, and GPU implementations must preserve the same
+range and result semantics and remain unaware of network and logging-file
+ownership. The detailed contract is in
+[`docs/05-compute-backends.md`](docs/05-compute-backends.md).
+
+---
+
 # Chunked Mining Application Boundary
 
 `hashphere.mining.chunks` owns finite chunk-range calculation, invocation-wide
@@ -111,10 +142,10 @@ boundaries; it owns no socket, file, settings, or console output.
 
 The CLI owns live opt-ins, configuration, client and event-sink construction,
 initial authorized job acquisition, one invocation-scoped extra nonce, human-
-readable output, and deterministic cleanup. `StratumClient` retains ownership
-of notification queues and nonblocking polling. Coinbase, Merkle, header,
-target, and nonce-search primitives remain deterministic and unaware of
-orchestration.
+readable output, compute-backend selection, and deterministic cleanup.
+`StratumClient` retains ownership of notification queues and nonblocking
+polling. Coinbase, Merkle, header, target, and nonce-search primitives remain
+deterministic and unaware of orchestration.
 
 Observability passively records callbacks selected by CLI orchestration. It
 does not choose ranges, apply difficulty, replace work, submit shares, or
