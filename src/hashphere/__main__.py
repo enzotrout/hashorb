@@ -591,6 +591,11 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
     for command, count in sorted(command_counts.items()):
         print(f"  {command}: {count}")
 
+    if summary.compute_backend_counts:
+        print("\nCompute backends:")
+        for backend_name, count in summary.compute_backend_counts:
+            print(f"  {backend_name}: {count}")
+
     if summary.completion_outcome_counts:
         print("\nCompletion outcomes:")
         for outcome, count in summary.completion_outcome_counts:
@@ -1186,11 +1191,13 @@ def _select_live_mining_backend(
     """Return one configured backend or emit a controlled configuration failure."""
 
     try:
-        return _select_configured_compute_backend(settings)
+        backend = _select_configured_compute_backend(settings)
     except (ComputeBackendSelectionError, ComputeBackendValidationError) as exc:
         print("Compute backend configuration is invalid.", file=sys.stderr)
         _emit_command_failed(events, "configuration", _error_category(exc))
         return None
+    _emit_compute_backend_selected(events, backend)
+    return backend
 
 
 def _parse_log_file(arguments: Sequence[str]) -> str | None:
@@ -1639,6 +1646,25 @@ def _emit_stratum_authorized(
         fields={
             "endpoint": f"{settings.stratum_host}:{settings.stratum_port}",
             "extra_nonce_2_size": subscription.extra_nonce_2_size,
+        },
+    )
+
+
+def _emit_compute_backend_selected(
+    events: EventSink,
+    backend: MiningComputeBackend,
+) -> None:
+    """Emit stable, non-device-specific capabilities for one selected backend."""
+
+    capabilities = backend.capabilities
+    events.emit(
+        "compute_backend_selected",
+        fields={
+            "backend_name": capabilities.backend_name,
+            "backend_kind": capabilities.backend_kind,
+            "implementation": capabilities.implementation,
+            "supports_parallel_search": capabilities.supports_parallel_search,
+            "supports_cooperative_cancellation": (capabilities.supports_cooperative_cancellation),
         },
     )
 

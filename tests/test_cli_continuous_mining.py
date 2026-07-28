@@ -1023,6 +1023,7 @@ def test_logged_stop_is_ordered_sanitized_and_summary_compatible(
     records = read_events(path)
     assert [record["event"] for record in records] == [
         "command_started",
+        "compute_backend_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -1033,9 +1034,9 @@ def test_logged_stop_is_ordered_sanitized_and_summary_compatible(
         "command_completed",
     ]
     assert records[-1]["outcome"] == "stopped_by_user"
-    assert records[5]["start_nonce"] == 0
-    assert records[5]["stop_nonce"] == 2
-    assert records[6]["hashes_checked"] == 2
+    assert records[6]["start_nonce"] == 0
+    assert records[6]["stop_nonce"] == 2
+    assert records[7]["hashes_checked"] == 2
     summary = summarize_jsonl(path)
     assert summary.command_counts == (("stratum-mine", 1),)
     assert summary.completed_nonce_range_count == 1

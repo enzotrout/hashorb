@@ -697,6 +697,7 @@ def test_two_chunk_log_is_ordered_sanitized_and_summary_compatible(
     records = read_events(path)
     assert [record["event"] for record in records] == [
         "command_started",
+        "compute_backend_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -706,13 +707,13 @@ def test_two_chunk_log_is_ordered_sanitized_and_summary_compatible(
         "nonce_range_completed",
         "command_completed",
     ]
-    assert [(records[index]["start_nonce"], records[index]["stop_nonce"]) for index in (4, 6)] == [
+    assert [(records[index]["start_nonce"], records[index]["stop_nonce"]) for index in (5, 7)] == [
         (7, 9),
         (9, 10),
     ]
     assert records[-1]["outcome"] == "hash_budget_exhausted"
     assert {record["run_id"] for record in records} == {"chunked-run"}
-    assert [record["sequence"] for record in records] == list(range(1, 10))
+    assert [record["sequence"] for record in records] == list(range(1, 11))
     summary = summarize_jsonl(path)
     assert summary.completed_run_count == 1
     assert summary.completed_nonce_range_count == 2
@@ -753,6 +754,7 @@ def test_replacement_event_precedes_next_chunk_for_both_clean_values(
     events = [record["event"] for record in records]
     assert events == [
         "command_started",
+        "compute_backend_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -765,12 +767,12 @@ def test_replacement_event_precedes_next_chunk_for_both_clean_values(
         "nonce_range_completed",
         "command_completed",
     ]
-    replacement = records[8]
+    replacement = records[9]
     assert replacement["previous_job_id"] == "initial-job"
     assert replacement["new_job_id"] == "replacement"
     assert replacement["clean_jobs"] is False
     assert replacement["replacement_index"] == 1
-    assert summarize_jsonl(path).record_count == 12
+    assert summarize_jsonl(path).record_count == 13
 
 
 def test_multiple_jobs_emit_one_transition_to_final_selected_work(
@@ -844,6 +846,7 @@ def test_matched_log_orders_single_submission_and_completion(
     records = read_events(path)
     assert [record["event"] for record in records] == [
         "command_started",
+        "compute_backend_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -853,7 +856,7 @@ def test_matched_log_orders_single_submission_and_completion(
         "share_submission_completed",
         "command_completed",
     ]
-    assert records[7]["accepted"] is accepted
+    assert records[8]["accepted"] is accepted
     assert records[-1]["outcome"] == expected_outcome
     assert records[-1]["level"] == expected_level
     assert len(client.submit_calls) == 1

@@ -592,6 +592,7 @@ def test_exhausted_mining_jsonl_event_order_and_metrics(
     records = read_event_log(path)
     assert [record["event"] for record in records] == [
         "command_started",
+        "compute_backend_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -599,12 +600,27 @@ def test_exhausted_mining_jsonl_event_order_and_metrics(
         "nonce_range_completed",
         "command_completed",
     ]
-    assert records[4]["start_nonce"] == 7
-    assert records[4]["stop_nonce"] == 10
-    assert records[5]["hashes_checked"] == 3
-    assert records[5]["elapsed_ns"] == 1_000_000
-    assert records[5]["hashes_per_second"] == 3000.0
-    assert records[5]["match_found"] is False
+    backend_record = records[1]
+    assert backend_record == {
+        "schema_version": 1,
+        "timestamp": backend_record["timestamp"],
+        "run_id": backend_record["run_id"],
+        "sequence": 2,
+        "level": "INFO",
+        "event": "compute_backend_selected",
+        "command": "stratum-mine-once",
+        "backend_name": "python",
+        "backend_kind": "cpu",
+        "implementation": "python",
+        "supports_parallel_search": False,
+        "supports_cooperative_cancellation": False,
+    }
+    assert records[5]["start_nonce"] == 7
+    assert records[5]["stop_nonce"] == 10
+    assert records[6]["hashes_checked"] == 3
+    assert records[6]["elapsed_ns"] == 1_000_000
+    assert records[6]["hashes_per_second"] == 3000.0
+    assert records[6]["match_found"] is False
     assert records[-1]["outcome"] == "range_exhausted"
     assert all(not record["event"].startswith("share_") for record in records)
     assert client.submit_calls == []
@@ -672,6 +688,7 @@ def test_matched_mining_jsonl_event_order_and_submission_result(
     records = read_event_log(path)
     assert [record["event"] for record in records] == [
         "command_started",
+        "compute_backend_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -681,9 +698,9 @@ def test_matched_mining_jsonl_event_order_and_submission_result(
         "share_submission_completed",
         "command_completed",
     ]
-    assert records[6]["nonce"] == 305419896
-    assert records[6]["abbreviated_block_hash"] == "12345678…00000000"
-    assert records[7]["accepted"] is pool_result
+    assert records[7]["nonce"] == 305419896
+    assert records[7]["abbreviated_block_hash"] == "12345678…00000000"
+    assert records[8]["accepted"] is pool_result
     assert records[-1]["outcome"] == expected_outcome
     assert records[-1]["level"] == expected_level
     assert len(client.submit_calls) == 1
@@ -746,6 +763,7 @@ def test_mining_failure_writes_sanitized_command_failed_event(
     records = read_event_log(path)
     assert [record["event"] for record in records] == [
         "command_started",
+        "compute_backend_selected",
         "stratum_authorized",
         "command_failed",
     ]

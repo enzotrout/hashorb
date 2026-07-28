@@ -86,6 +86,7 @@ def test_empty_file_returns_immutable_zero_summary(tmp_path: Path) -> None:
         first_timestamp=None,
         last_timestamp=None,
         command_counts=(),
+        compute_backend_counts=(),
         completion_outcome_counts=(),
         difficulty_event_count=0,
         mining_job_event_count=0,
@@ -297,6 +298,56 @@ def test_mining_events_are_aggregated_with_weighted_rate(tmp_path: Path) -> None
     assert summary.share_submission_count == 2
     assert summary.accepted_share_count == 1
     assert summary.rejected_share_count == 1
+
+
+def test_backend_selections_are_aggregated_without_affecting_weighted_rate(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "backends.jsonl"
+    write_records(
+        path,
+        [
+            event_record("python-a", 1, "command_started", command="stratum-mine"),
+            event_record(
+                "python-a",
+                2,
+                "compute_backend_selected",
+                command="stratum-mine",
+                backend_name="python",
+                backend_kind="cpu",
+                implementation="python",
+                supports_parallel_search=False,
+                supports_cooperative_cancellation=False,
+            ),
+            event_record(
+                "python-a",
+                3,
+                "nonce_range_completed",
+                command="stratum-mine",
+                hashes_checked=5,
+                elapsed_ns=10,
+                match_found=False,
+                hashes_per_second=500_000_000.0,
+            ),
+            event_record("future", 1, "command_started", command="stratum-mine"),
+            event_record(
+                "future",
+                2,
+                "compute_backend_selected",
+                command="stratum-mine",
+                backend_name="future_native",
+                backend_kind="cpu",
+                implementation="native",
+                supports_parallel_search=True,
+                supports_cooperative_cancellation=True,
+            ),
+        ],
+    )
+
+    summary = summarize_jsonl(path)
+
+    assert summary.compute_backend_counts == (("future_native", 1), ("python", 1))
+    assert summary.weighted_hashes_per_second == 500_000_000.0
 
 
 def test_progression_events_are_aggregated_without_affecting_weighted_rate(
@@ -620,6 +671,16 @@ def test_invalid_utf8_is_rejected(tmp_path: Path) -> None:
     [
         ("command_completed", {"outcome": " "}),
         ("command_failed", {"stage": "x", "error_category": 1}),
+        (
+            "compute_backend_selected",
+            {
+                "backend_name": "python",
+                "backend_kind": "cpu",
+                "implementation": "python",
+                "supports_parallel_search": 0,
+                "supports_cooperative_cancellation": False,
+            },
+        ),
         ("difficulty_received", {"difficulty": True}),
         ("difficulty_received", {"difficulty": 0}),
         ("mining_job_received", {"job_id": ""}),
@@ -840,6 +901,17 @@ def test_cli_output_is_stable_weighted_and_sanitized(
             event_record(
                 "mine",
                 2,
+                "compute_backend_selected",
+                command="stratum-mine-once",
+                backend_name="python",
+                backend_kind="cpu",
+                implementation="python",
+                supports_parallel_search=False,
+                supports_cooperative_cancellation=False,
+            ),
+            event_record(
+                "mine",
+                3,
                 "mining_job_received",
                 command="stratum-mine-once",
                 job_id=sensitive_values[0],
@@ -848,7 +920,7 @@ def test_cli_output_is_stable_weighted_and_sanitized(
             ),
             event_record(
                 "mine",
-                3,
+                4,
                 "nonce_range_completed",
                 command="stratum-mine-once",
                 hashes_checked=100,
@@ -860,14 +932,14 @@ def test_cli_output_is_stable_weighted_and_sanitized(
             ),
             event_record(
                 "mine",
-                4,
+                5,
                 "share_submission_completed",
                 command="stratum-mine-once",
                 accepted=False,
             ),
             event_record(
                 "mine",
-                5,
+                6,
                 "command_completed",
                 command="stratum-mine-once",
                 outcome="share_rejected",
@@ -894,6 +966,7 @@ def test_cli_output_is_stable_weighted_and_sanitized(
     assert "  stratum-observe: 1" in captured.out
     assert "  stratum-mine-once: 1" in captured.out
     assert "Completion outcomes:\n  share_rejected: 1" in captured.out
+    assert "Compute backends:\n  python: 1" in captured.out
     assert "Weighted hashes per second: 500000000.00" in captured.out
     assert "Failures:\n  command_failed events: 1\n  notification/ProtocolError: 1" in (
         captured.out
