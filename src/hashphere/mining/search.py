@@ -113,19 +113,21 @@ class NonceSearchResult:
         if self.elapsed_ns < 0:
             raise NonceSearchValidationError("elapsed_ns must be nonnegative")
 
+        range_size = self.stop_nonce - self.start_nonce
         if self.match is None:
-            expected_hashes = self.stop_nonce - self.start_nonce
+            if self.hashes_checked != range_size:
+                raise NonceSearchValidationError(
+                    "an exhausted result must count every nonce in the range"
+                )
         else:
             if not isinstance(self.match, NonceSearchMatch):
                 raise NonceSearchValidationError("match must be a NonceSearchMatch or None")
             if not self.start_nonce <= self.match.nonce < self.stop_nonce:
                 raise NonceSearchValidationError("match nonce must be inside the searched range")
-            expected_hashes = self.match.nonce - self.start_nonce + 1
-
-        if self.hashes_checked != expected_hashes:
-            raise NonceSearchValidationError(
-                "hashes_checked must equal the number of searched nonces"
-            )
+            if not 1 <= self.hashes_checked <= range_size:
+                raise NonceSearchValidationError(
+                    "a matched result must count between one hash and the range size"
+                )
 
     @property
     def found(self) -> bool:

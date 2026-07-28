@@ -109,3 +109,19 @@ class MiningComputeBackend(Protocol):
         stop_nonce: int,
     ) -> NonceSearchResult:
         """Search exactly the assigned half-open nonce range."""
+
+
+def close_compute_backend(backend: MiningComputeBackend) -> None:
+    """Close optional backend-owned resources; sequential backends are no-ops."""
+
+    if not isinstance(backend, MiningComputeBackend):
+        raise ComputeBackendValidationError("backend must implement MiningComputeBackend")
+    close = getattr(backend, "close", None)
+    if close is None:
+        return
+    if not callable(close):
+        raise ComputeBackendValidationError("backend close boundary must be callable")
+    try:
+        close()
+    except Exception as exc:
+        raise ComputeBackendExecutionError("compute backend cleanup failed") from exc

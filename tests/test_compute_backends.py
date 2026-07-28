@@ -17,6 +17,7 @@ from hashphere.compute import (
     NativeSequentialBackend,
     PythonSequentialBackend,
     builtin_compute_backend_registry,
+    close_compute_backend,
     list_compute_backends,
     select_compute_backend,
 )
@@ -364,3 +365,35 @@ def test_registry_rejects_non_backend_and_non_registry_inputs() -> None:
         select_compute_backend("python", object())  # type: ignore[arg-type]
     with pytest.raises(ComputeBackendValidationError):
         list_compute_backends(object())  # type: ignore[arg-type]
+
+
+def test_close_compute_backend_is_harmless_for_sequential_backends() -> None:
+    close_compute_backend(PythonSequentialBackend())
+    close_compute_backend(NativeSequentialBackend(None))
+
+
+def test_close_compute_backend_closes_resources_once_and_sanitizes_failure() -> None:
+    close_calls: list[None] = []
+
+    class ClosableBackend(FakeBackend):
+        def close(self) -> None:
+            close_calls.append(None)
+
+    backend = ClosableBackend(capabilities())
+
+    close_compute_backend(backend)
+
+    assert close_calls == [None]
+
+    class FailingCloseBackend(FakeBackend):
+        def close(self) -> None:
+            raise RuntimeError("private cleanup detail")
+
+    with pytest.raises(ComputeBackendExecutionError) as raised:
+        close_compute_backend(FailingCloseBackend(capabilities()))
+    assert "private cleanup detail" not in str(raised.value)
+
+
+def test_close_compute_backend_rejects_invalid_boundary() -> None:
+    with pytest.raises(ComputeBackendValidationError):
+        close_compute_backend(object())  # type: ignore[arg-type]

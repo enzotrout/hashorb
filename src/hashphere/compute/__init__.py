@@ -7,12 +7,14 @@ from hashphere.compute.backend import (
     ComputeBackendSelectionError,
     ComputeBackendValidationError,
     MiningComputeBackend,
+    close_compute_backend,
 )
 from hashphere.compute.benchmark import deterministic_benchmark_work
 from hashphere.compute.native import NativeSequentialBackend
 from hashphere.compute.parallel import (
     DEFAULT_COMPUTE_WORKERS,
     MAX_COMPUTE_WORKERS,
+    NativeParallelBackend,
     NonceRangeAssignment,
     partition_nonce_range,
 )
@@ -34,10 +36,12 @@ __all__ = [
     "DEFAULT_COMPUTE_WORKERS",
     "MAX_COMPUTE_WORKERS",
     "MiningComputeBackend",
+    "NativeParallelBackend",
     "NativeSequentialBackend",
     "NonceRangeAssignment",
     "PythonSequentialBackend",
     "builtin_compute_backend_registry",
+    "close_compute_backend",
     "deterministic_benchmark_work",
     "list_compute_backends",
     "partition_nonce_range",

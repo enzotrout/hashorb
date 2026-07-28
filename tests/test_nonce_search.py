@@ -600,7 +600,7 @@ def test_direct_match_must_meet_at_least_one_target() -> None:
 
 
 def test_direct_exhausted_result_requires_full_range_count() -> None:
-    with pytest.raises(NonceSearchValidationError, match="number of searched nonces"):
+    with pytest.raises(NonceSearchValidationError, match="count every nonce"):
         NonceSearchResult(
             start_nonce=2,
             stop_nonce=5,
@@ -610,11 +610,22 @@ def test_direct_exhausted_result_requires_full_range_count() -> None:
         )
 
 
-def test_direct_matched_result_requires_count_through_match() -> None:
+@pytest.mark.parametrize("hashes_checked", [0, 4])
+def test_direct_matched_result_requires_actual_count_inside_parent_range(
+    hashes_checked: int,
+) -> None:
     match = NonceSearchMatch(3, bytes(32), True, False)
 
-    with pytest.raises(NonceSearchValidationError, match="number of searched nonces"):
-        NonceSearchResult(2, 5, 1, 0, match)
+    with pytest.raises(NonceSearchValidationError, match="between one hash and the range size"):
+        NonceSearchResult(2, 5, hashes_checked, 0, match)
+
+
+def test_direct_matched_result_accepts_parallel_actual_hash_count() -> None:
+    match = NonceSearchMatch(3, bytes(32), True, False)
+
+    result = NonceSearchResult(2, 5, 3, 0, match)
+
+    assert result.hashes_checked == 3
 
 
 def test_direct_result_rejects_match_outside_range() -> None:
