@@ -10,6 +10,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from types import FrameType
 
+from hashphere.compute import (
+    ComputeBackendError,
+    ComputeBackendSelectionError,
+    ComputeBackendValidationError,
+    MiningComputeBackend,
+    builtin_compute_backend_registry,
+    select_compute_backend,
+)
 from hashphere.config import Settings
 from hashphere.mining import (
     MAX_RECONNECT_ATTEMPTS,
@@ -756,6 +764,9 @@ def _run_stratum_mine_once(
     if settings is None:
         _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
         return 2
+    backend = _select_live_mining_backend(settings, events)
+    if backend is None:
+        return 2
 
     client: StratumClient | None = None
     outcome: _MiningOutcome | None = None
@@ -771,6 +782,7 @@ def _run_stratum_mine_once(
             start_nonce,
             stop_nonce,
             events,
+            backend,
         )
     except StratumAuthorizationError as exc:
         pending_failure = exc
@@ -792,6 +804,7 @@ def _run_stratum_mine_once(
         BlockHeaderError,
         TargetError,
         NonceSearchError,
+        ComputeBackendError,
         TypeError,
         ValueError,
     ) as exc:
@@ -835,7 +848,13 @@ def _run_stratum_mine_once(
         level=completion_level,
         fields={"outcome": completion_outcome},
     )
-    _print_mining_outcome(settings, start_nonce, stop_nonce, outcome)
+    _print_mining_outcome(
+        settings,
+        backend.capabilities.backend_name,
+        start_nonce,
+        stop_nonce,
+        outcome,
+    )
     return 0
 
 
@@ -848,6 +867,9 @@ def _run_stratum_mine_chunks(
     settings = _load_live_mining_settings()
     if settings is None:
         _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
+        return 2
+    backend = _select_live_mining_backend(settings, events)
+    if backend is None:
         return 2
 
     client: StratumClient | None = None
@@ -876,7 +898,7 @@ def _run_stratum_mine_chunks(
             ),
             observer=observer,
             prepare_work=prepare_mining_work,
-            search_range=search_nonce_range,
+            search_range=backend.search_nonce_range,
         )
     except StratumAuthorizationError as exc:
         pending_failure = exc
@@ -898,6 +920,7 @@ def _run_stratum_mine_chunks(
         BlockHeaderError,
         TargetError,
         NonceSearchError,
+        ComputeBackendError,
         ChunkedMiningError,
         TypeError,
         ValueError,
@@ -942,7 +965,12 @@ def _run_stratum_mine_chunks(
         level=completion_level,
         fields={"outcome": completion_outcome},
     )
-    _print_chunked_mining_outcome(settings, plan, result)
+    _print_chunked_mining_outcome(
+        settings,
+        backend.capabilities.backend_name,
+        plan,
+        result,
+    )
     return 0
 
 
@@ -956,6 +984,9 @@ def _run_stratum_mine(
     settings = _load_live_mining_settings()
     if settings is None:
         _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
+        return 2
+    backend = _select_live_mining_backend(settings, events)
+    if backend is None:
         return 2
 
     controller = StopController()
@@ -999,7 +1030,7 @@ def _run_stratum_mine(
                 ),
                 observer=observer,
                 prepare_work=prepare_mining_work,
-                search_range=search_nonce_range,
+                search_range=backend.search_nonce_range,
                 recover_session=recovery.recover_session,
                 recovery_statistics=lambda: recovery.statistics,
             )
@@ -1036,6 +1067,7 @@ def _run_stratum_mine(
         BlockHeaderError,
         TargetError,
         NonceSearchError,
+        ComputeBackendError,
         MiningWorkProgressionError,
         SessionRecoveryError,
         ContinuousMiningError,
@@ -1095,6 +1127,7 @@ def _run_stratum_mine(
     )
     _print_continuous_mining_outcome(
         settings,
+        backend.capabilities.backend_name,
         subscription,
         plan,
         reconnect_policy,
@@ -1137,6 +1170,27 @@ def _load_live_mining_settings() -> Settings | None:
         )
         return None
     return settings
+
+
+def _select_configured_compute_backend(settings: Settings) -> MiningComputeBackend:
+    """Select one invocation-local backend without probing hardware."""
+
+    registry = builtin_compute_backend_registry(python_searcher=search_nonce_range)
+    return select_compute_backend(settings.compute_backend, registry)
+
+
+def _select_live_mining_backend(
+    settings: Settings,
+    events: EventSink,
+) -> MiningComputeBackend | None:
+    """Return one configured backend or emit a controlled configuration failure."""
+
+    try:
+        return _select_configured_compute_backend(settings)
+    except (ComputeBackendSelectionError, ComputeBackendValidationError) as exc:
+        print("Compute backend configuration is invalid.", file=sys.stderr)
+        _emit_command_failed(events, "configuration", _error_category(exc))
+        return None
 
 
 def _parse_log_file(arguments: Sequence[str]) -> str | None:
@@ -1444,6 +1498,7 @@ def _mine_one_range(
     start_nonce: int,
     stop_nonce: int,
     events: EventSink,
+    backend: MiningComputeBackend,
 ) -> _MiningOutcome:
     """Assemble one current job, search once, and conditionally submit once."""
 
@@ -1459,7 +1514,7 @@ def _mine_one_range(
             "stop_nonce": stop_nonce,
         },
     )
-    result = search_nonce_range(work, start_nonce, stop_nonce)
+    result = backend.search_nonce_range(work, start_nonce, stop_nonce)
     events.emit(
         "nonce_range_completed",
         fields={
@@ -1657,6 +1712,9 @@ def _error_category(error: BaseException) -> str:
         (BlockHeaderError, "BlockHeaderError"),
         (TargetError, "TargetError"),
         (NonceSearchError, "NonceSearchError"),
+        (ComputeBackendSelectionError, "ComputeBackendSelectionError"),
+        (ComputeBackendValidationError, "ComputeBackendValidationError"),
+        (ComputeBackendError, "ComputeBackendError"),
         (MiningWorkProgressionError, "MiningWorkProgressionError"),
         (SessionRecoveryExhaustedError, "SessionRecoveryExhaustedError"),
         (SessionRecoveryError, "SessionRecoveryError"),
@@ -1721,6 +1779,7 @@ def _print_observation_success(
 
 def _print_mining_outcome(
     settings: Settings,
+    backend_name: str,
     start_nonce: int,
     stop_nonce: int,
     outcome: _MiningOutcome,
@@ -1730,6 +1789,7 @@ def _print_mining_outcome(
     print("Bounded Stratum mining completed.")
     print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
     print(f"Username: {_mask_username(settings.stratum_username)}")
+    print(f"Compute backend: {backend_name}")
     print(f"Job ID: {outcome.job.job_id}")
     print(f"Difficulty: {outcome.job.difficulty}")
     print(f"Network bits: {outcome.job.network_bits}")
@@ -1759,6 +1819,7 @@ def _print_mining_outcome(
 
 def _print_chunked_mining_outcome(
     settings: Settings,
+    backend_name: str,
     plan: ChunkedMiningPlan,
     result: ChunkedMiningResult,
 ) -> None:
@@ -1767,6 +1828,7 @@ def _print_chunked_mining_outcome(
     print("Bounded chunked Stratum mining completed.")
     print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
     print(f"Username: {_mask_username(settings.stratum_username)}")
+    print(f"Compute backend: {backend_name}")
     print(f"Initial job ID: {result.initial_job.job_id}")
     print(f"Final job ID: {result.final_job.job_id}")
     print(f"Final difficulty: {result.final_job.difficulty}")
@@ -1803,6 +1865,7 @@ def _print_chunked_mining_outcome(
 
 def _print_continuous_mining_outcome(
     settings: Settings,
+    backend_name: str,
     subscription: SubscribeResult | None,
     plan: ContinuousMiningPlan,
     reconnect_policy: ReconnectPolicy,
@@ -1815,6 +1878,7 @@ def _print_continuous_mining_outcome(
     print("Continuous Stratum mining completed.")
     print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
     print(f"Username: {_mask_username(settings.stratum_username)}")
+    print(f"Compute backend: {backend_name}")
     if result is None:
         print("Final difficulty: unavailable")
         print("Network bits: unavailable")

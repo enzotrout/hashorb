@@ -14,6 +14,7 @@ from types import FrameType
 import pytest
 
 import hashphere.__main__ as cli_module
+from hashphere.compute import ComputeBackendExecutionError
 from hashphere.config import Settings
 from hashphere.mining import (
     ContinuousMiningPlan,
@@ -166,6 +167,7 @@ class SearchHarness:
     generated_sizes: list[int] = field(default_factory=list)
     reconnect_delays: list[float] = field(default_factory=list)
     stop_during_reconnect_wait: bool = False
+    backend_selection_calls: int = 0
     prepare_calls: list[tuple[MiningJob, str]] = field(default_factory=list)
     search_calls: list[tuple[PreparedMiningWork, int, int]] = field(default_factory=list)
 
@@ -294,6 +296,13 @@ def install_fakes(
     monkeypatch.setattr(cli_module, "_generate_extra_nonce_2", generate)
     monkeypatch.setattr(cli_module, "prepare_mining_work", prepare)
     monkeypatch.setattr(cli_module, "search_nonce_range", search_range)
+    original_selector = cli_module._select_configured_compute_backend
+
+    def select_backend(received_settings: Settings) -> object:
+        configured.backend_selection_calls += 1
+        return original_selector(received_settings)
+
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select_backend)
 
     def wait_without_sleep(delay_seconds: float, stop_token: object) -> bool:
         del stop_token
@@ -480,6 +489,7 @@ def test_three_chunk_limit_prints_sanitized_aggregate_and_closes(
         (9, 11),
         (11, 13),
     ]
+    assert harness.backend_selection_calls == 1
     assert client.poll_timeouts == [0.25, 0.25, 0.0, 0.0, 0.0]
     assert harness.generated_sizes == [4]
     assert len(harness.prepare_calls) == 1
@@ -489,6 +499,7 @@ def test_three_chunk_limit_prints_sanitized_aggregate_and_closes(
     assert len(signals.calls) == len(signals.previous) * 2
     output = capsys.readouterr().out
     assert "Maximum chunks: 3" in output
+    assert "Compute backend: python" in output
     assert "Chunks completed: 3" in output
     assert "Work variants used: 1" in output
     assert "Extra nonce 2 advances: 0" in output
@@ -713,6 +724,7 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
         ("new-session", 0),
     ]
     assert harness.generated_sizes == [4, 2]
+    assert harness.backend_selection_calls == 1
     assert failed.close_calls == 1
     assert recovered.close_calls == 1
     output = capsys.readouterr().out
@@ -856,6 +868,30 @@ def test_submission_connection_failure_is_terminal_without_reconnect(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "private uncertain submission" not in captured.err
+
+
+def test_compute_backend_failure_is_terminal_without_reconnect_or_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient()
+    private_detail = "private backend execution detail"
+    harness = SearchHarness(
+        search_failure=ComputeBackendExecutionError(private_detail),
+    )
+    harness, _ = install_fakes(monkeypatch, client, harness)
+
+    assert cli_module.main(arguments(max_chunks=None)) == 1
+
+    assert harness.backend_selection_calls == 1
+    assert len(harness.search_calls) == 1
+    assert harness.reconnect_delays == []
+    assert client.close_calls == 1
+    assert client.handshake_calls == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Continuous Stratum mining failed.\n"
+    assert private_detail not in captured.err
 
 
 @pytest.mark.parametrize(

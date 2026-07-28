@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
 
 import hashphere.__main__ as cli_module
+from hashphere.compute import ComputeBackendSelectionError
 from hashphere.config import Settings
 from hashphere.mining import (
     CoinbaseError,
@@ -137,6 +138,7 @@ class MiningHarness:
     prepare_failure: BaseException | None = None
     search_failure: BaseException | None = None
     generated_extra_nonce_2: str = "abababab"
+    backend_selection_calls: int = 0
     generated_sizes: list[int] = field(default_factory=list)
     prepare_calls: list[tuple[MiningJob, str]] = field(default_factory=list)
     search_calls: list[tuple[PreparedMiningWork, int, int]] = field(default_factory=list)
@@ -210,6 +212,13 @@ def install_mining_fakes(
     monkeypatch.setattr(cli_module, "_generate_extra_nonce_2", generate_extra_nonce_2)
     monkeypatch.setattr(cli_module, "prepare_mining_work", prepare)
     monkeypatch.setattr(cli_module, "search_nonce_range", search)
+    original_selector = cli_module._select_configured_compute_backend
+
+    def select_backend(received_settings: Settings) -> object:
+        configured.backend_selection_calls += 1
+        return original_selector(received_settings)
+
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select_backend)
     monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
     monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
     return configured
@@ -346,6 +355,70 @@ def test_live_stratum_opt_in_is_required(
     assert client.handshake_calls == 0
 
 
+@pytest.mark.parametrize("selector", ["auto", "python", "cpu"])
+def test_configured_backend_selectors_resolve_to_python(selector: str) -> None:
+    settings = replace(make_settings(), compute_backend=selector)
+
+    backend = cli_module._select_configured_compute_backend(settings)
+
+    assert backend.capabilities.backend_name == "python"
+    assert settings.compute_profile == "lite"
+
+
+def test_unknown_backend_fails_before_client_construction_without_echoing_selector(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_selector = "private-looking-selector"
+    settings = replace(make_settings(), compute_backend=private_selector)
+    client_calls = 0
+
+    def forbidden_client(*args: object, **kwargs: object) -> object:
+        nonlocal client_calls
+        client_calls += 1
+        raise AssertionError("client must not be constructed")
+
+    monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(lambda cls: settings))
+    monkeypatch.setattr(cli_module, "StratumClient", forbidden_client)
+    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+
+    assert cli_module.main(mining_arguments()) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Compute backend configuration is invalid.\n"
+    assert private_selector not in captured.err
+    assert client_calls == 0
+
+
+def test_unavailable_backend_fails_before_client_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = replace(make_settings(), compute_backend="native")
+    client_calls = 0
+
+    def unavailable(received_settings: Settings) -> object:
+        assert received_settings is settings
+        raise ComputeBackendSelectionError("configured compute backend is unavailable")
+
+    def forbidden_client(*args: object, **kwargs: object) -> object:
+        nonlocal client_calls
+        client_calls += 1
+        raise AssertionError("client must not be constructed")
+
+    monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(lambda cls: settings))
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", unavailable)
+    monkeypatch.setattr(cli_module, "StratumClient", forbidden_client)
+    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+
+    assert cli_module.main(mining_arguments()) == 2
+    assert capsys.readouterr().err == "Compute backend configuration is invalid.\n"
+    assert client_calls == 0
+
+
 @pytest.mark.parametrize("value", [None, "", "true", "01", " 1"])
 def test_live_mining_opt_in_must_equal_exactly_one(
     monkeypatch: pytest.MonkeyPatch,
@@ -366,6 +439,7 @@ def test_live_mining_opt_in_must_equal_exactly_one(
 
 def test_exact_range_reaches_one_prepare_and_one_search(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     client = FakeClient([difficulty_notification(), mining_notification()])
     harness = install_mining_fakes(monkeypatch, client)
@@ -374,9 +448,11 @@ def test_exact_range_reaches_one_prepare_and_one_search(
 
     assert len(harness.prepare_calls) == 1
     assert len(harness.search_calls) == 1
+    assert harness.backend_selection_calls == 1
     assert harness.search_calls[0][1:] == (9, 14)
     assert client.submit_calls == []
     assert client.close_calls == 1
+    assert "Compute backend: python" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

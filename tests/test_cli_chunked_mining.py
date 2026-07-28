@@ -157,6 +157,7 @@ class Harness:
     prepare_failure: BaseException | None = None
     search_failure: BaseException | None = None
     generated_extra_nonce_2: str = "abababab"
+    backend_selection_calls: int = 0
     generated_sizes: list[int] = field(default_factory=list)
     prepare_calls: list[tuple[MiningJob, str]] = field(default_factory=list)
     search_calls: list[tuple[PreparedMiningWork, int, int]] = field(default_factory=list)
@@ -233,6 +234,13 @@ def install_fakes(
     monkeypatch.setattr(cli_module, "_generate_extra_nonce_2", generate)
     monkeypatch.setattr(cli_module, "prepare_mining_work", prepare)
     monkeypatch.setattr(cli_module, "search_nonce_range", search)
+    original_selector = cli_module._select_configured_compute_backend
+
+    def select_backend(received_settings: Settings) -> object:
+        configured.backend_selection_calls += 1
+        return original_selector(received_settings)
+
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select_backend)
     monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
     monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
 
@@ -463,6 +471,7 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
         (9, 11),
         (11, 12),
     ]
+    assert harness.backend_selection_calls == 1
     assert client.poll_timeouts == [0.0, 0.0]
     assert harness.generated_sizes == [4]
     assert len(harness.prepare_calls) == 1
@@ -470,6 +479,7 @@ def test_chunks_are_exact_nonblocking_and_final_chunk_is_shortened(
     assert client.close_calls == 1
     output = capsys.readouterr().out
     assert "Chunk size: 2" in output
+    assert "Compute backend: python" in output
     assert "Maximum hash budget: 5" in output
     assert "Chunks completed: 3" in output
     assert "Jobs used: 1" in output

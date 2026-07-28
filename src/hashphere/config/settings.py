@@ -74,18 +74,12 @@ class Settings:
         try:
             stratum_port = int(port_text)
         except ValueError as exc:
-            raise ValueError(
-                "HASHPHERE_STRATUM_PORT must be an integer"
-            ) from exc
+            raise ValueError("HASHPHERE_STRATUM_PORT must be an integer") from exc
 
         if not 1 <= stratum_port <= 65535:
-            raise ValueError(
-                "HASHPHERE_STRATUM_PORT must be between 1 and 65535"
-            )
+            raise ValueError("HASHPHERE_STRATUM_PORT must be between 1 and 65535")
 
-        worker_name = resolve_worker_name(
-            os.getenv("HASHPHERE_WORKER_NAME", DEFAULT_WORKER_NAME)
-        )
+        worker_name = resolve_worker_name(os.getenv("HASHPHERE_WORKER_NAME", DEFAULT_WORKER_NAME))
 
         return cls(
             stratum_host=os.getenv(
@@ -101,10 +95,14 @@ class Settings:
             ),
             compute_backend=os.getenv(
                 "HASHPHERE_COMPUTE_BACKEND",
-                "cpu",
-            ).strip().lower(),
+                "auto",
+            )
+            .strip()
+            .lower(),
             compute_profile=os.getenv(
                 "HASHPHERE_COMPUTE_PROFILE",
                 "lite",
-            ).strip().lower(),
+            )
+            .strip()
+            .lower(),
         )

@@ -78,11 +78,9 @@ def test_settings_load_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.stratum_port == 3333
     assert settings.bitcoin_address == "bc1qexampleaddress"
     assert settings.worker_name == "hashphere-test"
-    assert settings.stratum_username == (
-        "bc1qexampleaddress.hashphere-test"
-    )
+    assert settings.stratum_username == ("bc1qexampleaddress.hashphere-test")
     assert settings.stratum_password == "x"
-    assert settings.compute_backend == "cpu"
+    assert settings.compute_backend == "auto"
     assert settings.compute_profile == "lite"
 
 
