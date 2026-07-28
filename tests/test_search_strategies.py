@@ -6,6 +6,7 @@ import pytest
 
 from hashphere.mining import (
     MiningSearchStrategy,
+    OrbitingBitSearchStrategy,
     SearchAssignment,
     SearchStrategyCapabilities,
     SearchStrategyCompatibilityError,
@@ -184,7 +185,11 @@ def test_builtin_registry_is_deterministic_and_isolated() -> None:
 
     assert first is not second
     assert first.list_capabilities() == second.list_capabilities()
-    assert tuple(item.strategy_name for item in list_search_strategies(first)) == ("sequential",)
+    assert tuple(item.strategy_name for item in list_search_strategies(first)) == (
+        "orbiting-bit",
+        "sequential",
+    )
+    assert isinstance(first.select("orbiting-bit"), OrbitingBitSearchStrategy)
     assert isinstance(first.select("sequential"), SequentialSearchStrategy)
     assert isinstance(select_search_strategy("auto", first), SequentialSearchStrategy)
 

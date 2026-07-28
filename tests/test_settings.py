@@ -184,7 +184,10 @@ def test_compute_workers_reject_malformed_or_out_of_range_values(
         Settings.from_env()
 
 
-@pytest.mark.parametrize("strategy", ["sequential", "auto", "future-strategy"])
+@pytest.mark.parametrize(
+    "strategy",
+    ["sequential", "orbiting-bit", "auto", "future-strategy"],
+)
 def test_search_strategy_accepts_exact_identifiers(
     monkeypatch: pytest.MonkeyPatch,
     strategy: str,

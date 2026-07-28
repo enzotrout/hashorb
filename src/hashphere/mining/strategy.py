@@ -13,6 +13,51 @@ _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]*$")
 _CATEGORY = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 
 
+def reverse_bits(value: int, bit_width: int) -> int:
+    """Reverse exactly ``bit_width`` low bits of a bounded integer."""
+
+    parsed_value = _validate_nonnegative_integer(value, "value")
+    parsed_width = _validate_nonnegative_integer(bit_width, "bit_width")
+    if parsed_width > 32:
+        raise SearchStrategyValidationError("bit_width must not exceed 32")
+    if parsed_value >= 1 << parsed_width:
+        raise SearchStrategyValidationError("value must fit inside bit_width bits")
+    reversed_value = 0
+    remaining = parsed_value
+    for _ in range(parsed_width):
+        reversed_value = (reversed_value << 1) | (remaining & 1)
+        remaining >>= 1
+    return reversed_value
+
+
+def next_power_of_two(value: int) -> int:
+    """Return the smallest power of two greater than or equal to ``value``."""
+
+    parsed = _validate_positive_integer(value, "value")
+    if parsed > _NONCE_LIMIT:
+        raise SearchStrategyValidationError("value must not exceed 2**32")
+    return 1 << (parsed - 1).bit_length()
+
+
+def calculate_orbiting_range_count(
+    start_nonce: int,
+    chunk_size: int,
+    *,
+    nonce_limit: int = _NONCE_LIMIT,
+) -> int:
+    """Return the number of parent ranges in one orbiting cursor domain."""
+
+    _validate_nonce(start_nonce, "start_nonce")
+    parsed_chunk_size = _validate_positive_integer(chunk_size, "chunk_size")
+    if parsed_chunk_size > _NONCE_LIMIT:
+        raise SearchStrategyValidationError("chunk_size must not exceed 2**32")
+    parsed_limit = _validate_stop_nonce(nonce_limit, "nonce_limit")
+    if start_nonce >= parsed_limit:
+        raise SearchStrategyValidationError("nonce_limit must be greater than start_nonce")
+    remaining = parsed_limit - start_nonce
+    return (remaining + parsed_chunk_size - 1) // parsed_chunk_size
+
+
 class SearchStrategyError(RuntimeError):
     """Base error for search-strategy selection and execution."""
 
@@ -176,6 +221,19 @@ _SEQUENTIAL_CAPABILITIES = SearchStrategyCapabilities(
     available=True,
 )
 
+_ORBITING_BIT_CAPABILITIES = SearchStrategyCapabilities(
+    strategy_name="orbiting-bit",
+    display_name="Orbiting-bit parent-range permutation",
+    implementation="bit-reversal",
+    deterministic=True,
+    contiguous_parent_ranges=False,
+    exhaustive=True,
+    may_repeat_nonce=False,
+    supports_parallel_backends=True,
+    experimental=True,
+    available=True,
+)
+
 
 class SequentialSearchCursor:
     """Narrow mutable cursor yielding contiguous ascending parent ranges."""
@@ -293,6 +351,199 @@ class SequentialSearchStrategy:
         )
 
 
+class OrbitingBitSearchCursor:
+    """Bounded cursor emitting contiguous parent ranges in bit-reversal order."""
+
+    __slots__ = (
+        "_assignment_index",
+        "_bit_width",
+        "_chunk_size",
+        "_emitted_count",
+        "_nonce_limit",
+        "_permutation_counter",
+        "_permutation_size",
+        "_range_count",
+        "_start_nonce",
+    )
+
+    def __init__(
+        self,
+        start_nonce: int,
+        chunk_size: int,
+        *,
+        nonce_limit: int = _NONCE_LIMIT,
+    ) -> None:
+        """Create one finite bit-reversal permutation domain."""
+
+        range_count = calculate_orbiting_range_count(
+            start_nonce,
+            chunk_size,
+            nonce_limit=nonce_limit,
+        )
+        permutation_size = next_power_of_two(range_count)
+        self._start_nonce = start_nonce
+        self._chunk_size = chunk_size
+        self._nonce_limit = nonce_limit
+        self._range_count = range_count
+        self._permutation_size = permutation_size
+        self._bit_width = permutation_size.bit_length() - 1
+        self._permutation_counter = 0
+        self._emitted_count = 0
+        self._assignment_index = 0
+
+    @property
+    def start_nonce(self) -> int:
+        """Return the configured inclusive domain start."""
+
+        return self._start_nonce
+
+    @property
+    def chunk_size(self) -> int:
+        """Return the maximum size of one emitted parent range."""
+
+        return self._chunk_size
+
+    @property
+    def nonce_limit(self) -> int:
+        """Return the exclusive domain limit."""
+
+        return self._nonce_limit
+
+    @property
+    def range_count(self) -> int:
+        """Return the exact number of valid physical parent ranges."""
+
+        return self._range_count
+
+    @property
+    def permutation_size(self) -> int:
+        """Return the enclosing power-of-two permutation size."""
+
+        return self._permutation_size
+
+    @property
+    def bit_width(self) -> int:
+        """Return the fixed width used for counter bit reversal."""
+
+        return self._bit_width
+
+    @property
+    def permutation_counter(self) -> int:
+        """Return the next internal permutation counter."""
+
+        return self._permutation_counter
+
+    @property
+    def emitted_count(self) -> int:
+        """Return the number of actual search assignments emitted."""
+
+        return self._emitted_count
+
+    @property
+    def assignment_index(self) -> int:
+        """Return the next zero-based emission sequence index."""
+
+        return self._assignment_index
+
+    @property
+    def exhausted(self) -> bool:
+        """Return whether the complete permutation domain was processed."""
+
+        return self._permutation_counter == self._permutation_size
+
+    def next_assignment(self) -> SearchAssignment | None:
+        """Return the next valid physical range in bit-reversal order."""
+
+        if self.exhausted:
+            if self._emitted_count != self._range_count:
+                raise SearchStrategyExecutionError(
+                    "orbiting-bit permutation exhausted before complete coverage"
+                )
+            return None
+
+        while self._permutation_counter < self._permutation_size:
+            counter = self._permutation_counter
+            self._permutation_counter += 1
+            physical_range_index = reverse_bits(counter, self._bit_width)
+            if physical_range_index >= self._range_count:
+                continue
+
+            start_nonce = self._start_nonce + physical_range_index * self._chunk_size
+            stop_nonce = min(start_nonce + self._chunk_size, self._nonce_limit)
+            if not self._start_nonce <= start_nonce < stop_nonce <= self._nonce_limit:
+                raise SearchStrategyExecutionError(
+                    "orbiting-bit permutation produced an invalid parent range"
+                )
+            assignment = SearchAssignment(
+                assignment_index=self._assignment_index,
+                start_nonce=start_nonce,
+                stop_nonce=stop_nonce,
+            )
+            self._assignment_index += 1
+            self._emitted_count += 1
+            if self._emitted_count > self._range_count:
+                raise SearchStrategyExecutionError(
+                    "orbiting-bit permutation emitted too many assignments"
+                )
+            if self._emitted_count == self._range_count:
+                self._consume_trailing_invalid_indexes()
+            return assignment
+
+        raise SearchStrategyExecutionError(
+            "orbiting-bit permutation exhausted before complete coverage"
+        )
+
+    def _consume_trailing_invalid_indexes(self) -> None:
+        """Process the finite invalid suffix after the final valid emission."""
+
+        while self._permutation_counter < self._permutation_size:
+            physical_range_index = reverse_bits(
+                self._permutation_counter,
+                self._bit_width,
+            )
+            self._permutation_counter += 1
+            if physical_range_index < self._range_count:
+                raise SearchStrategyExecutionError(
+                    "orbiting-bit permutation repeated complete coverage"
+                )
+
+
+class OrbitingBitSearchStrategy:
+    """Stateless bit-reversal parent-range ordering policy."""
+
+    __slots__ = ()
+
+    @property
+    def capabilities(self) -> SearchStrategyCapabilities:
+        """Return the immutable experimental capability declaration."""
+
+        return _ORBITING_BIT_CAPABILITIES
+
+    def create_cursor(
+        self,
+        start_nonce: int,
+        chunk_size: int,
+        *,
+        nonce_limit: int = _NONCE_LIMIT,
+    ) -> OrbitingBitSearchCursor:
+        """Create fresh bit-reversal state for one effective work variant."""
+
+        return OrbitingBitSearchCursor(
+            start_nonce,
+            chunk_size,
+            nonce_limit=nonce_limit,
+        )
+
+    def supports_backend(self, capabilities: SearchBackendCapabilities) -> bool:
+        """Support every available current backend without special behavior."""
+
+        _validate_backend_capabilities(capabilities)
+        return capabilities.available and (
+            not capabilities.supports_parallel_search
+            or self.capabilities.supports_parallel_backends
+        )
+
+
 class SearchStrategyRegistry:
     """Isolated deterministic collection of search-strategy definitions."""
 
@@ -337,9 +588,14 @@ class SearchStrategyRegistry:
 
 
 def builtin_search_strategy_registry() -> SearchStrategyRegistry:
-    """Create a fresh registry containing the sequential reference strategy."""
+    """Create a fresh registry containing both built-in strategies."""
 
-    return SearchStrategyRegistry((SequentialSearchStrategy(),))
+    return SearchStrategyRegistry(
+        (
+            OrbitingBitSearchStrategy(),
+            SequentialSearchStrategy(),
+        )
+    )
 
 
 def select_search_strategy(
@@ -409,10 +665,11 @@ def _validate_nonce(value: object, name: str) -> None:
         raise SearchStrategyValidationError(f"{name} must not exceed 0xffffffff")
 
 
-def _validate_stop_nonce(value: object, name: str) -> None:
+def _validate_stop_nonce(value: object, name: str) -> int:
     parsed = _validate_positive_integer(value, name)
     if parsed > _NONCE_LIMIT:
         raise SearchStrategyValidationError(f"{name} must not exceed 2**32")
+    return parsed
 
 
 def _validate_nonnegative_integer(value: object, name: str) -> int:
