@@ -56,7 +56,8 @@ Progress:
 - ✅ Compute-backend contract, deterministic registry, and Python reference backend
 - ✅ Portable optimized native C CPU backend
 - ✅ Portable parallel native CPU backend
-- ⬜ Search-strategy abstraction
+- ✅ Search-strategy abstraction and sequential reference strategy
+- ⬜ Orbiting-bit search strategy
 - ⬜ Pool failover
 
 ---
@@ -97,7 +98,8 @@ Progress:
 - ✅ Compute-backend abstraction and Python sequential reference backend
 - ✅ Portable optimized native C CPU mining
 - ✅ Portable parallel native CPU mining
-- ⬜ Search-strategy abstraction
+- ✅ Search-strategy abstraction and sequential reference strategy
+- ⬜ Orbiting-bit search strategy
 - ⬜ Pool failover
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -163,21 +165,22 @@ Planned:
 
 # Current Milestone
 
-**Portable Parallel Native CPU Backend — Complete**
+**Search-Strategy Abstraction — Complete**
 
 Objective:
 
-Partition each parent nonce range into exact nonoverlapping assignments, search
-them concurrently through the verified GIL-releasing native backend, reduce
-results deterministically by lowest qualifying nonce, and close the persistent
-worker pool on every command exit path.
+Separate deterministic parent-range scheduling from nonce-search execution.
+The `sequential` reference strategy now reproduces the existing contiguous
+ascending order, while Python, native, and native-parallel backends continue to
+execute each supplied parent assignment without choosing its global order.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, the
 compute-backend boundary, portable native sequential execution, and portable
-parallel execution remain complete. Search-strategy abstraction is next, with
-sequential, partitioned, and strided strategies preceding orbiting-bit search.
-Pool failover remains a later recovery milestone, followed by CUDA, DGX
+parallel execution remain complete. Orbiting-bit is the next search-strategy
+milestone; random, strided, partitioned-global, and probabilistic orders remain
+unimplemented. Pool failover remains a later recovery milestone, followed by
+CUDA, DGX
 Spark/GB10, multi-GPU, and host-side verification. Lite/Auto/Max/Custom
 operating profiles,
 macOS/Windows/Linux/Docker packaging, broader Stratum pool support, Bitcoin
@@ -191,4 +194,5 @@ order.
 
 Continue with:
 
-**Implement explicit sequential, partitioned, and strided search strategies.**
+**Implement the orbiting-bit search strategy behind the proven strategy
+contract.**

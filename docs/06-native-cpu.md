@@ -211,9 +211,12 @@ wheel on macOS ARM64 and x86-64, Windows x86-64, and Linux x86-64 and ARM64,
 then run parity tests against the installed artifact. Python-only artifacts or
 source installation must also be tested with the extension unavailable.
 
-Search-strategy abstraction, SIMD dispatch, cooperative cancellation, GPU/CUDA,
-device selection, Lite/Auto/Max/Custom profiles, and automatic native selection
-remain separate milestones. Cross-platform thread behavior uses only Python's
+The sequential search-strategy abstraction is complete and remains independent
+of this native implementation. Orbiting-bit and other alternative strategies,
+SIMD dispatch, cooperative cancellation, GPU/CUDA, device selection,
+Lite/Auto/Max/Custom profiles, and automatic native selection remain separate
+milestones. Cross-platform thread behavior uses only Python's
 standard executor API; native wheel targets and build requirements are
 unchanged. See [`07-parallel-cpu.md`](07-parallel-cpu.md) for the assignment,
-reduction, and lifecycle contract.
+reduction, and lifecycle contract, and
+[`08-search-strategies.md`](08-search-strategies.md) for parent-range ordering.

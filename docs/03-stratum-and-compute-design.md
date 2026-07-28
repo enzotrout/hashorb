@@ -304,7 +304,10 @@ This primitive remains a bounded synchronous search and performs no submission.
 Higher-level bounded and continuous orchestration may call and submit its typed
 result. `extra_nonce_2` rollover, network-time rolling, mid-chunk `clean_jobs`
 cancellation, worker partitioning, threads, multiprocessing, GPU execution,
-and orbiting-bit search remain outside this primitive and deferred.
+and alternative search order remain outside this primitive. Higher layers now
+provide deterministic work progression and sequential parent-range scheduling;
+native-parallel owns its internal worker partitioning. Mid-chunk cancellation,
+GPU execution, and orbiting-bit search remain deferred.
 
 ## Stratum Share-Submission Message Boundary
 
@@ -565,8 +568,9 @@ failure is not retried.
 Controlled outcomes are `stopped_by_user`, `chunk_limit_reached`,
 `share_accepted`, and `share_rejected`. The CLI returns zero for each, two for
 syntax or opt-in failure, and one for runtime, recovery exhaustion, or cleanup
-failure. Native and parallel CPU backends, GPU execution, alternative search
-strategies, and pool failover remain deferred.
+failure. Native and parallel CPU backends and the sequential strategy are
+available. GPU execution, alternative strategies, and pool failover remain
+deferred.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not
@@ -647,6 +651,30 @@ stage, and controlled error category. The CLI returns status 1 without raw
 exception text. Pool failover, random jitter, and durable recovery state remain
 deferred.
 
+## Search Strategy and Parent Assignments
+
+Search strategy and compute backend are independent selections. The strategy
+chooses the next parent half-open range for one effective prepared-work variant;
+the backend hashes exactly that range. `native-parallel` may subdivide it among
+workers internally, but worker count and worker assignments are not strategy
+inputs.
+
+The built-in `sequential` strategy reproduces the established ascending,
+contiguous range order. One immutable strategy definition is selected before
+networking and reused across the invocation, including reconnects. Each pool
+job, extra-nonce value, rolled network time, or recovered session creates a
+fresh compact cursor beginning at the configured start nonce. Difficulty-only
+updates and duplicate pool work do not reset it. Pool notifications retain
+priority before the next strategy assignment is requested.
+
+One-shot mining preserves its explicitly requested range. Bounded chunked and
+continuous mining use strategy assignments, and any strategy invariant failure
+is terminal without reconnect or compute fallback. The strategy layer owns no
+hashing, work construction, progression, networking, submission, worker pool,
+or cleanup resource. The complete cursor, compatibility, failure, and future
+orbiting-bit contract is in
+[`08-search-strategies.md`](08-search-strategies.md).
+
 ## Compute Backend and Compute Profile
 
 Compute backend and compute profile remain separate settings. The backend
@@ -686,8 +714,8 @@ The capability declaration is immutable and low-cardinality. Python and native
 report sequential execution; native-parallel reports parallel execution and a
 safe worker count. All three report deterministic result order and no
 cooperative mid-range cancellation, device selection, or preferred batch size.
-SIMD, alternate search strategies, GPU execution, device probing, and
-Lite/Auto/Max/Custom resource profiles remain deferred. Detailed compute
+SIMD, orbiting-bit and other alternative strategies, GPU execution, device
+probing, and Lite/Auto/Max/Custom resource profiles remain deferred. Detailed compute
 contracts are documented in
 [`05-compute-backends.md`](05-compute-backends.md) and
 [`06-native-cpu.md`](06-native-cpu.md), with parallel design in
@@ -714,14 +742,16 @@ src/hashphere/
     ├── progression.py
     ├── recovery.py
     ├── search.py
+    ├── strategy.py
     └── target.py
 ```
 
 The mining package owns Bitcoin work construction, targets, progression,
-session recovery, and lifecycle orchestration. The compute package owns only
-the execution boundary for a supplied prepared range, stable capabilities, and
-deterministic backend selection. This separation allows later native or GPU
-execution without changing Stratum or Bitcoin-domain semantics.
+parent-range strategy, session recovery, and lifecycle orchestration. The
+compute package owns only the execution boundary for a supplied prepared range,
+stable capabilities, and deterministic backend selection. This separation
+allows later search orders or GPU execution without changing Stratum or
+Bitcoin-domain semantics.
 
 ## Cryptographic Components
 

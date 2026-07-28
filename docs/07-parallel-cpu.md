@@ -2,7 +2,8 @@
 
 ## Purpose
 
-`native-parallel` accelerates one already-prepared parent nonce interval with
+`native-parallel` accelerates one strategy-supplied, already-prepared parent
+nonce interval with
 multiple nonoverlapping calls to the verified portable native backend. It does
 not change mining rules, prepare work, communicate with Stratum, progress work,
 or submit shares.
@@ -85,6 +86,13 @@ failure, and recovery exhaustion. Closure is idempotent, waits for running
 workers, and shuts the executor down exactly once. A recoverable Stratum
 connection loss does not close or replace the backend.
 
+The selected search strategy controls only the order of parent ranges. Worker
+assignments, executor scheduling, completion order, and reduction remain
+private backend details and are not returned to the strategy or emitted as
+strategy events. Changing worker count cannot change sequential parent-range
+order. The separation is detailed in
+[`08-search-strategies.md`](08-search-strategies.md).
+
 A worker, executor, clock, result-validation, or reduction failure becomes a
 sanitized `ComputeBackendExecutionError`. Pending futures are cancelled where
 possible; running native calls finish during shutdown. The backend is then
@@ -138,6 +146,6 @@ current parallel call and prevents the next mining chunk. There is no work
 stealing, multiprocessing, SIMD, assembly, GPU code, device selection, or
 platform-specific threading.
 
-Explicit sequential, partitioned, and strided search strategies are the next
-compute milestone. Orbiting-bit search, GPU support, resource profiles, wheel
+The explicit sequential parent-range strategy is complete. Orbiting-bit and
+other alternative global search orders, GPU support, resource profiles, wheel
 publishing, distributed workers, and automatic backend policy remain deferred.

@@ -2,10 +2,11 @@
 
 ## Purpose
 
-The compute boundary separates mining lifecycle decisions from nonce-search
-execution. Mining orchestration constructs and advances Bitcoin work, assigns
-one bounded interval, and handles any candidate. A compute backend searches
-only that supplied interval and returns the shared result model.
+The compute boundary separates mining lifecycle and search-order decisions from
+nonce-search execution. Mining orchestration constructs and advances Bitcoin
+work, the selected strategy assigns one bounded parent interval, and a compute
+backend searches only that supplied interval before returning the shared result
+model. The backend never chooses the global order of parent intervals.
 
 The existing Python sequential scanner remains the correctness reference. The
 optional `native` backend performs the same bounded sequential search through a
@@ -54,6 +55,7 @@ A backend does not own:
 - settings or environment loading;
 - job, coinbase, Merkle, header, or target construction;
 - extra-nonce or network-time progression;
+- parent-range ordering or strategy cursor state;
 - share submission or retry decisions;
 - signals, console output, event files, client cleanup, or event-sink cleanup.
 
@@ -208,6 +210,14 @@ reselect the compute backend or reset cumulative chunk, hash, elapsed-time,
 candidate, submission, or recovery totals. Newly prepared work is passed to
 the same backend as a new call.
 
+Strategy selection is separate and has the same invocation lifetime. The
+strategy chooses parent assignments and creates fresh per-work cursor state;
+the backend executes each assignment unchanged. Compatibility is validated
+before networking. In particular, `native-parallel` owns only the private
+subdivision of one strategy-supplied parent range, so worker count never changes
+global assignment order. See
+[`08-search-strategies.md`](08-search-strategies.md).
+
 Caller-owned command cleanup closes the selected backend only after its final
 search and never during a recoverable reconnect. Cleanup is idempotent, waits
 for worker termination, and follows existing error precedence so it cannot
@@ -278,15 +288,16 @@ build and machine, not a promised speedup or pool-performance claim.
 
 ## Future Extension
 
-Explicit sequential, partitioned, and strided search strategies remain the
-next abstraction milestone. Cooperative mid-range cancellation is deferred;
-all current backends truthfully declare that they cannot cancel a running
-range. A future cancellation input can be added only with lifecycle and actual
-hash-accounting tests.
+The sequential strategy boundary is complete. Orbiting-bit and any future
+partitioned, strided, random, or probabilistic global order require explicit
+strategy contracts and parity tests; none is implemented here. Cooperative
+mid-range cancellation is deferred; all current backends truthfully declare
+that they cannot cancel a running range. A future cancellation input can be
+added only with lifecycle and actual hash-accounting tests.
 
 A future CUDA backend may search one supplied interval on a selected device,
 but device probing, memory management, and host-side result verification remain
 backend-local. It must remain unaware of Stratum, progression, logging files,
 and submission. CUDA, Metal, Vulkan, DGX Spark/GB10 optimization, multi-GPU
-coordination, multiprocessing, SIMD, search strategies, resource profiles, and
-wheel publishing are all deferred.
+coordination, multiprocessing, SIMD, alternative search strategies, resource
+profiles, and wheel publishing are all deferred.

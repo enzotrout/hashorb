@@ -55,6 +55,8 @@ Bounded mining also emits:
 
 - `compute_backend_selected` once after backend selection and before the live
   connection
+- `search_strategy_selected` once after compatible strategy selection and
+  before the live connection
 - `difficulty_received`
 - `mining_job_received`
 - `nonce_range_started`
@@ -103,6 +105,16 @@ There is no event per executor worker or assignment. Existing
 parent range, aggregate actual hashes, and wall-clock elapsed time. Read-only
 summary aggregation naturally counts the stable parallel backend name without
 creating worker-count aggregates.
+
+`search_strategy_selected` is shared by all mining commands and follows
+`compute_backend_selected`. Its exact safe fields are `strategy_name`,
+`implementation`, `deterministic`, `contiguous_parent_ranges`, `exhaustive`,
+and `experimental`. It is emitted once per invocation, including invocations
+that later reconnect; fresh per-work cursors do not produce another selection
+event. Cursor positions, assignment indexes, job IDs, headers, extra nonces,
+credentials, protocol data, and raw failures are excluded. Existing
+`nonce_range_started` and `nonce_range_completed` records remain the only
+per-parent-assignment events, avoiding a second high-volume decision stream.
 
 Stable lifecycle and progression events describe controlled state without
 exposing signals or raw work:
@@ -248,8 +260,8 @@ acceptance.
 ## Aggregation and Privacy
 
 The immutable summary reports record and run status counts, chronological
-first and last UTC timestamps, sorted command, compute-backend, and
-completion-outcome counts,
+first and last UTC timestamps, sorted command, compute-backend, search-strategy,
+and completion-outcome counts,
 known mining event counts, work variants searched, extra-nonce advances and
 cycles, network-time rolls, duplicate work ignored, connection losses,
 reconnect attempts, reconnect successes, reconnect failures, reconnect
@@ -264,6 +276,11 @@ stable name and are displayed only when present. Future backend names remain
 forward-compatible. The summary does not expose implementation errors or
 hardware identifiers, and backend counts do not affect nonce-range totals or
 weighted hash rate.
+
+Strategy aggregates likewise count validated `search_strategy_selected` events
+by stable name and appear only when present. Future strategy names remain
+forward-compatible. Strategy counts do not expose cursor state or change range
+totals, elapsed-time totals, or weighted hash rate.
 
 The analyzer treats progression events as stable known records and validates
 only their safe fields. It counts event occurrences rather than trusting or

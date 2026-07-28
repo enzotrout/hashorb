@@ -101,6 +101,34 @@ small injectable boundaries for deterministic tests.
 
 ---
 
+# Search Strategy Boundary
+
+`hashphere.mining.strategy` owns the deterministic policy for selecting the
+next parent half-open nonce assignment. A strategy definition exposes immutable
+low-cardinality capabilities and creates one narrowly controlled cursor for
+each effective prepared-work variant. The cursor owns assignment order,
+sequence numbers, advancement, and exhaustion detection without retaining
+prepared work or an unbounded search history.
+
+The built-in `sequential` strategy emits ascending contiguous ranges beginning
+at the configured start nonce. It shortens the final range at the unsigned
+32-bit boundary and never wraps, skips, overlaps, or repeats an assignment.
+One strategy definition is selected per mining invocation and survives pool-job
+replacement, extra-nonce progression, network-time rolling, and Stratum
+recovery. Each legitimate new effective work variant receives a fresh cursor;
+difficulty-only notifications and duplicate work do not reset one.
+
+The strategy schedules a parent range, and the selected compute backend hashes
+that range. Backend compatibility is validated before live networking. A
+parallel backend may privately partition the supplied parent range among its
+workers, but worker count and subdivision never enter strategy state. Strategy
+failures are terminal and trigger neither reconnect nor backend or strategy
+fallback. Strategy objects own no sockets, threads, executors, files, or cleanup
+resources. The full contract and deferred orbiting-bit integration are in
+[`docs/08-search-strategies.md`](docs/08-search-strategies.md).
+
+---
+
 # Compute Backend Boundary
 
 `hashphere.compute` owns nonce-search execution contracts, immutable
@@ -137,7 +165,7 @@ candidate can reach submission. The C loop releases the GIL but creates no
 thread and uses no assembly or platform library.
 
 `NativeParallelBackend` owns one persistent Python `ThreadPoolExecutor` per
-selected backend instance. It divides the orchestration-owned parent interval
+selected backend instance. It divides the strategy-supplied parent interval
 into deterministic ascending, contiguous, balanced half-open assignments whose
 union is exact and whose intersections are empty. Every assignment calls the
 same verified native wrapper exactly once. Completion order cannot affect the
@@ -156,8 +184,8 @@ by mining orchestration.
 
 The native extension is optional at build and import time, preserving
 Python-only installs; both native modes then report controlled unavailability.
-Future search-strategy and GPU implementations must preserve the same range and
-result semantics and remain unaware of network and logging-file ownership.
+Future strategy and GPU implementations must preserve the same range and result
+semantics and remain unaware of network and logging-file ownership.
 Detailed contracts are in
 [`docs/05-compute-backends.md`](docs/05-compute-backends.md) and
 [`docs/06-native-cpu.md`](docs/06-native-cpu.md), with parallel lifecycle detail
@@ -167,16 +195,20 @@ in [`docs/07-parallel-cpu.md`](docs/07-parallel-cpu.md).
 
 # Chunked Mining Application Boundary
 
-`hashphere.mining.chunks` owns finite chunk-range calculation, invocation-wide
-hash accounting, ordered between-chunk notification processing, job
+`hashphere.mining.chunks` owns finite chunk budgeting, invocation-wide hash
+accounting, ordered between-chunk notification processing, job
 replacement, replacement-work preparation, and stopping after budget
-exhaustion or the first candidate. It composes deterministic mining primitives
-through small injected preparation, search, polling, submission, and observer
-boundaries; it owns no socket, file, settings, or console output.
+exhaustion or the first candidate. Its per-work strategy cursor supplies each
+parent range within the finite budget. It composes deterministic mining
+primitives through small injected preparation, search, polling, submission,
+strategy, and observer boundaries; it owns no socket, file, settings, or
+console output.
 
 The CLI owns live opt-ins, configuration, client and event-sink construction,
 initial authorized job acquisition, one invocation-scoped extra nonce, human-
 readable output, compute-backend selection, and deterministic cleanup.
+It also selects and compatibility-checks one search strategy before networking;
+the same strategy definition is reused throughout the invocation.
 `StratumClient` retains ownership of notification queues and nonblocking
 polling. Coinbase, Merkle, header, target, and nonce-search primitives remain
 deterministic and unaware of orchestration.

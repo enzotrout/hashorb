@@ -9,7 +9,9 @@ Stratum connection loss. Mining commands select one compute backend per
 invocation. The Python sequential implementation is the correctness reference,
 and an explicitly selected portable native C backend provides optimized
 sequential execution. The explicit `native-parallel` backend divides each
-parent nonce interval across portable native worker threads.
+parent nonce interval across portable native worker threads. Independently,
+one search strategy decides which parent interval comes next; the current
+`sequential` reference strategy preserves ascending contiguous range order.
 
 ## Configure the environment
 
@@ -39,15 +41,28 @@ Ranges shorter than the configured count create fewer nonempty assignments.
 profiles may choose worker counts and resource policy, but profile behavior is
 not implemented yet.
 
+`HASHPHERE_SEARCH_STRATEGY` selects where mining looks next, while
+`HASHPHERE_COMPUTE_BACKEND` selects how that assigned range is hashed. The
+default and only operational strategy is the exact lowercase name
+`sequential`; `auto` is a static alias for `sequential`, not adaptive tuning.
+Unknown strategy names fail before networking and never fall back. One strategy
+definition is selected per mining invocation, including reconnects, while a
+fresh compact cursor begins at the configured start nonce for each new pool
+job, extra-nonce value, rolled network time, or recovered session. One-shot
+mining preserves its explicitly requested range; bounded chunked and continuous
+mining obtain their parent ranges from the strategy.
+
 The backend is validated before a mining command opens a live connection,
 selected exactly once, and reused across every job, work variant, and Stratum
 reconnect in that invocation. An execution failure is terminal: Hashphere does
 not retry the range with another backend or silently fall back. The parallel
 backend creates contiguous, balanced, nonoverlapping assignments whose union is
 the exact parent range, then deterministically chooses the lowest qualifying
-nonce after all running workers finish. SIMD, multiprocessing, GPU execution,
-device selection, cooperative mid-range cancellation, and resource profiles
-remain deferred.
+nonce after all running workers finish. These worker assignments remain private
+to the backend and do not change the global sequential strategy. Orbiting-bit
+and other alternative search orders are not implemented yet. SIMD,
+multiprocessing, GPU execution, device selection, cooperative mid-range
+cancellation, and resource profiles remain deferred.
 
 `uv sync --locked` attempts to compile the optional self-contained C extension
 with the platform C compiler. Python-only operation remains available if that
@@ -207,6 +222,7 @@ Bounded Stratum mining completed.
 Endpoint: stratum.ckpool.org:3333
 Username: bc1q…ook1
 Compute backend: python
+Search strategy: sequential
 Job ID: 1a2b3c
 Difficulty: 10000
 Network bits: 17023ad4
@@ -327,6 +343,7 @@ failover. Ctrl-C interrupts backoff before another client is created.
 For a controlled live validation, cap the number of actual searches:
 
 ```bash
+HASHPHERE_SEARCH_STRATEGY=sequential \
 HASHPHERE_COMPUTE_BACKEND=python \
 HASHPHERE_ENABLE_LIVE_STRATUM=1 \
 HASHPHERE_ENABLE_LIVE_MINING=1 \
@@ -427,6 +444,7 @@ run by automated tests.
 To validate the parallel backend under the same controlled gate, use:
 
 ```bash
+HASHPHERE_SEARCH_STRATEGY=sequential \
 HASHPHERE_COMPUTE_BACKEND=native-parallel \
 HASHPHERE_COMPUTE_WORKERS=4 \
 HASHPHERE_ENABLE_LIVE_STRATUM=1 \
@@ -449,7 +467,8 @@ Final output and JSONL analysis expose only safe aggregate variant, advance,
 cycle, network-time-roll, duplicate, connection-loss, and reconnect counts.
 They also report the stable backend name (`python`, `native`, or
 `native-parallel`) and safe parallel worker count without hardware, thread, or
-device identifiers.
+device identifiers. Mining output also reports the stable search strategy name
+without cursor positions or assignment history.
 
 Final output reports sanitized aggregate counters and weighted hash rate,
 including reconnect attempts, successful reconnects, failed reconnect
