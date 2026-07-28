@@ -113,6 +113,19 @@ prepared work or an unbounded search history.
 The built-in `sequential` strategy emits ascending contiguous ranges beginning
 at the configured start nonce. It shortens the final range at the unsigned
 32-bit boundary and never wraps, skips, overlaps, or repeats an assignment.
+The experimental built-in `orbiting-bit` strategy instead bit-reverses a
+fixed-width permutation counter to select physical parent-range indexes. The
+public assignment index remains emission order; physical index determines the
+range bounds. Each emitted range is contiguous even though their global order
+is not.
+
+Orbiting-bit encloses the physical range count in the smallest power-of-two
+permutation domain. Reversed indexes outside the valid range count are skipped
+internally and never reach a backend, chunk counter, or event. Fixed arithmetic
+state tracks permutation counter and emitted count; no visited-range set or
+prepared work is retained. The bit-reversal bijection and bounds mapping give
+complete, nonoverlapping, nonrepeating coverage.
+
 One strategy definition is selected per mining invocation and survives pool-job
 replacement, extra-nonce progression, network-time rolling, and Stratum
 recovery. Each legitimate new effective work variant receives a fresh cursor;
@@ -124,8 +137,14 @@ parallel backend may privately partition the supplied parent range among its
 workers, but worker count and subdivision never enter strategy state. Strategy
 failures are terminal and trigger neither reconnect nor backend or strategy
 fallback. Strategy objects own no sockets, threads, executors, files, or cleanup
-resources. The full contract and deferred orbiting-bit integration are in
-[`docs/08-search-strategies.md`](docs/08-search-strategies.md).
+resources. The full strategy contract and orbiting-bit integration are in
+[`docs/08-search-strategies.md`](docs/08-search-strategies.md), with the
+accessible bit-reversal design in
+[`docs/09-orbiting-bit.md`](docs/09-orbiting-bit.md).
+
+After a completed range, pool notifications remain higher priority than either
+strategy's next assignment. Future GPU backends receive the same ordinary
+parent-range contract and must not reinterpret sequential or orbiting order.
 
 ---
 

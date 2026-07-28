@@ -218,6 +218,11 @@ subdivision of one strategy-supplied parent range, so worker count never changes
 global assignment order. See
 [`08-search-strategies.md`](08-search-strategies.md).
 
+Both sequential and orbiting-bit supply ordinary contiguous half-open parent
+ranges. Orbiting-bit changes only the order in which those ranges arrive. A
+backend receives no permutation counter or physical-range index and performs no
+strategy-specific hashing, partitioning, accounting, or candidate handling.
+
 Caller-owned command cleanup closes the selected backend only after its final
 search and never during a recoverable reconnect. Cleanup is idempotent, waits
 for worker termination, and follows existing error precedence so it cannot
@@ -288,9 +293,10 @@ build and machine, not a promised speedup or pool-performance claim.
 
 ## Future Extension
 
-The sequential strategy boundary is complete. Orbiting-bit and any future
-partitioned, strided, random, or probabilistic global order require explicit
-strategy contracts and parity tests; none is implemented here. Cooperative
+The sequential strategy boundary and deterministic orbiting-bit order are
+complete. Any future partitioned, strided, random, or probabilistic global
+order requires explicit strategy contracts and parity tests; none is
+implemented here. Cooperative
 mid-range cancellation is deferred; all current backends truthfully declare
 that they cannot cancel a running range. A future cancellation input can be
 added only with lifecycle and actual hash-accounting tests.

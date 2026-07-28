@@ -116,6 +116,15 @@ credentials, protocol data, and raw failures are excluded. Existing
 `nonce_range_started` and `nonce_range_completed` records remain the only
 per-parent-assignment events, avoiding a second high-volume decision stream.
 
+Orbiting-bit uses the same event with `strategy_name=orbiting-bit`,
+`implementation=bit-reversal`, `deterministic=true`,
+`contiguous_parent_ranges=false`, `exhaustive=true`, and `experimental=true`.
+The contiguity flag describes global parent-range order; every individual
+searched range remains contiguous. Invalid physical indexes in a non-power-of-
+two permutation domain are skipped internally. They create no event and do not
+alter chunk, hash, elapsed-time, or weighted-rate totals. Permutation counters,
+physical indexes, cursor state, and skip history are not logged.
+
 Stable lifecycle and progression events describe controlled state without
 exposing signals or raw work:
 

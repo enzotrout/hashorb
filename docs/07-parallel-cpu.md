@@ -90,7 +90,9 @@ The selected search strategy controls only the order of parent ranges. Worker
 assignments, executor scheduling, completion order, and reduction remain
 private backend details and are not returned to the strategy or emitted as
 strategy events. Changing worker count cannot change sequential parent-range
-order. The separation is detailed in
+order or the bit-reversal order selected by orbiting-bit. Every orbiting-bit
+parent range is passed unchanged into the same private balanced partitioning.
+The separation is detailed in
 [`08-search-strategies.md`](08-search-strategies.md).
 
 A worker, executor, clock, result-validation, or reduction failure becomes a
@@ -146,6 +148,6 @@ current parallel call and prevents the next mining chunk. There is no work
 stealing, multiprocessing, SIMD, assembly, GPU code, device selection, or
 platform-specific threading.
 
-The explicit sequential parent-range strategy is complete. Orbiting-bit and
-other alternative global search orders, GPU support, resource profiles, wheel
+The explicit sequential and orbiting-bit parent-range strategies are complete.
+Other alternative global search orders, GPU support, resource profiles, wheel
 publishing, distributed workers, and automatic backend policy remain deferred.

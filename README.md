@@ -10,8 +10,9 @@ invocation. The Python sequential implementation is the correctness reference,
 and an explicitly selected portable native C backend provides optimized
 sequential execution. The explicit `native-parallel` backend divides each
 parent nonce interval across portable native worker threads. Independently,
-one search strategy decides which parent interval comes next; the current
-`sequential` reference strategy preserves ascending contiguous range order.
+one search strategy decides which parent interval comes next. `sequential`
+preserves ascending contiguous range order, while experimental `orbiting-bit`
+permutes the same parent-range indexes deterministically.
 
 ## Configure the environment
 
@@ -43,8 +44,9 @@ not implemented yet.
 
 `HASHPHERE_SEARCH_STRATEGY` selects where mining looks next, while
 `HASHPHERE_COMPUTE_BACKEND` selects how that assigned range is hashed. The
-default and only operational strategy is the exact lowercase name
-`sequential`; `auto` is a static alias for `sequential`, not adaptive tuning.
+default strategy is the exact lowercase name `sequential`; experimental
+`orbiting-bit` is the alternative. `auto` is a static alias for `sequential`,
+not adaptive tuning.
 Unknown strategy names fail before networking and never fall back. One strategy
 definition is selected per mining invocation, including reconnects, while a
 fresh compact cursor begins at the configured start nonce for each new pool
@@ -59,10 +61,52 @@ not retry the range with another backend or silently fall back. The parallel
 backend creates contiguous, balanced, nonoverlapping assignments whose union is
 the exact parent range, then deterministically chooses the lowest qualifying
 nonce after all running workers finish. These worker assignments remain private
-to the backend and do not change the global sequential strategy. Orbiting-bit
-and other alternative search orders are not implemented yet. SIMD,
+to the backend and do not change the selected global strategy. SIMD,
 multiprocessing, GPU execution, device selection, cooperative mid-range
 cancellation, and resource profiles remain deferred.
+
+## Choose a search strategy
+
+**What:** `HASHPHERE_SEARCH_STRATEGY` controls the order of parent nonce ranges.
+The supported exact values are `sequential`, `orbiting-bit`, and the static
+`auto` alias for `sequential`.
+
+**Why:** A genuinely different ordering policy can now be tested without
+changing SHA-256, Bitcoin work construction, Stratum, compute backends,
+recovery, progression, or submission.
+
+**Plain talk:** Sequential walks the nonce map from left to right. Orbiting-bit
+jumps between widely separated regions, but still visits every region exactly
+once.
+
+For eight equal parent ranges, the physical range-index orders are:
+
+```text
+sequential:   0, 1, 2, 3, 4, 5, 6, 7
+orbiting-bit: 0, 4, 2, 6, 1, 5, 3, 7
+```
+
+Orbiting-bit reverses a fixed-width binary permutation counter. When the number
+of ranges is not a power of two, the enclosing power-of-two domain includes
+invalid physical indexes; those are skipped internally and never become
+backend calls, chunks, or range events. Every valid parent range remains one
+ordinary contiguous half-open interval. The exact union, unique hashes, and
+Bitcoin search space are unchanged.
+
+Orbiting-bit changes order only. It does not make any nonce more likely to
+succeed, increase the probability for a fixed number of unique hashes, predict
+a valid hash, or provide a proven odds advantage. It is marked experimental.
+Backend selection and worker count remain independent: `native-parallel`
+privately partitions whichever parent range the strategy emits.
+
+Select it with:
+
+```bash
+HASHPHERE_SEARCH_STRATEGY=orbiting-bit
+```
+
+See [`docs/09-orbiting-bit.md`](docs/09-orbiting-bit.md) for the accessible
+algorithm and coverage proof.
 
 `uv sync --locked` attempts to compile the optional self-contained C extension
 with the platform C compiler. Python-only operation remains available if that
@@ -461,6 +505,27 @@ The executor is reused through chunks, work changes, and reconnects, then
 closed when the command exits. A stop requested during a parallel call takes
 effect after that call completes; running native workers cannot yet be
 cooperatively interrupted.
+
+To validate experimental orbiting-bit ordering with the same bounded gate, use:
+
+```bash
+HASHPHERE_SEARCH_STRATEGY=orbiting-bit \
+HASHPHERE_COMPUTE_BACKEND=native-parallel \
+HASHPHERE_COMPUTE_WORKERS=4 \
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+uv run python -m hashphere stratum-mine \
+  --start-nonce 0 \
+  --chunk-size 1000000 \
+  --max-chunks 3 \
+  --max-reconnect-attempts 5 \
+  --log-file logs/hashphere.jsonl
+```
+
+This command is documented for an explicitly authorized manual gate and is not
+run by automated tests. Its first three parent ranges are expected to be
+`[0, 1000000)`, `[4096000000, 4097000000)`, and
+`[2048000000, 2049000000)`.
 
 The actual generated or advanced extra nonce is never displayed or logged.
 Final output and JSONL analysis expose only safe aggregate variant, advance,

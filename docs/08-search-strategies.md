@@ -8,10 +8,11 @@ Keeping those policies separate lets future search orders reuse Python, native,
 and native-parallel execution without moving Bitcoin, Stratum, progression, or
 submission behavior into either layer.
 
-The current milestone provides only the deterministic `sequential` reference
-strategy. It preserves the range order used before the abstraction. Orbiting-
-bit, strided, random, probabilistic, and other experimental orders are not
-implemented.
+The deterministic `sequential` reference strategy preserves the range order
+used before the abstraction. Experimental `orbiting-bit` is the first genuine
+alternative: it visits the same physical parent ranges through a fixed-width
+bit-reversal permutation. Strided, random, probabilistic, and other alternative
+orders are not implemented.
 
 ## Public Contract
 
@@ -28,8 +29,12 @@ class SearchStrategyCapabilities: ...
 class SearchAssignment: ...
 
 class SequentialSearchStrategy: ...
+class OrbitingBitSearchStrategy: ...
 class SearchStrategyRegistry: ...
 
+def reverse_bits(value: int, bit_width: int) -> int: ...
+def next_power_of_two(value: int) -> int: ...
+def calculate_orbiting_range_count(...) -> int: ...
 def builtin_search_strategy_registry() -> SearchStrategyRegistry: ...
 def select_search_strategy(name: str) -> MiningSearchStrategy: ...
 def list_search_strategies() -> tuple[SearchStrategyCapabilities, ...]: ...
@@ -73,6 +78,60 @@ one. The cursor never wraps, moves backward, skips, overlaps, or repeats a
 nonce or completed assignment. It uses numeric cursor state rather than an
 unbounded history set. Its capabilities declare deterministic, contiguous,
 exhaustive, nonrepeating operation and compatibility with parallel backends.
+
+## Orbiting-Bit Strategy
+
+For one cursor domain, let `N` be the exclusive nonce limit, normally `2**32`:
+
+```text
+range_count = ceil((N - start_nonce) / chunk_size)
+permutation_size = next_power_of_two(range_count)
+bit_width = log2(permutation_size)
+```
+
+All calculations use exact integer arithmetic. For permutation counters from
+zero through `permutation_size - 1`, the cursor reverses exactly `bit_width`
+low bits. A reversed value is a physical range index. Values greater than or
+equal to `range_count` are skipped; each remaining value maps to:
+
+```text
+start = start_nonce + physical_range_index * chunk_size
+stop = min(start + chunk_size, N)
+```
+
+The public `SearchAssignment.assignment_index` is the zero-based emission
+sequence, not the physical range index. The physical index is used only to
+derive bounds. Every emitted assignment itself remains contiguous; the
+sequence of assignments is globally noncontiguous.
+
+For eight ranges, the three-bit physical order is:
+
+```text
+counter:        0 1 2 3 4 5 6 7
+physical index: 0 4 2 6 1 5 3 7
+```
+
+When `range_count` is five, the enclosing size is eight. The raw reversed
+sequence is `0, 4, 2, 6, 1, 5, 3, 7`; indexes `6`, `5`, and `7` are invalid and
+are skipped, producing `0, 4, 2, 1, 3`. A skip is not an assignment, backend
+call, chunk, nonce-range event, or accounting entry. Since the enclosing power
+of two is less than twice any non-power-of-two positive range count, internal
+iteration remains finite and bounded.
+
+The one-range special case has a zero-bit permutation. Counter zero reverses to
+physical index zero, that range is emitted once, and the cursor is exhausted.
+
+Bit reversal is a bijection over the enclosing power-of-two domain, so no
+physical index appears twice. Filtering only indexes outside `range_count`
+leaves every valid physical index exactly once. The physical ranges partition
+`[start_nonce, N)`, including a shortened final range, proving complete
+coverage with no gap, overlap, repeated nonce, wrap, or unbounded history.
+
+Cursor state is bounded to numeric configuration, range and permutation sizes,
+bit width, permutation counter, emission count, and next assignment index. It
+retains no visited set, prepared work, header, extra nonce, job, credential, or
+candidate data. Detailed plain-language diagrams and probability limitations
+are in [`09-orbiting-bit.md`](09-orbiting-bit.md).
 
 ## Cursor and Reset Semantics
 
@@ -124,8 +183,8 @@ selected strategy
     -> one NonceSearchResult
 ```
 
-All current backends support `sequential`. Python and native search the parent
-range sequentially. `native-parallel` privately divides that same parent range
+All current backends support `sequential` and `orbiting-bit`. Python and native
+search each parent range sequentially. `native-parallel` privately divides that parent range
 into balanced, contiguous, nonoverlapping worker assignments and reduces their
 results deterministically. The strategy does not know the worker count, create
 an executor, inspect worker assignments, or aggregate hashes and timing.
@@ -137,10 +196,10 @@ no automatic strategy or compute fallback.
 
 ## Registry and Configuration
 
-`HASHPHERE_SEARCH_STRATEGY` defaults to `sequential`. Identifiers use exact
-lowercase stable names; `auto` is a deterministic alias for `sequential` and
-does not benchmark, probe hardware, or adapt at runtime. Unknown selectors fail
-as configuration errors before networking.
+`HASHPHERE_SEARCH_STRATEGY` defaults to `sequential`. Exact built-in names are
+`sequential` and `orbiting-bit`; `auto` is a deterministic alias for
+`sequential` and does not benchmark, probe hardware, or adapt at runtime.
+Unknown selectors fail as configuration errors before networking.
 
 The built-in registry snapshots its definitions into isolated instance state,
 rejects duplicate names, lists capabilities in sorted name order, performs
@@ -154,6 +213,10 @@ no plugin discovery, entry-point loading, dynamic imports, or hardware probing.
 The sequential cursor's monotonic next position and assignment index prove that
 one cursor cannot issue a parent assignment twice or move backward. Contiguous
 bounds prevent gaps and overlap without retaining every prior assignment.
+Orbiting-bit instead relies on the fixed-width reversal bijection, a monotonic
+permutation counter, and an emitted count. Invalid enclosing-domain indexes are
+discarded permanently when processed, and exhaustion is final after the finite
+domain is consumed.
 Existing work-context and prepared-work identities independently prevent an
 identical pool notification or local variant from restarting at the configured
 nonce. Those checks remain orchestration and progression responsibilities.
@@ -185,17 +248,23 @@ selection counts by stable strategy name.
 
 Existing `nonce_range_started` and `nonce_range_completed` events remain the
 authoritative per-parent-assignment records. There is no event for each cursor
-decision or internal parallel worker assignment. Cursor state, assignment
+decision, skipped permutation index, or internal parallel worker assignment.
+Cursor state, assignment
 history, job IDs, headers, extra nonce values, credentials, payout addresses,
 protocol data, raw exceptions, and candidate digests are excluded.
 
-## Deferred Strategies and Hardware
+## Probability and Deferred Strategies
 
-Orbiting-bit is the next intended strategy milestone, but no orbiting, random,
-strided, skipped-range, or probabilistic behavior exists in `sequential`.
-Future strategies must preserve explicit finite assignments, deterministic and
-truthful capabilities, duplicate prevention, stop and pool-notification
-priority, exact accounting, controlled failure, and compatibility validation.
+Orbiting-bit changes ordering only. It does not change SHA-256, create search
+space, make an individual nonce more likely to succeed, increase the success
+probability for a fixed number of unique hashes, or predict a valid nonce.
+There is no claim that it is statistically superior to sequential search. Its
+capability metadata therefore marks it experimental, not advantageous.
+
+Future random, strided, probabilistic, or other strategies must preserve
+explicit finite assignments, truthful capabilities, duplicate prevention, stop
+and pool-notification priority, exact accounting, controlled failure, and
+compatibility validation.
 
 A future GPU backend remains an execution implementation: it may hash one
 strategy-supplied parent assignment and verify a candidate through the shared

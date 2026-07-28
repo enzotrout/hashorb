@@ -305,9 +305,9 @@ Higher-level bounded and continuous orchestration may call and submit its typed
 result. `extra_nonce_2` rollover, network-time rolling, mid-chunk `clean_jobs`
 cancellation, worker partitioning, threads, multiprocessing, GPU execution,
 and alternative search order remain outside this primitive. Higher layers now
-provide deterministic work progression and sequential parent-range scheduling;
+provide deterministic work progression and configurable parent-range scheduling;
 native-parallel owns its internal worker partitioning. Mid-chunk cancellation,
-GPU execution, and orbiting-bit search remain deferred.
+GPU execution, and additional search orders remain deferred.
 
 ## Stratum Share-Submission Message Boundary
 
@@ -461,7 +461,9 @@ are terminal successful outcomes, with no retry or continuation.
 
 Mid-chunk `clean_jobs` cancellation, `extra_nonce_2` progression, network-time
 rolling, reconnects, telemetry aggregation, multiprocessing, GPU scheduling,
-and orbiting-bit search remain deferred.
+and additional search orders remain deferred. The selected sequential or
+orbiting-bit strategy may schedule the command's bounded parent-range domain;
+its internal skipped permutation indexes are not searched chunks.
 
 ## Continuous Mining Lifecycle
 
@@ -660,20 +662,27 @@ workers internally, but worker count and worker assignments are not strategy
 inputs.
 
 The built-in `sequential` strategy reproduces the established ascending,
-contiguous range order. One immutable strategy definition is selected before
-networking and reused across the invocation, including reconnects. Each pool
-job, extra-nonce value, rolled network time, or recovered session creates a
-fresh compact cursor beginning at the configured start nonce. Difficulty-only
-updates and duplicate pool work do not reset it. Pool notifications retain
-priority before the next strategy assignment is requested.
+contiguous range order. Experimental `orbiting-bit` reverses fixed-width
+permutation-counter bits to select physical parent-range indexes, skipping
+indexes outside non-power-of-two domains. Those skips create no backend call,
+chunk, range event, or hash accounting. Each emitted assignment is still one
+ordinary contiguous half-open range, and complete coverage has no repetition.
+
+One immutable strategy definition is selected before networking and reused
+across the invocation, including reconnects. Each pool job, extra-nonce value,
+rolled network time, or recovered session creates a fresh compact cursor
+beginning at permutation counter zero. Difficulty-only updates and duplicate
+pool work do not reset it. Pool notifications retain priority before the next
+strategy assignment is requested.
 
 One-shot mining preserves its explicitly requested range. Bounded chunked and
 continuous mining use strategy assignments, and any strategy invariant failure
 is terminal without reconnect or compute fallback. The strategy layer owns no
 hashing, work construction, progression, networking, submission, worker pool,
-or cleanup resource. The complete cursor, compatibility, failure, and future
-orbiting-bit contract is in
-[`08-search-strategies.md`](08-search-strategies.md).
+or cleanup resource. The complete strategy contract is in
+[`08-search-strategies.md`](08-search-strategies.md), with the exact
+bit-reversal algorithm and coverage proof in
+[`09-orbiting-bit.md`](09-orbiting-bit.md).
 
 ## Compute Backend and Compute Profile
 
@@ -714,8 +723,8 @@ The capability declaration is immutable and low-cardinality. Python and native
 report sequential execution; native-parallel reports parallel execution and a
 safe worker count. All three report deterministic result order and no
 cooperative mid-range cancellation, device selection, or preferred batch size.
-SIMD, orbiting-bit and other alternative strategies, GPU execution, device
-probing, and Lite/Auto/Max/Custom resource profiles remain deferred. Detailed compute
+SIMD, additional alternative strategies, GPU execution, device probing, and
+Lite/Auto/Max/Custom resource profiles remain deferred. Detailed compute
 contracts are documented in
 [`05-compute-backends.md`](05-compute-backends.md) and
 [`06-native-cpu.md`](06-native-cpu.md), with parallel design in

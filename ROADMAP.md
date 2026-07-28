@@ -57,7 +57,8 @@ Progress:
 - ✅ Portable optimized native C CPU backend
 - ✅ Portable parallel native CPU backend
 - ✅ Search-strategy abstraction and sequential reference strategy
-- ⬜ Orbiting-bit search strategy
+- ✅ Deterministic orbiting-bit search strategy
+- ⬜ GPU/CUDA correctness backend
 - ⬜ Pool failover
 
 ---
@@ -99,7 +100,8 @@ Progress:
 - ✅ Portable optimized native C CPU mining
 - ✅ Portable parallel native CPU mining
 - ✅ Search-strategy abstraction and sequential reference strategy
-- ⬜ Orbiting-bit search strategy
+- ✅ Deterministic orbiting-bit search strategy
+- ⬜ GPU/CUDA correctness backend
 - ⬜ Pool failover
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -165,28 +167,26 @@ Planned:
 
 # Current Milestone
 
-**Search-Strategy Abstraction — Complete**
+**Deterministic Orbiting-Bit Search Strategy — Complete**
 
 Objective:
 
-Separate deterministic parent-range scheduling from nonce-search execution.
-The `sequential` reference strategy now reproduces the existing contiguous
-ascending order, while Python, native, and native-parallel backends continue to
-execute each supplied parent assignment without choosing its global order.
+Add a deterministic bit-reversal permutation over physical parent-range
+indexes. Orbiting-bit spreads early assignments across the nonce domain while
+still visiting every valid range exactly once and leaving backend execution
+unchanged.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, the
 compute-backend boundary, portable native sequential execution, and portable
-parallel execution remain complete. Orbiting-bit is the next search-strategy
-milestone; random, strided, partitioned-global, and probabilistic orders remain
-unimplemented. Pool failover remains a later recovery milestone, followed by
-CUDA, DGX
-Spark/GB10, multi-GPU, and host-side verification. Lite/Auto/Max/Custom
-operating profiles,
-macOS/Windows/Linux/Docker packaging, broader Stratum pool support, Bitcoin
-Core true solo mining, distributed workers, adaptive tuning, and
-Prometheus/Grafana-compatible metrics remain deferred in that dependency
-order.
+parallel execution, the strategy abstraction, and both sequential and
+orbiting-bit orders remain complete. A correctness-first GPU/CUDA backend is
+next, followed by DGX Spark/GB10 tuning, multi-GPU execution,
+Lite/Auto/Max/Custom operating profiles, macOS/Windows/Linux/Docker packaging,
+broader pool support and Bitcoin Core true solo mining, distributed workers and
+adaptive tuning, then Prometheus/Grafana-compatible metrics. Pool failover
+remains a separate recovery milestone. Random, strided, partitioned-global,
+and probabilistic search orders remain unimplemented.
 
 ---
 
@@ -194,5 +194,5 @@ order.
 
 Continue with:
 
-**Implement the orbiting-bit search strategy behind the proven strategy
-contract.**
+**Implement a correctness-first GPU/CUDA compute backend with host-side
+candidate verification.**
