@@ -13,12 +13,14 @@ from hashphere.compute import (
     ComputeBackendRegistry,
     ComputeBackendSelectionError,
     ComputeBackendValidationError,
+    CudaBackend,
     MiningComputeBackend,
     NativeParallelBackend,
     NativeSequentialBackend,
     PythonSequentialBackend,
     builtin_compute_backend_registry,
     close_compute_backend,
+    compute_backend_device_ordinal,
     compute_backend_worker_count,
     list_compute_backends,
     select_compute_backend,
@@ -303,11 +305,14 @@ def test_registry_lists_builtins_deterministically_and_is_isolated() -> None:
     assert first is not second
     assert first.list_capabilities() == second.list_capabilities()
     assert tuple(item.backend_name for item in first.list_capabilities()) == (
+        "cuda",
         "native",
         "native-parallel",
         "python",
     )
-    assert first.list_capabilities()[2] == PythonSequentialBackend().capabilities
+    assert first.list_capabilities()[3] == PythonSequentialBackend().capabilities
+    assert first.list_capabilities()[0].available is False
+    assert first.list_capabilities()[0].unavailable_reason == "NotInitialized"
     assert list_compute_backends(first) == first.list_capabilities()
 
 
@@ -337,7 +342,10 @@ def test_registry_exposes_controlled_unavailable_native_without_affecting_python
         native_backend=NativeSequentialBackend(None),
     )
 
-    native, native_parallel, python = registry.list_capabilities()
+    cuda, native, native_parallel, python = registry.list_capabilities()
+    assert cuda.backend_name == "cuda"
+    assert cuda.available is False
+    assert cuda.unavailable_reason == "NotInitialized"
     assert native.backend_name == "native"
     assert native.available is False
     assert native.unavailable_reason == "ExtensionNotInstalled"
@@ -352,6 +360,29 @@ def test_registry_exposes_controlled_unavailable_native_without_affecting_python
         registry.select("native")
     with pytest.raises(ComputeBackendSelectionError, match="unavailable"):
         registry.select("native-parallel")
+
+
+def test_registry_selects_injected_cuda_without_changing_logical_aliases() -> None:
+    class Runtime:
+        def initialize_device(self, device_ordinal: int) -> None:
+            assert device_ordinal == 7
+
+        def search_nonce_range(self, *arguments: object) -> object:
+            del arguments
+            return (None, False, False, 1)
+
+        def close_device(self) -> None:
+            return None
+
+    cuda = CudaBackend(7, Runtime())
+    registry = builtin_compute_backend_registry(cuda_backend=cuda)
+
+    assert registry.select("cuda") is cuda
+    assert registry.select("auto").capabilities.backend_name == "python"
+    assert registry.select("cpu").capabilities.backend_name == "python"
+    assert compute_backend_device_ordinal(cuda) == 7
+    assert compute_backend_device_ordinal(registry.select("python")) is None
+    close_compute_backend(cuda)
 
 
 def test_registry_selects_parallel_explicitly_without_changing_logical_aliases() -> None:

@@ -1,0 +1,2 @@
+include src/hashphere/compute/_native.c
+include src/hashphere/compute/_cuda.cu

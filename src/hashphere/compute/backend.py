@@ -138,3 +138,20 @@ def compute_backend_worker_count(backend: MiningComputeBackend) -> int | None:
     if isinstance(worker_count, bool) or not isinstance(worker_count, int) or worker_count <= 0:
         raise ComputeBackendValidationError("backend worker_count must be a positive integer")
     return worker_count
+
+
+def compute_backend_device_ordinal(backend: MiningComputeBackend) -> int | None:
+    """Return a safe optional device ordinal for output and observability."""
+
+    if not isinstance(backend, MiningComputeBackend):
+        raise ComputeBackendValidationError("backend must implement MiningComputeBackend")
+    device_ordinal = getattr(backend, "device_ordinal", None)
+    if device_ordinal is None:
+        return None
+    if (
+        isinstance(device_ordinal, bool)
+        or not isinstance(device_ordinal, int)
+        or device_ordinal < 0
+    ):
+        raise ComputeBackendValidationError("backend device_ordinal must be nonnegative")
+    return device_ordinal

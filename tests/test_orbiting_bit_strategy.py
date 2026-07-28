@@ -313,6 +313,7 @@ def test_invalid_cursor_nonce_limit_is_rejected(value: object) -> None:
         BackendCapabilities("python"),
         BackendCapabilities("native"),
         BackendCapabilities("native-parallel", parallel=True),
+        BackendCapabilities("cuda", parallel=True),
     ],
 )
 def test_orbiting_bit_is_compatible_with_every_current_backend(

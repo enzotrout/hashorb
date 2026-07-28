@@ -16,6 +16,8 @@ DEFAULT_WORKER_NAME = "auto"
 DEFAULT_COMPUTE_WORKERS = 2
 MAX_COMPUTE_WORKERS = 256
 DEFAULT_SEARCH_STRATEGY = "sequential"
+DEFAULT_CUDA_DEVICE = 0
+MAX_CUDA_DEVICE = (1 << 31) - 1
 
 _WORKER_INVALID_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]+")
 
@@ -54,6 +56,7 @@ class Settings:
     compute_profile: str
     compute_workers: int = DEFAULT_COMPUTE_WORKERS
     search_strategy: str = DEFAULT_SEARCH_STRATEGY
+    cuda_device: int = DEFAULT_CUDA_DEVICE
 
     @property
     def stratum_username(self) -> str:
@@ -91,6 +94,19 @@ class Settings:
         search_strategy = _parse_search_strategy(
             os.getenv("HASHPHERE_SEARCH_STRATEGY", DEFAULT_SEARCH_STRATEGY)
         )
+        compute_backend = (
+            os.getenv(
+                "HASHPHERE_COMPUTE_BACKEND",
+                "auto",
+            )
+            .strip()
+            .lower()
+        )
+        cuda_device = (
+            _parse_cuda_device(os.getenv("HASHPHERE_CUDA_DEVICE", str(DEFAULT_CUDA_DEVICE)))
+            if compute_backend == "cuda"
+            else DEFAULT_CUDA_DEVICE
+        )
 
         return cls(
             stratum_host=os.getenv(
@@ -104,12 +120,7 @@ class Settings:
                 "HASHPHERE_STRATUM_PASSWORD",
                 DEFAULT_STRATUM_PASSWORD,
             ),
-            compute_backend=os.getenv(
-                "HASHPHERE_COMPUTE_BACKEND",
-                "auto",
-            )
-            .strip()
-            .lower(),
+            compute_backend=compute_backend,
             compute_profile=os.getenv(
                 "HASHPHERE_COMPUTE_PROFILE",
                 "lite",
@@ -118,6 +129,7 @@ class Settings:
             .lower(),
             compute_workers=compute_workers,
             search_strategy=search_strategy,
+            cuda_device=cuda_device,
         )
 
 
@@ -143,3 +155,19 @@ def _parse_search_strategy(value: object) -> str:
     if re.fullmatch(r"[a-z][a-z0-9_-]*", value) is None:
         raise ValueError("HASHPHERE_SEARCH_STRATEGY must be an exact lowercase strategy identifier")
     return value
+
+
+def _parse_cuda_device(value: object) -> int:
+    if not isinstance(value, str):
+        raise ValueError("HASHPHERE_CUDA_DEVICE must be an ASCII decimal integer")
+    if (
+        not value
+        or not value.isascii()
+        or not value.isdecimal()
+        or (len(value) > 1 and value.startswith("0"))
+    ):
+        raise ValueError("HASHPHERE_CUDA_DEVICE must be an unpadded ASCII decimal integer")
+    device_ordinal = int(value)
+    if not 0 <= device_ordinal <= MAX_CUDA_DEVICE:
+        raise ValueError(f"HASHPHERE_CUDA_DEVICE must be between 0 and {MAX_CUDA_DEVICE}")
+    return device_ordinal

@@ -240,6 +240,7 @@ def test_registry_rejects_unavailable_selection() -> None:
         BackendCapabilities("python"),
         BackendCapabilities("native"),
         BackendCapabilities("native-parallel", parallel=True),
+        BackendCapabilities("cuda", parallel=True),
     ],
 )
 def test_sequential_is_compatible_with_every_current_backend(

@@ -11,10 +11,11 @@ from hashphere.compute.backend import (
     ComputeBackendValidationError,
     MiningComputeBackend,
 )
+from hashphere.compute.cuda import CudaBackend
 from hashphere.compute.native import NativeSequentialBackend
 from hashphere.compute.parallel import NativeParallelBackend
 from hashphere.compute.python import PythonSequentialBackend, RangeSearcher
-from hashphere.config import DEFAULT_COMPUTE_WORKERS
+from hashphere.config import DEFAULT_COMPUTE_WORKERS, DEFAULT_CUDA_DEVICE
 
 _AUTO_SELECTOR = "auto"
 _LEGACY_CPU_SELECTOR = "cpu"
@@ -81,9 +82,12 @@ def builtin_compute_backend_registry(
     python_searcher: RangeSearcher | None = None,
     native_backend: NativeSequentialBackend | None = None,
     native_parallel_backend: NativeParallelBackend | None = None,
+    cuda_backend: CudaBackend | None = None,
     worker_count: int = DEFAULT_COMPUTE_WORKERS,
+    cuda_device: int = DEFAULT_CUDA_DEVICE,
+    initialize_cuda: bool = False,
 ) -> ComputeBackendRegistry:
-    """Create a fresh registry containing Python and both optional native modes."""
+    """Create a registry containing Python and optional native and CUDA modes."""
 
     python_backend = (
         PythonSequentialBackend()
@@ -100,16 +104,34 @@ def builtin_compute_backend_registry(
     )
     if not isinstance(selected_parallel, NativeParallelBackend):
         raise ComputeBackendValidationError("native_parallel_backend must be NativeParallelBackend")
-    return ComputeBackendRegistry((python_backend, selected_native, selected_parallel))
+    selected_cuda = (
+        CudaBackend(cuda_device, initialize=initialize_cuda)
+        if cuda_backend is None
+        else cuda_backend
+    )
+    if not isinstance(selected_cuda, CudaBackend):
+        raise ComputeBackendValidationError("cuda_backend must be CudaBackend")
+    return ComputeBackendRegistry(
+        (python_backend, selected_cuda, selected_native, selected_parallel)
+    )
 
 
 def select_compute_backend(
     backend_name: str,
     registry: ComputeBackendRegistry | None = None,
+    *,
+    cuda_device: int = DEFAULT_CUDA_DEVICE,
 ) -> MiningComputeBackend:
     """Select an operational backend from a caller registry or fresh built-ins."""
 
-    selected_registry = builtin_compute_backend_registry() if registry is None else registry
+    selected_registry = (
+        builtin_compute_backend_registry(
+            cuda_device=cuda_device,
+            initialize_cuda=backend_name == "cuda",
+        )
+        if registry is None
+        else registry
+    )
     if not isinstance(selected_registry, ComputeBackendRegistry):
         raise ComputeBackendValidationError("registry must be a ComputeBackendRegistry")
     return selected_registry.select(backend_name)
@@ -120,7 +142,9 @@ def list_compute_backends(
 ) -> tuple[ComputeBackendCapabilities, ...]:
     """List deterministic immutable capabilities without hardware probing."""
 
-    selected_registry = builtin_compute_backend_registry() if registry is None else registry
+    selected_registry = (
+        builtin_compute_backend_registry(initialize_cuda=True) if registry is None else registry
+    )
     if not isinstance(selected_registry, ComputeBackendRegistry):
         raise ComputeBackendValidationError("registry must be a ComputeBackendRegistry")
     return selected_registry.list_capabilities()
