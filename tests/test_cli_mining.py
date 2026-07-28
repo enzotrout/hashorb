@@ -19,6 +19,7 @@ from hashphere.mining import (
     NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
+    SequentialSearchStrategy,
 )
 from hashphere.network.stratum import (
     MiningNotifyNotification,
@@ -457,6 +458,63 @@ def test_unavailable_backend_fails_before_client_construction(
     assert client_calls == 0
 
 
+def test_unknown_strategy_fails_before_client_construction_without_echoing_selector(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_selector = "private-looking-strategy"
+    settings = replace(make_settings(), search_strategy=private_selector)
+    client_calls = 0
+
+    def forbidden_client(*args: object, **kwargs: object) -> object:
+        nonlocal client_calls
+        client_calls += 1
+        raise AssertionError("client must not be constructed")
+
+    monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(lambda cls: settings))
+    monkeypatch.setattr(cli_module, "StratumClient", forbidden_client)
+    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+
+    assert cli_module.main(mining_arguments()) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Search strategy configuration is invalid.\n"
+    assert private_selector not in captured.err
+    assert client_calls == 0
+
+
+def test_incompatible_strategy_and_backend_fail_before_client_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    client_calls = 0
+
+    class IncompatibleStrategy(SequentialSearchStrategy):
+        def supports_backend(self, capabilities: object) -> bool:
+            del capabilities
+            return False
+
+    def forbidden_client(*args: object, **kwargs: object) -> object:
+        nonlocal client_calls
+        client_calls += 1
+        raise AssertionError("client must not be constructed")
+
+    monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(lambda cls: settings))
+    monkeypatch.setattr(
+        cli_module,
+        "_select_configured_search_strategy",
+        lambda received: IncompatibleStrategy(),
+    )
+    monkeypatch.setattr(cli_module, "StratumClient", forbidden_client)
+    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+
+    assert cli_module.main(mining_arguments()) == 2
+    assert client_calls == 0
+
+
 @pytest.mark.parametrize("value", [None, "", "true", "01", " 1"])
 def test_live_mining_opt_in_must_equal_exactly_one(
     monkeypatch: pytest.MonkeyPatch,
@@ -490,7 +548,9 @@ def test_exact_range_reaches_one_prepare_and_one_search(
     assert harness.search_calls[0][1:] == (9, 14)
     assert client.submit_calls == []
     assert client.close_calls == 1
-    assert "Compute backend: python" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Compute backend: python" in output
+    assert "Search strategy: sequential" in output
 
 
 @pytest.mark.parametrize(
@@ -559,6 +619,7 @@ def test_one_shot_uses_one_selected_native_backend_and_emits_safe_identity(
     assert backend.close_calls == 1
     output = capsys.readouterr().out
     assert f"Compute backend: {backend_name}" in output
+    assert "Search strategy: sequential" in output
     if worker_count is not None:
         assert f"Compute workers: {worker_count}" in output
     selected = read_event_log(path)[1]
@@ -710,6 +771,7 @@ def test_exhausted_mining_jsonl_event_order_and_metrics(
     assert [record["event"] for record in records] == [
         "command_started",
         "compute_backend_selected",
+        "search_strategy_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -732,12 +794,28 @@ def test_exhausted_mining_jsonl_event_order_and_metrics(
         "supports_parallel_search": False,
         "supports_cooperative_cancellation": False,
     }
-    assert records[5]["start_nonce"] == 7
-    assert records[5]["stop_nonce"] == 10
-    assert records[6]["hashes_checked"] == 3
-    assert records[6]["elapsed_ns"] == 1_000_000
-    assert records[6]["hashes_per_second"] == 3000.0
-    assert records[6]["match_found"] is False
+    strategy_record = records[2]
+    assert strategy_record == {
+        "schema_version": 1,
+        "timestamp": strategy_record["timestamp"],
+        "run_id": strategy_record["run_id"],
+        "sequence": 3,
+        "level": "INFO",
+        "event": "search_strategy_selected",
+        "command": "stratum-mine-once",
+        "strategy_name": "sequential",
+        "implementation": "sequential",
+        "deterministic": True,
+        "contiguous_parent_ranges": True,
+        "exhaustive": True,
+        "experimental": False,
+    }
+    assert records[6]["start_nonce"] == 7
+    assert records[6]["stop_nonce"] == 10
+    assert records[7]["hashes_checked"] == 3
+    assert records[7]["elapsed_ns"] == 1_000_000
+    assert records[7]["hashes_per_second"] == 3000.0
+    assert records[7]["match_found"] is False
     assert records[-1]["outcome"] == "range_exhausted"
     assert all(not record["event"].startswith("share_") for record in records)
     assert client.submit_calls == []
@@ -806,6 +884,7 @@ def test_matched_mining_jsonl_event_order_and_submission_result(
     assert [record["event"] for record in records] == [
         "command_started",
         "compute_backend_selected",
+        "search_strategy_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -815,9 +894,9 @@ def test_matched_mining_jsonl_event_order_and_submission_result(
         "share_submission_completed",
         "command_completed",
     ]
-    assert records[7]["nonce"] == 305419896
-    assert records[7]["abbreviated_block_hash"] == "12345678…00000000"
-    assert records[8]["accepted"] is pool_result
+    assert records[8]["nonce"] == 305419896
+    assert records[8]["abbreviated_block_hash"] == "12345678…00000000"
+    assert records[9]["accepted"] is pool_result
     assert records[-1]["outcome"] == expected_outcome
     assert records[-1]["level"] == expected_level
     assert len(client.submit_calls) == 1
@@ -881,6 +960,7 @@ def test_mining_failure_writes_sanitized_command_failed_event(
     assert [record["event"] for record in records] == [
         "command_started",
         "compute_backend_selected",
+        "search_strategy_selected",
         "stratum_authorized",
         "command_failed",
     ]

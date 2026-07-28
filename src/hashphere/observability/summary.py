@@ -43,6 +43,7 @@ class LogSummary:
     last_timestamp: str | None
     command_counts: tuple[tuple[str, int], ...]
     compute_backend_counts: tuple[tuple[str, int], ...]
+    search_strategy_counts: tuple[tuple[str, int], ...]
     completion_outcome_counts: tuple[tuple[str, int], ...]
     difficulty_event_count: int
     mining_job_event_count: int
@@ -83,6 +84,7 @@ class _Accumulator:
     latest: datetime | None = None
     outcome_counts: Counter[str] = field(default_factory=Counter)
     compute_backend_counts: Counter[str] = field(default_factory=Counter)
+    search_strategy_counts: Counter[str] = field(default_factory=Counter)
     failure_counts: Counter[tuple[str, str]] = field(default_factory=Counter)
     difficulty_event_count: int = 0
     mining_job_event_count: int = 0
@@ -300,6 +302,20 @@ def _aggregate_known_event(
             "supports_cooperative_cancellation",
         )
         accumulator.compute_backend_counts[backend_name] += 1
+    elif event == "search_strategy_selected":
+        strategy_name = _nonblank_string(
+            _required(record, "strategy_name"),
+            "strategy_name",
+        )
+        _nonblank_string(_required(record, "implementation"), "implementation")
+        _actual_bool(_required(record, "deterministic"), "deterministic")
+        _actual_bool(
+            _required(record, "contiguous_parent_ranges"),
+            "contiguous_parent_ranges",
+        )
+        _actual_bool(_required(record, "exhaustive"), "exhaustive")
+        _actual_bool(_required(record, "experimental"), "experimental")
+        accumulator.search_strategy_counts[strategy_name] += 1
     elif event == "difficulty_received":
         _positive_number(_required(record, "difficulty"), "difficulty")
         accumulator.difficulty_event_count += 1
@@ -486,6 +502,7 @@ def _build_summary(accumulator: _Accumulator) -> LogSummary:
         last_timestamp=_format_timestamp(accumulator.latest),
         command_counts=tuple(sorted(command_counts.items())),
         compute_backend_counts=tuple(sorted(accumulator.compute_backend_counts.items())),
+        search_strategy_counts=tuple(sorted(accumulator.search_strategy_counts.items())),
         completion_outcome_counts=tuple(sorted(accumulator.outcome_counts.items())),
         difficulty_event_count=accumulator.difficulty_event_count,
         mining_job_event_count=accumulator.mining_job_event_count,

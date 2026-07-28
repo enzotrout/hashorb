@@ -37,12 +37,16 @@ from hashphere.mining import (
     MiningJob,
     MiningJobAssembler,
     MiningJobError,
+    MiningSearchStrategy,
     MiningWorkProgressionError,
     NonceSearchError,
     NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
     ReconnectPolicy,
+    SearchStrategyError,
+    SearchStrategySelectionError,
+    SearchStrategyValidationError,
     SessionRecoveryError,
     SessionRecoveryExhaustedError,
     StopController,
@@ -50,10 +54,13 @@ from hashphere.mining import (
     StratumRecoveryStatistics,
     StratumSessionRecovery,
     TargetError,
+    builtin_search_strategy_registry,
     prepare_mining_work,
     run_chunked_mining,
     run_continuous_mining,
     search_nonce_range,
+    select_search_strategy,
+    validate_search_strategy_compatibility,
     wait_for_reconnect_delay,
 )
 from hashphere.network.stratum import (
@@ -689,6 +696,11 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
         for backend_name, count in summary.compute_backend_counts:
             print(f"  {backend_name}: {count}")
 
+    if summary.search_strategy_counts:
+        print("\nSearch strategies:")
+        for strategy_name, count in summary.search_strategy_counts:
+            print(f"  {strategy_name}: {count}")
+
     if summary.completion_outcome_counts:
         print("\nCompletion outcomes:")
         for outcome, count in summary.completion_outcome_counts:
@@ -862,9 +874,10 @@ def _run_stratum_mine_once(
     if settings is None:
         _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
         return 2
-    backend = _select_live_mining_backend(settings, events)
-    if backend is None:
+    selection = _select_live_mining_components(settings, events)
+    if selection is None:
         return 2
+    backend, strategy = selection
 
     client: StratumClient | None = None
     outcome: _MiningOutcome | None = None
@@ -903,6 +916,7 @@ def _run_stratum_mine_once(
         TargetError,
         NonceSearchError,
         ComputeBackendError,
+        SearchStrategyError,
         TypeError,
         ValueError,
     ) as exc:
@@ -957,6 +971,7 @@ def _run_stratum_mine_once(
         settings,
         backend.capabilities.backend_name,
         compute_backend_worker_count(backend),
+        strategy.capabilities.strategy_name,
         start_nonce,
         stop_nonce,
         outcome,
@@ -974,9 +989,10 @@ def _run_stratum_mine_chunks(
     if settings is None:
         _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
         return 2
-    backend = _select_live_mining_backend(settings, events)
-    if backend is None:
+    selection = _select_live_mining_components(settings, events)
+    if selection is None:
         return 2
+    backend, strategy = selection
 
     client: StratumClient | None = None
     result: ChunkedMiningResult | None = None
@@ -1003,6 +1019,7 @@ def _run_stratum_mine_chunks(
                 match.nonce,
             ),
             observer=observer,
+            strategy=strategy,
             prepare_work=prepare_mining_work,
             search_range=backend.search_nonce_range,
         )
@@ -1027,6 +1044,7 @@ def _run_stratum_mine_chunks(
         TargetError,
         NonceSearchError,
         ComputeBackendError,
+        SearchStrategyError,
         ChunkedMiningError,
         TypeError,
         ValueError,
@@ -1082,6 +1100,7 @@ def _run_stratum_mine_chunks(
         settings,
         backend.capabilities.backend_name,
         compute_backend_worker_count(backend),
+        strategy.capabilities.strategy_name,
         plan,
         result,
     )
@@ -1099,9 +1118,10 @@ def _run_stratum_mine(
     if settings is None:
         _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
         return 2
-    backend = _select_live_mining_backend(settings, events)
-    if backend is None:
+    selection = _select_live_mining_components(settings, events)
+    if selection is None:
         return 2
+    backend, strategy = selection
 
     controller = StopController()
     signal_scope = _StopSignalScope(controller)
@@ -1143,6 +1163,7 @@ def _run_stratum_mine(
                     match.nonce,
                 ),
                 observer=observer,
+                strategy=strategy,
                 prepare_work=prepare_mining_work,
                 search_range=backend.search_nonce_range,
                 recover_session=recovery.recover_session,
@@ -1182,6 +1203,7 @@ def _run_stratum_mine(
         TargetError,
         NonceSearchError,
         ComputeBackendError,
+        SearchStrategyError,
         MiningWorkProgressionError,
         SessionRecoveryError,
         ContinuousMiningError,
@@ -1251,6 +1273,7 @@ def _run_stratum_mine(
         settings,
         backend.capabilities.backend_name,
         compute_backend_worker_count(backend),
+        strategy.capabilities.strategy_name,
         subscription,
         plan,
         reconnect_policy,
@@ -1305,11 +1328,20 @@ def _select_configured_compute_backend(settings: Settings) -> MiningComputeBacke
     return select_compute_backend(settings.compute_backend, registry)
 
 
-def _select_live_mining_backend(
+def _select_configured_search_strategy(settings: Settings) -> MiningSearchStrategy:
+    """Select one invocation-local search strategy without dynamic loading."""
+
+    return select_search_strategy(
+        settings.search_strategy,
+        builtin_search_strategy_registry(),
+    )
+
+
+def _select_live_mining_components(
     settings: Settings,
     events: EventSink,
-) -> MiningComputeBackend | None:
-    """Return one configured backend or emit a controlled configuration failure."""
+) -> tuple[MiningComputeBackend, MiningSearchStrategy] | None:
+    """Select a compatible backend and strategy before live networking."""
 
     try:
         backend = _select_configured_compute_backend(settings)
@@ -1317,8 +1349,24 @@ def _select_live_mining_backend(
         print("Compute backend configuration is invalid.", file=sys.stderr)
         _emit_command_failed(events, "configuration", _error_category(exc))
         return None
+    try:
+        strategy = _select_configured_search_strategy(settings)
+        validate_search_strategy_compatibility(strategy, backend.capabilities)
+    except (
+        SearchStrategySelectionError,
+        SearchStrategyValidationError,
+        SearchStrategyError,
+    ) as exc:
+        try:
+            close_compute_backend(backend)
+        except ComputeBackendError:
+            pass
+        print("Search strategy configuration is invalid.", file=sys.stderr)
+        _emit_command_failed(events, "configuration", _error_category(exc))
+        return None
     _emit_compute_backend_selected(events, backend)
-    return backend
+    _emit_search_strategy_selected(events, strategy)
+    return backend, strategy
 
 
 def _parse_log_file(arguments: Sequence[str]) -> str | None:
@@ -1842,6 +1890,26 @@ def _emit_compute_backend_selected(
     )
 
 
+def _emit_search_strategy_selected(
+    events: EventSink,
+    strategy: MiningSearchStrategy,
+) -> None:
+    """Emit stable strategy capabilities without cursor or work state."""
+
+    capabilities = strategy.capabilities
+    events.emit(
+        "search_strategy_selected",
+        fields={
+            "strategy_name": capabilities.strategy_name,
+            "implementation": capabilities.implementation,
+            "deterministic": capabilities.deterministic,
+            "contiguous_parent_ranges": capabilities.contiguous_parent_ranges,
+            "exhaustive": capabilities.exhaustive,
+            "experimental": capabilities.experimental,
+        },
+    )
+
+
 def _emit_difficulty_received(
     events: EventSink,
     notification: SetDifficultyNotification,
@@ -1914,6 +1982,9 @@ def _error_category(error: BaseException) -> str:
         (ComputeBackendSelectionError, "ComputeBackendSelectionError"),
         (ComputeBackendValidationError, "ComputeBackendValidationError"),
         (ComputeBackendError, "ComputeBackendError"),
+        (SearchStrategySelectionError, "SearchStrategySelectionError"),
+        (SearchStrategyValidationError, "SearchStrategyValidationError"),
+        (SearchStrategyError, "SearchStrategyError"),
         (MiningWorkProgressionError, "MiningWorkProgressionError"),
         (SessionRecoveryExhaustedError, "SessionRecoveryExhaustedError"),
         (SessionRecoveryError, "SessionRecoveryError"),
@@ -1980,6 +2051,7 @@ def _print_mining_outcome(
     settings: Settings,
     backend_name: str,
     worker_count: int | None,
+    strategy_name: str,
     start_nonce: int,
     stop_nonce: int,
     outcome: _MiningOutcome,
@@ -1992,6 +2064,7 @@ def _print_mining_outcome(
     print(f"Compute backend: {backend_name}")
     if worker_count is not None:
         print(f"Compute workers: {worker_count}")
+    print(f"Search strategy: {strategy_name}")
     print(f"Job ID: {outcome.job.job_id}")
     print(f"Difficulty: {outcome.job.difficulty}")
     print(f"Network bits: {outcome.job.network_bits}")
@@ -2023,6 +2096,7 @@ def _print_chunked_mining_outcome(
     settings: Settings,
     backend_name: str,
     worker_count: int | None,
+    strategy_name: str,
     plan: ChunkedMiningPlan,
     result: ChunkedMiningResult,
 ) -> None:
@@ -2034,6 +2108,7 @@ def _print_chunked_mining_outcome(
     print(f"Compute backend: {backend_name}")
     if worker_count is not None:
         print(f"Compute workers: {worker_count}")
+    print(f"Search strategy: {strategy_name}")
     print(f"Initial job ID: {result.initial_job.job_id}")
     print(f"Final job ID: {result.final_job.job_id}")
     print(f"Final difficulty: {result.final_job.difficulty}")
@@ -2072,6 +2147,7 @@ def _print_continuous_mining_outcome(
     settings: Settings,
     backend_name: str,
     worker_count: int | None,
+    strategy_name: str,
     subscription: SubscribeResult | None,
     plan: ContinuousMiningPlan,
     reconnect_policy: ReconnectPolicy,
@@ -2087,6 +2163,7 @@ def _print_continuous_mining_outcome(
     print(f"Compute backend: {backend_name}")
     if worker_count is not None:
         print(f"Compute workers: {worker_count}")
+    print(f"Search strategy: {strategy_name}")
     if result is None:
         print("Final difficulty: unavailable")
         print("Network bits: unavailable")

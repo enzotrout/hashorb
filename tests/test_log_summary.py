@@ -87,6 +87,7 @@ def test_empty_file_returns_immutable_zero_summary(tmp_path: Path) -> None:
         last_timestamp=None,
         command_counts=(),
         compute_backend_counts=(),
+        search_strategy_counts=(),
         completion_outcome_counts=(),
         difficulty_event_count=0,
         mining_job_event_count=0,
@@ -348,6 +349,51 @@ def test_backend_selections_are_aggregated_without_affecting_weighted_rate(
 
     assert summary.compute_backend_counts == (("future_native", 1), ("python", 1))
     assert summary.weighted_hashes_per_second == 500_000_000.0
+
+
+def test_strategy_selections_are_aggregated_without_cursor_state(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_path / "strategies.jsonl"
+    write_records(
+        path,
+        [
+            event_record("one", 1, "command_started", command="stratum-mine"),
+            event_record(
+                "one",
+                2,
+                "search_strategy_selected",
+                command="stratum-mine",
+                strategy_name="sequential",
+                implementation="sequential",
+                deterministic=True,
+                contiguous_parent_ranges=True,
+                exhaustive=True,
+                experimental=False,
+            ),
+            event_record("two", 1, "command_started", command="stratum-mine"),
+            event_record(
+                "two",
+                2,
+                "search_strategy_selected",
+                command="stratum-mine",
+                strategy_name="future",
+                implementation="future",
+                deterministic=False,
+                contiguous_parent_ranges=False,
+                exhaustive=False,
+                experimental=True,
+            ),
+        ],
+    )
+
+    summary = summarize_jsonl(path)
+
+    assert summary.search_strategy_counts == (("future", 1), ("sequential", 1))
+    assert summary.weighted_hashes_per_second is None
+    assert cli_module.main(["logs-summary", "--log-file", str(path)]) == 0
+    assert "Search strategies:\n  future: 1\n  sequential: 1" in capsys.readouterr().out
 
 
 def test_progression_events_are_aggregated_without_affecting_weighted_rate(

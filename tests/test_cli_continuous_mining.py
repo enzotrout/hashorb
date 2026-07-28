@@ -500,6 +500,7 @@ def test_three_chunk_limit_prints_sanitized_aggregate_and_closes(
     output = capsys.readouterr().out
     assert "Maximum chunks: 3" in output
     assert "Compute backend: python" in output
+    assert "Search strategy: sequential" in output
     assert "Chunks completed: 3" in output
     assert "Work variants used: 1" in output
     assert "Extra nonce 2 advances: 0" in output
@@ -762,6 +763,15 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
 
     harness.backend_selection_calls = 0
     monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select)
+    original_strategy_selector = cli_module._select_configured_search_strategy
+    strategy_selection_calls = 0
+
+    def select_strategy(settings: Settings) -> object:
+        nonlocal strategy_selection_calls
+        strategy_selection_calls += 1
+        return original_strategy_selector(settings)
+
+    monkeypatch.setattr(cli_module, "_select_configured_search_strategy", select_strategy)
 
     assert cli_module.main(arguments(max_chunks="2", max_reconnect_attempts="1")) == 0
 
@@ -775,11 +785,13 @@ def test_poll_connection_loss_recovers_with_changed_negotiated_extra_nonce_size(
     ]
     assert harness.generated_sizes == [4, 2]
     assert harness.backend_selection_calls == 1
+    assert strategy_selection_calls == 1
     assert backend.close_calls == 1
     assert failed.close_calls == 1
     assert recovered.close_calls == 1
     output = capsys.readouterr().out
     assert f"Compute backend: {backend_name}" in output
+    assert "Search strategy: sequential" in output
     if worker_count is not None:
         assert f"Compute workers: {worker_count}" in output
     assert "Extra nonce 2 size: 2" in output
@@ -1144,6 +1156,7 @@ def test_logged_stop_is_ordered_sanitized_and_summary_compatible(
     assert [record["event"] for record in records] == [
         "command_started",
         "compute_backend_selected",
+        "search_strategy_selected",
         "stratum_authorized",
         "difficulty_received",
         "mining_job_received",
@@ -1154,9 +1167,9 @@ def test_logged_stop_is_ordered_sanitized_and_summary_compatible(
         "command_completed",
     ]
     assert records[-1]["outcome"] == "stopped_by_user"
-    assert records[6]["start_nonce"] == 0
-    assert records[6]["stop_nonce"] == 2
-    assert records[7]["hashes_checked"] == 2
+    assert records[7]["start_nonce"] == 0
+    assert records[7]["stop_nonce"] == 2
+    assert records[8]["hashes_checked"] == 2
     summary = summarize_jsonl(path)
     assert summary.command_counts == (("stratum-mine", 1),)
     assert summary.completed_nonce_range_count == 1

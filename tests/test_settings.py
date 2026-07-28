@@ -18,6 +18,7 @@ _ENVIRONMENT_VARIABLES = (
     "HASHPHERE_COMPUTE_BACKEND",
     "HASHPHERE_COMPUTE_PROFILE",
     "HASHPHERE_COMPUTE_WORKERS",
+    "HASHPHERE_SEARCH_STRATEGY",
 )
 
 
@@ -84,6 +85,7 @@ def test_settings_load_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.compute_backend == "auto"
     assert settings.compute_profile == "lite"
     assert settings.compute_workers == 2
+    assert settings.search_strategy == "sequential"
 
 
 def test_settings_load_explicit_values(
@@ -100,6 +102,7 @@ def test_settings_load_explicit_values(
     monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "GPU")
     monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", "MAX")
     monkeypatch.setenv("HASHPHERE_COMPUTE_WORKERS", "256")
+    monkeypatch.setenv("HASHPHERE_SEARCH_STRATEGY", "auto")
 
     settings = Settings.from_env()
 
@@ -110,6 +113,7 @@ def test_settings_load_explicit_values(
     assert settings.compute_backend == "gpu"
     assert settings.compute_profile == "max"
     assert settings.compute_workers == 256
+    assert settings.search_strategy == "auto"
 
 
 def test_missing_bitcoin_address_is_rejected() -> None:
@@ -177,4 +181,30 @@ def test_compute_workers_reject_malformed_or_out_of_range_values(
     monkeypatch.setenv("HASHPHERE_COMPUTE_WORKERS", workers)
 
     with pytest.raises(ValueError, match="HASHPHERE_COMPUTE_WORKERS"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("strategy", ["sequential", "auto", "future-strategy"])
+def test_search_strategy_accepts_exact_identifiers(
+    monkeypatch: pytest.MonkeyPatch,
+    strategy: str,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_SEARCH_STRATEGY", strategy)
+
+    assert Settings.from_env().search_strategy == strategy
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    ["", "Sequential", " sequential", "sequential ", "two words", "+sequential", "é"],
+)
+def test_search_strategy_rejects_malformed_values(
+    monkeypatch: pytest.MonkeyPatch,
+    strategy: str,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_SEARCH_STRATEGY", strategy)
+
+    with pytest.raises(ValueError, match="HASHPHERE_SEARCH_STRATEGY"):
         Settings.from_env()
