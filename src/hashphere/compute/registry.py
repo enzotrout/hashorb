@@ -140,7 +140,7 @@ def select_compute_backend(
 def list_compute_backends(
     registry: ComputeBackendRegistry | None = None,
 ) -> tuple[ComputeBackendCapabilities, ...]:
-    """List deterministic immutable capabilities without hardware probing."""
+    """List deterministic capabilities, probing CUDA availability when built in."""
 
     selected_registry = (
         builtin_compute_backend_registry(initialize_cuda=True) if registry is None else registry
