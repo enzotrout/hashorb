@@ -14,6 +14,7 @@ from hashphere.compute import (
     ComputeBackendSelectionError,
     ComputeBackendValidationError,
     MiningComputeBackend,
+    NativeSequentialBackend,
     PythonSequentialBackend,
     builtin_compute_backend_registry,
     list_compute_backends,
@@ -297,11 +298,12 @@ def test_registry_lists_builtins_deterministically_and_is_isolated() -> None:
     second = builtin_compute_backend_registry()
 
     assert first is not second
-    assert (
-        first.list_capabilities()
-        == second.list_capabilities()
-        == (PythonSequentialBackend().capabilities,)
+    assert first.list_capabilities() == second.list_capabilities()
+    assert tuple(item.backend_name for item in first.list_capabilities()) == (
+        "native",
+        "python",
     )
+    assert first.list_capabilities()[1] == PythonSequentialBackend().capabilities
     assert list_compute_backends(first) == first.list_capabilities()
 
 
@@ -324,6 +326,23 @@ def test_registry_selection_supports_exact_python_auto_and_legacy_cpu() -> None:
     assert registry.select("auto").capabilities.backend_name == "python"
     assert registry.select("cpu").capabilities.backend_name == "python"
     assert select_compute_backend("python", registry).capabilities.backend_name == "python"
+
+
+def test_registry_exposes_controlled_unavailable_native_without_affecting_python() -> None:
+    registry = builtin_compute_backend_registry(
+        native_backend=NativeSequentialBackend(None),
+    )
+
+    native, python = registry.list_capabilities()
+    assert native.backend_name == "native"
+    assert native.available is False
+    assert native.unavailable_reason == "ExtensionNotInstalled"
+    assert python.backend_name == "python"
+    assert python.available is True
+    assert registry.select("auto").capabilities.backend_name == "python"
+    assert registry.select("cpu").capabilities.backend_name == "python"
+    with pytest.raises(ComputeBackendSelectionError, match="unavailable"):
+        registry.select("native")
 
 
 def test_registry_rejects_unknown_unavailable_and_invalid_selection_safely() -> None:

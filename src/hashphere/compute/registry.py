@@ -11,6 +11,7 @@ from hashphere.compute.backend import (
     ComputeBackendValidationError,
     MiningComputeBackend,
 )
+from hashphere.compute.native import NativeSequentialBackend
 from hashphere.compute.python import PythonSequentialBackend, RangeSearcher
 
 _AUTO_SELECTOR = "auto"
@@ -76,15 +77,19 @@ class ComputeBackendRegistry:
 def builtin_compute_backend_registry(
     *,
     python_searcher: RangeSearcher | None = None,
+    native_backend: NativeSequentialBackend | None = None,
 ) -> ComputeBackendRegistry:
-    """Create a fresh deterministic registry containing the Python backend."""
+    """Create a fresh registry containing Python and optional native execution."""
 
     python_backend = (
         PythonSequentialBackend()
         if python_searcher is None
         else PythonSequentialBackend(python_searcher)
     )
-    return ComputeBackendRegistry((python_backend,))
+    selected_native = NativeSequentialBackend() if native_backend is None else native_backend
+    if not isinstance(selected_native, NativeSequentialBackend):
+        raise ComputeBackendValidationError("native_backend must be NativeSequentialBackend")
+    return ComputeBackendRegistry((python_backend, selected_native))
 
 
 def select_compute_backend(

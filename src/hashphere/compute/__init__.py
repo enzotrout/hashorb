@@ -8,6 +8,7 @@ from hashphere.compute.backend import (
     ComputeBackendValidationError,
     MiningComputeBackend,
 )
+from hashphere.compute.native import NativeSequentialBackend
 from hashphere.compute.python import PythonSequentialBackend
 from hashphere.compute.registry import (
     ComputeBackendRegistry,
@@ -24,6 +25,7 @@ __all__ = [
     "ComputeBackendSelectionError",
     "ComputeBackendValidationError",
     "MiningComputeBackend",
+    "NativeSequentialBackend",
     "PythonSequentialBackend",
     "builtin_compute_backend_registry",
     "list_compute_backends",
