@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import sysconfig
 from pathlib import Path
 
@@ -11,6 +12,46 @@ from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
 _CUDA_BUILD_FLAG = "HASHPHERE_BUILD_CUDA"
+
+
+def _cuda_arch_flags(arch: str | None = None) -> list[str]:
+    """Return nvcc architecture flags for the configured CUDA target."""
+
+    requested = (arch or os.getenv("HASHPHERE_CUDA_ARCH", "121")).strip()
+    if not requested:
+        requested = "121"
+    normalized = requested.lower()
+    if normalized.startswith("sm_"):
+        normalized = normalized[3:]
+    elif normalized.startswith("compute_"):
+        normalized = normalized[8:]
+    if normalized in {"120", "121"}:
+        return ["-gencode", f"arch=compute_{normalized},code=sm_{normalized}"]
+    raise RuntimeError("HASHPHERE_CUDA_ARCH must be 120 or 121")
+
+
+def _discover_cuda_library_dirs(cuda_root: Path) -> list[str]:
+    """Discover CUDA runtime library directories for the current toolkit layout."""
+
+    discovered: list[str] = []
+    seen: set[str] = set()
+    for base in (cuda_root, cuda_root / "targets"):
+        if not base.exists():
+            continue
+        for child in (base / "lib64", base / "lib"):
+            if child.exists() and str(child) not in seen:
+                discovered.append(str(child))
+                seen.add(str(child))
+    targets_root = cuda_root / "targets"
+    if targets_root.exists():
+        for target_dir in sorted(targets_root.iterdir()):
+            if not target_dir.is_dir():
+                continue
+            for child in (target_dir / "lib", target_dir / "lib64"):
+                if child.exists() and str(child) not in seen:
+                    discovered.append(str(child))
+                    seen.add(str(child))
+    return discovered
 
 
 class CudaBuildExt(build_ext):
@@ -60,6 +101,7 @@ class CudaBuildExt(build_ext):
                 "-o",
                 object_file,
                 "-std=c++17",
+                *_cuda_arch_flags(),
                 "-Xcompiler=-fPIC",
             ]
             command.extend(
@@ -83,7 +125,14 @@ def cuda_extension() -> Extension:
     nvcc = shutil.which("nvcc")
     if nvcc is None:
         raise RuntimeError("HASHPHERE_BUILD_CUDA=1 requires nvcc")
-    cuda_root = Path(nvcc).resolve().parent.parent
+    cuda_home = os.getenv("CUDA_HOME") or os.getenv("CUDA_PATH")
+    cuda_root = Path(cuda_home).resolve() if cuda_home else Path(nvcc).resolve().parent.parent
+    library_dirs = _discover_cuda_library_dirs(cuda_root)
+    if not library_dirs:
+        raise RuntimeError(
+            "CUDA runtime library directory could not be discovered; set CUDA_HOME or CUDA_PATH"
+        )
+    runtime_library_dirs = library_dirs if sys.platform != "win32" else []
     return Extension(
         "hashphere.compute._cuda",
         sources=["src/hashphere/compute/_cuda.cu"],
@@ -91,7 +140,8 @@ def cuda_extension() -> Extension:
             sysconfig.get_paths()["include"],
             str(cuda_root / "include"),
         ],
-        library_dirs=[str(cuda_root / "lib64")],
+        library_dirs=library_dirs,
+        runtime_library_dirs=runtime_library_dirs,
         libraries=["cudart"],
         language="c++",
         optional=False,
