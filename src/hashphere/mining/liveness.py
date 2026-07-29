@@ -103,6 +103,11 @@ class StratumLivenessTracker:
         if isinstance(notification, MiningNotifyNotification):
             self._last_job_at = now
 
+    def server_message_received(self) -> None:
+        """Refresh server activity for a complete non-notification response."""
+
+        self._last_server_at = _read_clock(self._clock)
+
     def range_completed(self) -> None:
         """Refresh work activity without changing server or job activity."""
 

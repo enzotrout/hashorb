@@ -836,6 +836,7 @@ def run_continuous_mining(
             accepted = current_submit_share(current_work, match)
             if not isinstance(accepted, bool):
                 raise ContinuousMiningValidationError("submit_share must return an actual Boolean")
+            liveness.server_message_received()
             if stop_token.stop_requested:
                 observe_stop()
             event_observer.submission_completed(current_work, match, accepted)

@@ -541,6 +541,32 @@ def test_stale_reconnect_exhaustion_retains_liveness_stage() -> None:
     assert ("attempted", 1, 1, "liveness") in harness.observations
 
 
+def test_server_silence_while_awaiting_initial_work_enters_existing_recovery() -> None:
+    now = [0.0]
+    silent = FakeClient(notifications=[None])
+    fresh = FakeClient(notifications=[difficulty(), job("fresh"), None])
+    silent.on_poll = lambda call: now.__setitem__(0, 1.0)
+    harness = Harness(clients=deque([silent, fresh]))
+    recovery = StratumSessionRecovery(
+        ReconnectPolicy(maximum_attempts=1),
+        harness.controller,
+        client_factory=harness.create_client,
+        seed_factory=harness.generate_seed,
+        observer=harness,
+        backoff_waiter=harness.wait,
+        server_silence_seconds=1.0,
+        clock=lambda: now[0],
+    )
+
+    session = recovery.establish_initial_session()
+
+    assert session is not None
+    assert session.initial_job.job_id == "fresh"
+    assert silent.close_calls == 1
+    assert fresh.close_calls == 0
+    assert ("lost", "session_work", "StratumConnectionError") in harness.observations
+
+
 def test_failed_client_close_does_not_hide_recovery() -> None:
     old_client = FakeClient(close_failure=OSError("close failed"))
     new_client = FakeClient()

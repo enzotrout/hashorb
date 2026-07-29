@@ -544,6 +544,11 @@ reused. Runtime expiry or a signal during delay prevents another client or
 range. Recovery success is not a command failure; exhaustion retains the
 existing terminal recovery failure semantics.
 
+The server-silence policy also applies after authorization while recovery waits
+for the first usable difficulty/job pair. A silent initial client is closed and
+retried through the same `session_work` recovery stage; no hashing has begun and
+job-age policy starts only after usable work exists.
+
 The transport enables `SO_KEEPALIVE` with OS defaults when supported. It does
 not tune Linux, macOS, or Windows intervals and performs no privileged or global
 configuration. Keepalive may identify some dead peers but cannot detect an

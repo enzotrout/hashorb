@@ -349,6 +349,8 @@ class StratumSessionRecovery:
         "_current_session",
         "_failed_reconnect_attempts",
         "_notification_timeout_seconds",
+        "_server_silence_seconds",
+        "_clock",
         "_observer",
         "_policy",
         "_reconnect_attempts",
@@ -368,6 +370,8 @@ class StratumSessionRecovery:
         observer: StratumSessionRecoveryObserver | None = None,
         backoff_waiter: BackoffWaiter = lambda delay, stop: wait_for_reconnect_delay(delay, stop),
         notification_timeout_seconds: float = _DEFAULT_NOTIFICATION_TIMEOUT_SECONDS,
+        server_silence_seconds: float | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not isinstance(policy, ReconnectPolicy):
             raise SessionRecoveryValidationError("policy must be a ReconnectPolicy")
@@ -384,6 +388,10 @@ class StratumSessionRecovery:
             notification_timeout_seconds,
             "notification_timeout_seconds",
         )
+        if server_silence_seconds is not None:
+            _validate_positive_number(server_silence_seconds, "server_silence_seconds")
+        if not callable(clock):
+            raise SessionRecoveryValidationError("clock must be callable")
         self._policy = policy
         self._stop_token = stop_token
         self._client_factory = client_factory
@@ -391,6 +399,8 @@ class StratumSessionRecovery:
         self._observer = NullStratumSessionRecoveryObserver() if observer is None else observer
         self._backoff_waiter = backoff_waiter
         self._notification_timeout_seconds = notification_timeout_seconds
+        self._server_silence_seconds = server_silence_seconds
+        self._clock = clock
         self._current_session: StratumMiningSession | None = None
         self._reconnect_attempts = 0
         self._successful_reconnects = 0
@@ -581,12 +591,19 @@ class StratumSessionRecovery:
         assembler: MiningJobAssembler,
     ) -> MiningJob | None:
         selected_job: MiningJob | None = None
+        last_server_activity = _read_finite_clock(self._clock)
         while not self._stop_token.stop_requested:
             timeout = 0.0 if selected_job is not None else float(self._notification_timeout_seconds)
             notification = client.poll_notification(timeout_seconds=timeout)
             if notification is None:
                 if selected_job is not None:
                     return selected_job
+                if self._server_silence_seconds is not None:
+                    elapsed = _read_finite_clock(self._clock) - last_server_activity
+                    if elapsed >= self._server_silence_seconds:
+                        raise StratumConnectionError(
+                            "configured server-silence threshold exceeded before usable work"
+                        )
                 continue
             if not isinstance(
                 notification,
@@ -594,6 +611,7 @@ class StratumSessionRecovery:
             ):
                 raise SessionRecoveryError("unsupported parsed Stratum notification")
             self._observer.notification_received(notification)
+            last_server_activity = _read_finite_clock(self._clock)
             if isinstance(notification, SetDifficultyNotification):
                 assembler.apply_difficulty(notification)
             elif assembler.current_difficulty is not None:
@@ -669,6 +687,16 @@ def _validate_seed(value: object, byte_size: int) -> str:
             "extra nonce seed must contain lowercase hexadecimal characters"
         )
     return value
+
+
+def _read_finite_clock(clock: Callable[[], float]) -> float:
+    value = clock()
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SessionRecoveryValidationError("clock must return a number")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise SessionRecoveryValidationError("clock must return a finite number")
+    return parsed
 
 
 def _validate_positive_number(value: object, name: str) -> float:

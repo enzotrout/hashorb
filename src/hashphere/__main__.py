@@ -1220,6 +1220,7 @@ def _run_stratum_mine(
             seed_factory=_generate_extra_nonce_2,
             observer=observer,
             backoff_waiter=wait_for_reconnect_delay,
+            server_silence_seconds=plan.max_server_silence_seconds,
         )
         session = recovery.establish_initial_session()
         if session is None:

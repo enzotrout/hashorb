@@ -88,6 +88,25 @@ def test_notify_refreshes_both_server_activity_and_job_age() -> None:
     assert tracker.violation() is None
 
 
+def test_complete_response_refreshes_server_activity_but_not_job_age() -> None:
+    now = [0.0]
+    tracker = StratumLivenessTracker(
+        StratumLivenessPolicy(max_server_silence_seconds=5, max_job_age_seconds=10),
+        clock=lambda: now[0],
+    )
+    now[0] = 4.0
+    tracker.server_message_received()
+    now[0] = 9.0
+    violation = tracker.violation()
+    assert violation is not None
+    assert violation.reason is StratumStaleReason.SERVER_SILENCE
+    now[0] = 10.0
+    tracker.server_message_received()
+    violation = tracker.violation()
+    assert violation is not None
+    assert violation.reason is StratumStaleReason.JOB_AGE
+
+
 def test_range_completion_refreshes_only_work_activity() -> None:
     now = [0.0]
     tracker = StratumLivenessTracker(
