@@ -181,6 +181,51 @@ def test_zero_elapsed_rate_is_unavailable(
     assert "Hashes per second: unavailable" in capsys.readouterr().out
 
 
+def test_repeated_benchmark_separates_first_warmup_and_measured_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = fake_backend("cuda", elapsed_ns=10)
+    monkeypatch.setattr(
+        cli_module,
+        "_select_benchmark_compute_backend",
+        lambda name, workers, device: backend,
+    )
+
+    assert (
+        cli_module.main(
+            [
+                "compute-benchmark",
+                "--backend",
+                "cuda",
+                "--device",
+                "3",
+                "--hash-count",
+                "3",
+                "--warmup-runs",
+                "2",
+                "--repetitions",
+                "3",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "Hashphere repeated compute benchmark completed." in output
+    assert "First launch: 10 ns" in output
+    assert "Warmup runs: 2" in output
+    assert "Measured repetitions: 3" in output
+    assert "Median elapsed time: 10 ns" in output
+    assert "Minimum hashes per second: 300000000.00" in output
+    assert "Maximum hashes per second: 300000000.00" in output
+    assert "Initialization:" in output
+    assert "Total backend-call wall time:" in output
+    assert "Cleanup:" in output
+    assert len(backend.calls) == 6
+    assert backend.close_calls == [None]
+
+
 def test_candidate_output_omits_candidate_and_fixture_values(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -230,6 +275,11 @@ def test_candidate_output_omits_candidate_and_fixture_values(
         ["--backend", "python", "--start-nonce", "01", "--hash-count", "1"],
         ["--backend", "python", "--start-nonce", "4294967295", "--hash-count", "2"],
         ["--backend", "python", "--hash-count", "1", "--unknown", "x"],
+        ["--backend", "python", "--hash-count", "1", "--warmup-runs", "-1"],
+        ["--backend", "python", "--hash-count", "1", "--warmup-runs", "101"],
+        ["--backend", "python", "--hash-count", "1", "--repetitions", "0"],
+        ["--backend", "python", "--hash-count", "1", "--repetitions", "101"],
+        ["--backend", "python", "--hash-count", "1", "--repetitions", "1.5"],
         ["--backend", "python", "--backend", "native", "--hash-count", "1"],
         ["--backend", "python", "--workers", "2", "--hash-count", "1"],
         ["--backend", "native", "--workers", "2", "--hash-count", "1"],

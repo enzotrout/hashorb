@@ -9,6 +9,8 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from statistics import median
+from time import perf_counter_ns
 from types import FrameType
 
 from hashphere.compute import (
@@ -115,6 +117,18 @@ type _PreviousSignalHandler = int | _PythonSignalHandler | None
 
 class _SignalLifecycleError(RuntimeError):
     """Raised when portable stop-signal handlers cannot be managed safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ComputeBenchmarkSeries:
+    """Sanitized timing aggregates for one explicit repeated benchmark."""
+
+    first_result: NonceSearchResult
+    measured_results: tuple[NonceSearchResult, ...]
+    initialization_ns: int
+    cleanup_ns: int
+    total_backend_call_ns: int
+    warmup_runs: int
 
 
 class _StopSignalScope:
@@ -529,9 +543,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "compute-benchmark":
         try:
-            backend_name, worker_count, device_ordinal, start_nonce, stop_nonce = (
-                _parse_compute_benchmark_arguments(arguments[1:])
-            )
+            (
+                backend_name,
+                worker_count,
+                device_ordinal,
+                start_nonce,
+                stop_nonce,
+                warmup_runs,
+                repetitions,
+            ) = _parse_compute_benchmark_arguments(arguments[1:])
         except ValueError as exc:
             print(f"Argument error: {exc}", file=sys.stderr)
             print(_USAGE, file=sys.stderr)
@@ -542,6 +562,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             device_ordinal,
             start_nonce,
             stop_nonce,
+            warmup_runs,
+            repetitions,
         )
     if arguments and arguments[0] == "logs-summary":
         try:
@@ -642,9 +664,12 @@ def _run_compute_benchmark(
     device_ordinal: int | None,
     start_nonce: int,
     stop_nonce: int,
+    warmup_runs: int,
+    repetitions: int,
 ) -> int:
-    """Run one offline synthetic range through an explicitly selected backend."""
+    """Run one-shot or explicitly repeated offline synthetic benchmark ranges."""
 
+    initialization_started_ns = perf_counter_ns()
     try:
         backend = _select_benchmark_compute_backend(
             backend_name,
@@ -654,30 +679,65 @@ def _run_compute_benchmark(
     except (ComputeBackendSelectionError, ComputeBackendValidationError):
         print("Compute benchmark backend is unavailable or invalid.", file=sys.stderr)
         return 2
+    initialization_ns = max(0, perf_counter_ns() - initialization_started_ns)
 
     result: NonceSearchResult | None = None
+    series: _ComputeBenchmarkSeries | None = None
     status = 0
+    total_backend_call_ns = 0
     try:
-        result = backend.search_nonce_range(
-            deterministic_benchmark_work(),
-            start_nonce,
-            stop_nonce,
-        )
+        work = deterministic_benchmark_work()
+        call_started_ns = perf_counter_ns()
+        result = backend.search_nonce_range(work, start_nonce, stop_nonce)
+        total_backend_call_ns += max(0, perf_counter_ns() - call_started_ns)
+        if warmup_runs > 0 or repetitions > 1:
+            for _ in range(warmup_runs):
+                call_started_ns = perf_counter_ns()
+                backend.search_nonce_range(work, start_nonce, stop_nonce)
+                total_backend_call_ns += max(0, perf_counter_ns() - call_started_ns)
+            measured_results: list[NonceSearchResult] = []
+            for _ in range(repetitions):
+                call_started_ns = perf_counter_ns()
+                measured_results.append(backend.search_nonce_range(work, start_nonce, stop_nonce))
+                total_backend_call_ns += max(0, perf_counter_ns() - call_started_ns)
+            series = _ComputeBenchmarkSeries(
+                first_result=result,
+                measured_results=tuple(measured_results),
+                initialization_ns=initialization_ns,
+                cleanup_ns=0,
+                total_backend_call_ns=total_backend_call_ns,
+                warmup_runs=warmup_runs,
+            )
     except ComputeBackendError:
         print("Compute benchmark failed.", file=sys.stderr)
         status = 1
     finally:
+        cleanup_started_ns = perf_counter_ns()
         try:
             close_compute_backend(backend)
         except ComputeBackendError:
             if status == 0:
                 print("Compute benchmark cleanup failed.", file=sys.stderr)
                 status = 1
+        cleanup_ns = max(0, perf_counter_ns() - cleanup_started_ns)
 
     if status != 0:
         return status
     if result is None:
         raise RuntimeError("compute benchmark completed without a result")
+    if series is not None:
+        _print_compute_benchmark_series(
+            backend,
+            _ComputeBenchmarkSeries(
+                first_result=series.first_result,
+                measured_results=series.measured_results,
+                initialization_ns=series.initialization_ns,
+                cleanup_ns=cleanup_ns,
+                total_backend_call_ns=series.total_backend_call_ns,
+                warmup_runs=series.warmup_runs,
+            ),
+        )
+        return 0
     _print_compute_benchmark(backend, result)
     return 0
 
@@ -719,6 +779,56 @@ def _print_compute_benchmark(
     print(f"Elapsed time: {result.elapsed_ns} ns")
     print(f"Hashes per second: {'unavailable' if rate is None else f'{rate:.2f}'}")
     print(f"Result: {'candidate found' if result.match is not None else 'range exhausted'}")
+
+
+def _print_compute_benchmark_series(
+    backend: MiningComputeBackend,
+    series: _ComputeBenchmarkSeries,
+) -> None:
+    """Print repeated aggregate timings without work or candidate material."""
+
+    elapsed_values = tuple(result.elapsed_ns for result in series.measured_results)
+    rate_values = tuple(
+        result.hashes_per_second
+        for result in series.measured_results
+        if result.hashes_per_second is not None
+    )
+    capabilities = backend.capabilities
+    print("Hashphere repeated compute benchmark completed.")
+    print(f"Backend: {capabilities.backend_name}")
+    print(f"Implementation: {capabilities.implementation}")
+    worker_count = compute_backend_worker_count(backend)
+    if worker_count is not None:
+        print(f"Workers: {worker_count}")
+    device_ordinal = compute_backend_device_ordinal(backend)
+    if device_ordinal is not None:
+        print(f"CUDA device: {device_ordinal}")
+    print(f"Hashes per run: {series.first_result.hashes_checked}")
+    print(f"Initialization: {series.initialization_ns} ns")
+    print(f"First launch: {series.first_result.elapsed_ns} ns")
+    print(f"Warmup runs: {series.warmup_runs}")
+    print(f"Measured repetitions: {len(series.measured_results)}")
+    print(f"Median elapsed time: {int(median(elapsed_values))} ns")
+    print(f"Minimum elapsed time: {min(elapsed_values)} ns")
+    print(f"Maximum elapsed time: {max(elapsed_values)} ns")
+    print(
+        "Median hashes per second: "
+        + ("unavailable" if not rate_values else f"{median(rate_values):.2f}")
+    )
+    print(
+        "Minimum hashes per second: "
+        + ("unavailable" if not rate_values else f"{min(rate_values):.2f}")
+    )
+    print(
+        "Maximum hashes per second: "
+        + ("unavailable" if not rate_values else f"{max(rate_values):.2f}")
+    )
+    print(f"Total backend-call wall time: {series.total_backend_call_ns} ns")
+    print(f"Cleanup: {series.cleanup_ns} ns")
+    print(
+        "Result: "
+        + ("candidate found" if series.first_result.match is not None else "range exhausted")
+    )
 
 
 def _run_log_summary(log_file: str) -> int:
@@ -1488,12 +1598,20 @@ def _parse_summary_command_arguments(arguments: Sequence[str]) -> str:
 
 def _parse_compute_benchmark_arguments(
     arguments: Sequence[str],
-) -> tuple[str, int | None, int | None, int, int]:
+) -> tuple[str, int | None, int | None, int, int, int, int]:
     """Parse strict offline backend and half-open benchmark-range options."""
 
     option_values = _parse_option_values(
         arguments,
-        {"--backend", "--workers", "--device", "--start-nonce", "--hash-count"},
+        {
+            "--backend",
+            "--workers",
+            "--device",
+            "--start-nonce",
+            "--hash-count",
+            "--warmup-runs",
+            "--repetitions",
+        },
         unsupported_message="unsupported compute-benchmark argument",
     )
     if "--backend" not in option_values:
@@ -1544,7 +1662,27 @@ def _parse_compute_benchmark_arguments(
     stop_nonce = start_nonce + hash_count
     if stop_nonce > _NONCE_LIMIT:
         raise ValueError("the requested benchmark range exceeds 2**32")
-    return backend_name, worker_count, device_ordinal, start_nonce, stop_nonce
+    warmup_runs = _parse_unpadded_decimal_option(
+        "--warmup-runs",
+        option_values.get("--warmup-runs", "0"),
+        minimum=0,
+        maximum=100,
+    )
+    repetitions = _parse_unpadded_decimal_option(
+        "--repetitions",
+        option_values.get("--repetitions", "1"),
+        minimum=1,
+        maximum=100,
+    )
+    return (
+        backend_name,
+        worker_count,
+        device_ordinal,
+        start_nonce,
+        stop_nonce,
+        warmup_runs,
+        repetitions,
+    )
 
 
 def _parse_mining_command_arguments(
