@@ -609,7 +609,10 @@ def test_runtime_limit_before_first_chunk_has_distinct_outcome() -> None:
     assert ("stopped",) not in harness.observations
 
 
-def test_runtime_limit_after_one_range_prevents_the_next_range() -> None:
+@pytest.mark.parametrize("strategy", [SequentialSearchStrategy(), OrbitingBitSearchStrategy()])
+def test_runtime_limit_after_one_range_prevents_the_next_range(
+    strategy: MiningSearchStrategy,
+) -> None:
     now = [0.0]
     controller = StopController(1.0, clock=lambda: now[0])
     harness = Harness(controller=controller)
@@ -624,7 +627,9 @@ def test_runtime_limit_after_one_range_prevents_the_next_range() -> None:
 
     harness.search = advance_after_search  # type: ignore[method-assign]
 
-    _, _, result = run_with_harness(ContinuousMiningPlan(0, 1, max_runtime_seconds=1), harness)
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0, 1, max_runtime_seconds=1), harness, strategy=strategy
+    )
 
     assert result.outcome is ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
     assert result.chunks_completed == 1

@@ -723,6 +723,69 @@ def test_runtime_limit_is_a_completed_logged_outcome_with_clean_resources(
     assert "Result: runtime_limit_reached" in output
 
 
+@pytest.mark.parametrize(
+    ("backend_name", "backend_kind", "worker_count"),
+    [
+        ("native", "cpu", None),
+        ("native-parallel", "cpu", 4),
+        ("cuda", "gpu", None),
+    ],
+)
+def test_runtime_limit_closes_resource_owning_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    backend_name: str,
+    backend_kind: str,
+    worker_count: int | None,
+) -> None:
+    settings = replace(make_settings(), compute_backend=backend_name)
+    client = FakeClient()
+    harness, _ = install_fakes(monkeypatch, client, settings=settings)
+    searcher = cli_module.search_nonce_range
+    now = [0.0]
+
+    class RuntimeBackend:
+        capabilities = ComputeBackendCapabilities(
+            backend_name=backend_name,
+            display_name="Runtime backend fake",
+            backend_kind=backend_kind,
+            implementation=backend_name,
+            supports_parallel_search=backend_name in {"native-parallel", "cuda"},
+            supports_cooperative_cancellation=False,
+            supports_device_selection=backend_name == "cuda",
+            deterministic_search_order=True,
+            preferred_batch_size=None,
+            available=True,
+        )
+
+        def __init__(self) -> None:
+            self.worker_count = worker_count
+            self.device_ordinal = 0 if backend_name == "cuda" else None
+            self.close_calls = 0
+
+        def search_nonce_range(
+            self, work: PreparedMiningWork, start_nonce: int, stop_nonce: int
+        ) -> NonceSearchResult:
+            result = searcher(work, start_nonce, stop_nonce)
+            now[0] = 1.0
+            return result
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    backend = RuntimeBackend()
+    monkeypatch.setattr(cli_module, "_select_configured_compute_backend", lambda received: backend)
+    monkeypatch.setattr(
+        cli_module,
+        "StopController",
+        lambda duration: StopController(duration, clock=lambda: now[0]),
+    )
+
+    assert cli_module.main(arguments(max_chunks=None, max_runtime_seconds="1")) == 0
+    assert len(harness.search_calls) == 1
+    assert client.close_calls == 1
+    assert backend.close_calls == 1
+
+
 @pytest.mark.parametrize("signal_number", [signal.SIGINT, signal.SIGTERM])
 def test_first_and_repeated_stop_signals_complete_gracefully(
     monkeypatch: pytest.MonkeyPatch,
