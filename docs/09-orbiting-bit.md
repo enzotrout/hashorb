@@ -211,7 +211,7 @@ messages, candidates, or worker assignments.
 The optional CUDA correctness backend hashes any ordinary parent range supplied
 by either strategy without understanding bit reversal. Its device scheduling,
 deterministic smallest-candidate reduction, Python verification, and cleanup
-remain backend responsibilities. Orbiting order is unchanged. Likewise, future
-multi-GPU or distributed coordination must decide how to partition execution
-without moving device, worker, work-stealing, or submission state into the
-orbiting-bit cursor.
+remain backend responsibilities. Orbiting order is unchanged. `cuda-multi`
+partitions only the supplied parent range without moving device, worker, or
+submission state into the orbiting-bit cursor. Future distributed coordination
+must preserve the same boundary.

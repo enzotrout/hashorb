@@ -34,11 +34,11 @@ or wallet password is needed or should be placed in `.env`.
 `HASHPHERE_COMPUTE_BACKEND` selects the nonce-search implementation. Its
 default, `auto`, deliberately continues to select `python`; native or CUDA
 availability does not change that choice. Exact selectors `python`, `native`,
-`native-parallel`, and `cuda` are supported, and the earlier `cpu` value
+`native-parallel`, `cuda`, and `cuda-multi` are supported, and the earlier `cpu` value
 remains a compatibility alias for `python`. The native modes require the
 optional C extension. CUDA additionally requires the explicitly enabled CUDA
-extension and one available NVIDIA device. There is no fallback after an
-explicit selection.
+extension. `cuda` owns one selected device; `cuda-multi` owns an explicit set.
+There is no fallback after an explicit selection.
 
 `HASHPHERE_COMPUTE_WORKERS` configures only `native-parallel`. It is a strict
 unpadded ASCII decimal integer from `1` through `256` and defaults to `2`.
@@ -52,7 +52,13 @@ It defaults to ordinal `0` and must be an unpadded ASCII decimal integer from
 `0` through `2147483647`. Invalid CUDA device syntax or an unavailable device
 fails before live networking. The setting is ignored by CPU backends. UUIDs,
 serial numbers, PCI addresses, and driver paths are never included in normal
-console or JSONL output. Multi-GPU selection is not implemented.
+console or JSONL output.
+
+`HASHPHERE_CUDA_DEVICES` is required only for `cuda-multi`, for example `0,1`.
+It accepts one to 256 unique ordinals, tolerates surrounding element
+whitespace, and canonicalizes them into ascending order. Hashsphere never
+selects all visible devices implicitly. One-device `cuda-multi` is allowed for
+integration testing but is not a multi-GPU performance claim.
 
 `HASHPHERE_SEARCH_STRATEGY` selects where mining looks next, while
 `HASHPHERE_COMPUTE_BACKEND` selects how that assigned range is hashed. The
@@ -76,8 +82,8 @@ nonce after all running workers finish. These worker assignments remain private
 to the backend and do not change the selected global strategy. CUDA follows
 the same parent-range boundary and uses deterministic smallest-candidate
 reduction. SIMD, multiprocessing, cooperative mid-range cancellation,
-automatic device selection, multi-GPU execution, and resource profiles remain
-deferred. The validated CUDA path specializes Bitcoin header hashing and reuses
+automatic device selection, real multi-GPU hardware validation, and resource
+profiles remain deferred. The validated CUDA path specializes Bitcoin header hashing and reuses
 device-owned work/result buffers without changing the parent-range contract.
 
 ## Choose a search strategy
@@ -214,6 +220,9 @@ ranges to that backend. Later controlled measurements are recorded in the CUDA
 documentation; their local rates are evidence for this host, not a general
 speed or pool-performance claim.
 See [`docs/10-cuda-backend.md`](docs/10-cuda-backend.md).
+Multi-device ownership, reduction, failure policy, one-device Spark evidence,
+and the future two-device gate are in
+[`docs/11-multi-gpu.md`](docs/11-multi-gpu.md).
 
 `uv sync --locked` attempts to compile the optional self-contained C extension
 with the platform C compiler. Python-only operation remains available if that
@@ -256,10 +265,22 @@ uv run python -m hashphere compute-benchmark \
   --hash-count 1000000
 ```
 
-`--backend` must be exactly `cuda`, `python`, `native`, or `native-parallel`.
+Benchmark an explicit device set with:
+
+```bash
+uv run python -m hashphere compute-benchmark \
+  --backend cuda-multi \
+  --devices 0,1 \
+  --hash-count 500000000
+```
+
+`--backend` must be exactly `cuda`, `cuda-multi`, `python`, `native`, or
+`native-parallel`.
 `--workers` is valid only for `native-parallel`, accepts the same strict range
 as production configuration, and defaults to `2`. `--device` is valid only
 for CUDA, uses the same strict ordinal syntax, and defaults to `0`.
+`--devices` is required only for `cuda-multi` and uses the production list
+syntax. Multi-device output adds device count and sanitized ascending ordinals.
 `--hash-count` is a positive
 unpadded ASCII decimal integer; optional `--start-nonce` uses the same strict
 syntax and defaults to zero. The selected range may end at `2**32` but cannot
@@ -651,9 +672,12 @@ HASHPHERE_ENABLE_LIVE_MINING=1 \
   --log-file logs/liveness-check.jsonl
 ```
 
-That gate completed with `runtime_limit_reached` at approximately 307.62 MH/s,
-with no connection loss, reconnect, liveness warning, stale session, or command
-failure. It preceded CUDA tuning and is not evidence of post-tuning live speed.
+That pre-tuning gate completed at approximately 307.62 MH/s. Later authorized
+post-tuning gates sustained approximately 2.462 GH/s for 60 seconds and 2.461
+GH/s for five minutes. The five-minute run checked 737,414,244,096 hashes over
+1,547 ranges and ended with `runtime_limit_reached`, with no duplicate work,
+connection loss, reconnect, stale session, or command failure. No live command
+was run while implementing multi-device orchestration.
 Deterministic local recovery needs no internet:
 
 ```bash
@@ -704,8 +728,8 @@ Malformed protocol data, authorization rejection, mining invariants, logging
 errors, and other non-connection failures remain terminal. Most importantly,
 a `mining.submit` transport failure is never retried: its outcome is uncertain,
 and resending could duplicate a submission. Pool failover, random backoff
-jitter, cooperative mid-chunk cancellation, SIMD, multiprocessing, CUDA
-multi-GPU execution remains deferred.
+jitter, cooperative mid-chunk cancellation, SIMD, multiprocessing, and real
+multi-GPU hardware validation remain deferred.
 
 To validate explicit native selection with a bounded live gate, use:
 

@@ -272,6 +272,6 @@ The optional CUDA backend remains an execution implementation: it hashes one
 strategy-supplied parent assignment and verifies a candidate through the shared
 result contract. GPU device selection, grid mapping, host-side verification,
 and cleanup stay backend concerns. CUDA execution does not change sequential or
-orbiting assignment order. The strategy remains unaware of CUDA, devices,
-worker topology, Stratum, or share submission; future multi-GPU work must
-preserve that boundary.
+orbiting assignment order. `cuda-multi` preserves the same split by privately
+partitioning one parent range. The strategy remains unaware of CUDA, devices,
+worker topology, Stratum, or share submission.

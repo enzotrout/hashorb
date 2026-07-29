@@ -60,6 +60,7 @@ Progress:
 - ✅ Deterministic orbiting-bit search strategy
 - ✅ GPU/CUDA correctness backend validated on DGX Spark GB10
 - ✅ DGX Spark CUDA SHA-256 performance tuning and repeated offline benchmark
+- ✅ Deterministic explicit multi-CUDA orchestration architecture
 - ⬜ Pool failover
 
 ---
@@ -104,6 +105,7 @@ Progress:
 - ✅ Deterministic orbiting-bit search strategy
 - ✅ GPU/CUDA correctness backend validated on DGX Spark GB10
 - ✅ DGX Spark CUDA SHA-256 performance tuning and repeated offline benchmark
+- ✅ Deterministic explicit multi-CUDA orchestration architecture
 - ⬜ Pool failover
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -169,30 +171,26 @@ Planned:
 
 # Current Milestone
 
-**Opt-In Stratum Work Liveness — Implemented**
+**Explicit Multi-CUDA Orchestration Architecture — Implemented**
 
 Objective:
 
-Continuous mining now separates monotonic server activity, active-job age, and
-completed-work activity. Optional server-silence and job-age limits are
-disabled by default and recover stale sessions through the existing bounded
-reconnect owner. TCP keepalive supplements but does not replace application
-liveness. Runtime and signal shutdown remain active during recovery.
+`cuda-multi` now accepts an explicit unique device list, owns one isolated CUDA
+context per ordinal, reuses the proven balanced half-open partitioner, executes
+useful child assignments through one persistent executor, and returns one exact
+wall-clock result with the global lowest Python-verified candidate. Any child
+failure is terminal and closes all contexts without fallback or reconnect.
 
-The clean 20-minute CUDA endurance gate completed with
-`runtime_limit_reached`: 360,982,285,568 hashes across 756 ranges at
-approximately 300.76 MH/s, 41 jobs received, 40 replacements, 114 work
-variants, and 73 extra-nonce advances. It recorded no connection loss,
-reconnect, command failure, or incomplete terminal event.
+The post-tuning human gates sustained approximately 2.462 GH/s for 60 seconds
+and 2.461 GH/s for five minutes. The longer run checked 737,414,244,096 hashes
+over 1,547 parent ranges and ended with `runtime_limit_reached`, with no
+duplicate work, connection loss, reconnect, stale session, or command failure.
 
-The following five-minute human liveness gate completed at approximately
-307.62 MH/s with no false stale classification or reconnect. Offline CUDA
-tuning then replaced per-nonce fixed-block hashing and stack-resident generic
-SHA-256 state with one prepared midstate, specialized fixed-length passes, and
-backend-lifetime device buffers. Same-session repeated 100-million and
-500-million synthetic medians improved from approximately 308 MH/s to 2.37–2.44
-GH/s while preserving real-device parity. No live pool command was run during
-tuning, so a later human live gate remains required.
+The Spark's one physical GPU passes the existing real parity suite and a
+one-device `cuda-multi` integration test. Paired 500-million-hash measurements
+showed about 1.56% one-device orchestration overhead. This validates the
+architecture on device 0 but does not validate physical multi-GPU execution or
+scaling. No live pool command was run during this milestone.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, the
@@ -200,7 +198,7 @@ compute-backend boundary, portable native sequential execution, and portable
 parallel execution, the strategy abstraction, and both sequential and
 orbiting-bit orders remain complete. Conservative suspend-gap inference remains
 deferred because platform clocks differ and scheduler delay is not proof of
-suspend. Multi-GPU execution remains next, followed by Lite/Auto/Max/Custom
+suspend. Real two-device validation remains next, followed by Lite/Auto/Max/Custom
 operating profiles, macOS/Windows/Linux/Docker packaging,
 broader pool support and Bitcoin Core true solo mining, distributed workers and
 adaptive tuning, then Prometheus/Grafana-compatible metrics. Pool failover
@@ -214,7 +212,6 @@ strategy-expansion point.
 
 Continue with:
 
-**Run a human-controlled post-tuning live gate before making pool-speed claims,
-then design multi-GPU ownership without weakening deterministic smallest-result,
-lifecycle, or session boundaries. Keep profiles, Windows CUDA builds, and
-portable CUDA wheels deferred.**
+**Run the explicit two-device offline and hardware gates on a host with at least
+two real CUDA devices. Do not claim scaling until that gate passes. Keep
+profiles, Windows CUDA builds, and portable CUDA wheels deferred.**

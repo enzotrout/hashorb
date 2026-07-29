@@ -145,7 +145,8 @@ accessible bit-reversal design in
 After a completed range, pool notifications remain higher priority than either
 strategy's next assignment. The optional CUDA backend receives the same
 ordinary parent-range contract and does not reinterpret sequential or orbiting
-order. Future multi-GPU coordination must preserve this ownership split.
+order. `cuda-multi` privately partitions that parent range without adding a
+strategy cursor per device, preserving this ownership split.
 
 Continuous CLI ownership includes one monotonic `StopController`. An optional
 positive runtime limit begins only after configuration and compute/strategy
@@ -184,7 +185,8 @@ files, client cleanup, or event-sink cleanup. A resource-owning backend does
 own its executor cleanup behind the shared close boundary.
 
 The built-in registry is created per invocation and contains the always
-available `python` backend plus `native`, `native-parallel`, and `cuda`.
+available `python` backend plus `native`, `native-parallel`, `cuda`, and
+`cuda-multi`.
 Native availability is determined by one controlled optional-extension import.
 CUDA remains uninitialized in an ordinary CPU registry and initializes its
 explicit device only for CUDA listing or selection. `auto` deterministically
@@ -250,6 +252,16 @@ work changes, and recovered Stratum sessions and are closed once by the same
 caller-owned backend cleanup as CPU resources. Cleanup synchronizes owned work
 without resetting unrelated global CUDA state.
 
+`CudaMultiBackend` owns one isolated `CudaBackend` context per explicit ordinal
+and one persistent host thread pool. It reuses the native-parallel partitioning
+primitive, pairs ascending nonempty child ranges with canonical ascending
+ordinals, and waits for all full-range CUDA results. Reduction requires exact
+aggregate accounting and selects the global lowest Python-verified candidate.
+Native CUDA operations release the GIL, so different device contexts can run
+concurrently. Any child failure cancels pending work, waits for active kernels,
+closes every context, and permanently fails the logical backend without
+fallback or Stratum reconnect.
+
 CUDA compilation is deliberately gated by `HASHPHERE_BUILD_CUDA=1` and requires
 one narrowly validated numeric `HASHPHERE_CUDA_ARCH`; it neither guesses from
 the host nor accepts raw compiler flags. Normal source and wheel builds do not
@@ -258,8 +270,9 @@ test suite uses an injected extension-shaped fake and never initializes CUDA.
 The gated real-device suite passes on a CUDA 13.0 NVIDIA GB10 build containing
 an `sm_121` cubin.
 Sequential and orbiting-bit remain backend-independent and compatible.
-Multi-GPU ownership, Windows CUDA builds, profiles, and portable published CUDA
-wheels remain future boundaries.
+Multi-GPU ownership and deterministic reduction are implemented, with physical
+two-device validation still pending. Windows CUDA builds, profiles, and
+portable published CUDA wheels remain future boundaries.
 
 The native extension is optional at build and import time, preserving
 Python-only installs; both native modes then report controlled unavailability.
@@ -270,7 +283,8 @@ Detailed contracts are in
 [`docs/05-compute-backends.md`](docs/05-compute-backends.md) and
 [`docs/06-native-cpu.md`](docs/06-native-cpu.md), with parallel lifecycle detail
 in [`docs/07-parallel-cpu.md`](docs/07-parallel-cpu.md) and CUDA design in
-[`docs/10-cuda-backend.md`](docs/10-cuda-backend.md).
+[`docs/10-cuda-backend.md`](docs/10-cuda-backend.md), with multi-device
+orchestration in [`docs/11-multi-gpu.md`](docs/11-multi-gpu.md).
 
 ---
 

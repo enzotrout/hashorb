@@ -116,6 +116,14 @@ CUDA errors, and per-thread, per-block, or per-kernel-lane events are excluded.
 The read-only summary naturally counts stable `cuda` selections without a
 device-specific aggregate.
 
+Multi-device CUDA uses `backend_name=cuda-multi` and
+`implementation=cuda-multi`. Its only additional fields are a positive device
+count and canonical ascending ordinal list. These fields are validated when
+present, while old logs remain valid without them. Parent-range events retain
+aggregate count, elapsed time, and rate; there is no per-device event stream.
+UUIDs, serials, PCI addresses, topology, raw futures, and CUDA errors remain
+excluded.
+
 `search_strategy_selected` is shared by all mining commands and follows
 `compute_backend_selected`. Its exact safe fields are `strategy_name`,
 `implementation`, `deterministic`, `contiguous_parent_ranges`, `exhaustive`,

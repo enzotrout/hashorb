@@ -306,10 +306,9 @@ result. `extra_nonce_2` rollover, network-time rolling, mid-chunk `clean_jobs`
 cancellation, worker partitioning, threads, multiprocessing, GPU execution,
 and alternative search order remain outside this Python reference primitive.
 Higher layers now provide deterministic work progression and configurable
-parent-range scheduling; native-parallel and CUDA own their private execution
-mappings.
-Mid-chunk cancellation, multi-GPU execution, and additional search orders
-remain deferred.
+parent-range scheduling; native-parallel, CUDA, and `cuda-multi` own their
+private execution mappings. Mid-chunk cancellation, physical multi-GPU
+validation, and additional search orders remain deferred.
 
 ## Stratum Share-Submission Message Boundary
 
@@ -622,8 +621,9 @@ are available; sequential and experimental orbiting-bit strategies remain
 independent of those backends. CUDA hardware parity passed on a CUDA 13.0
 NVIDIA GB10 `sm_121` build. Offline CUDA tuning retains this exact range and
 Python-verification boundary while using prepared midstates and backend-owned
-device resources. Multi-GPU execution, Windows CUDA packaging, portable CUDA
-wheels, and pool failover remain deferred. Controlled CKPool CUDA, endurance,
+device resources. Multi-GPU orchestration is implemented behind the same
+contract, while physical two-device validation, Windows CUDA packaging,
+portable CUDA wheels, and pool failover remain deferred. Controlled CKPool CUDA, endurance,
 and liveness runs completed without submission or command failure before
 tuning; their local rates are not post-tuning or general performance claims.
 
@@ -751,8 +751,9 @@ only to `native-parallel`; it does not implement a profile or alter either
 sequential backend.
 
 `HASHPHERE_CUDA_DEVICE` supplies one strict device ordinal only when `cuda` is
-explicitly selected. It defaults to zero, does not affect CPU backends, and
-does not implement automatic or multi-GPU selection.
+explicitly selected. `HASHPHERE_CUDA_DEVICES` is required for `cuda-multi` and
+supplies a unique explicit ordinal list. Neither setting affects CPU backends
+or performs automatic device discovery.
 
 The built-in `python` backend delegates to validated `search_nonce_range` and
 remains the correctness oracle. The optional built-in `native` backend performs
@@ -791,7 +792,7 @@ report sequential execution; native-parallel reports parallel execution and a
 safe worker count; CUDA reports GPU kind, parallel execution, explicit device
 selection, and a safe ordinal. All report deterministic result order and no
 cooperative mid-range cancellation or preferred batch size. SIMD, additional
-strategies, automatic device probing, multi-GPU execution, tuning, and
+strategies, automatic device probing, physical multi-GPU validation, and
 Lite/Auto/Max/Custom resource profiles remain deferred. Detailed compute
 contracts are documented in
 [`05-compute-backends.md`](05-compute-backends.md) and

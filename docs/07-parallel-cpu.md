@@ -149,7 +149,9 @@ stealing, multiprocessing, SIMD, assembly, GPU code, device selection, or
 platform-specific threading.
 
 The explicit sequential and orbiting-bit parent-range strategies are complete,
-and the optional CUDA correctness backend is independent of this CPU worker
-pool. Other global search orders, CUDA hardware tuning and multi-GPU support,
-resource profiles, wheel publishing, distributed workers, and automatic
-backend policy remain deferred.
+and CUDA execution is independent of this CPU worker pool. `cuda-multi` reuses
+the exact proven partitioning primitive but owns separate device backends and
+an independent executor; it does not alter native-parallel behavior. Other
+global search orders, real multi-GPU hardware validation, resource profiles,
+wheel publishing, distributed workers, and automatic backend policy remain
+deferred.

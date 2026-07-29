@@ -116,7 +116,8 @@ initialize CUDA. Initialization is limited to CUDA capability listing or
 explicit CUDA selection. Operational availability requires:
 
 1. successful `_cuda` import;
-2. the three expected extension callables;
+2. the three independently owned context callables (with the legacy single
+   context boundary retained for compatibility);
 3. successful CUDA runtime initialization;
 4. an available requested device.
 
@@ -264,6 +265,12 @@ recovery exhaustion, and cleanup paths. Close is idempotent and synchronizes
 backend-owned work without calling a global device reset. CUDA execution or
 verification failure is terminal and does not cause Stratum reconnect,
 backend reselection, range retry, or fallback.
+
+Each current `CudaBackend` owns an opaque native context capsule containing its
+ordinal, prepared-work cache, and device buffers. Native initialize, search,
+and close calls release the GIL. This preserves single-device behavior while
+allowing `cuda-multi` to execute independent contexts concurrently. See
+[`11-multi-gpu.md`](11-multi-gpu.md).
 
 ## Offline Benchmark
 
@@ -414,7 +421,7 @@ This slice does not implement:
 - early termination or cooperative mid-range cancellation;
 - automatic block/grid tuning;
 - pinned host memory or asynchronous pipelines;
-- multiple GPUs or cross-device reduction;
+- automatic device discovery or proven scaling on real multi-GPU hardware;
 - CUDA wheel publication or automatic toolkit installation;
 - fallback, retry, reconnect, or compute profiles;
 - mining lifecycle, Stratum, strategy, or submission behavior inside CUDA.
@@ -427,11 +434,13 @@ internal-runtime endurance gate then completed 360,982,285,568 hashes across
 connection loss, reconnect, or command failure. CUDA still finishes its current
 range before graceful cleanup.
 
-The five-minute pre-tuning liveness gate also completed cleanly at approximately
-307.62 MH/s with no stale warning, reconnect, connection loss, or command
-failure. No live Stratum or CKPool command was run during tuning. A later
-human-controlled live gate is required before claiming live improvement.
+The five-minute pre-tuning liveness gate completed cleanly at approximately
+307.62 MH/s. Later human-controlled post-tuning gates sustained approximately
+2.462 GH/s for 60 seconds and 2.461 GH/s for five minutes. The longer run
+checked 737,414,244,096 hashes across 1,547 ranges with no duplicate work,
+connection loss, reconnect, stale session, or command failure.
 
-Multi-GPU execution, Lite/Auto/Max/Custom profiles, Windows CUDA validation,
-and portable CUDA wheel packaging remain deferred. The recorded rates are local
-evidence only and do not claim a general or pool speedup.
+Multi-GPU orchestration architecture is implemented, but physical two-device
+validation remains pending. Lite/Auto/Max/Custom profiles, Windows CUDA
+validation, and portable CUDA wheel packaging remain deferred. The recorded
+rates are local evidence only and do not claim a general or pool speedup.

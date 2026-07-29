@@ -13,8 +13,10 @@ optional `native` backend performs the same bounded sequential search through a
 self-contained portable C extension. `native-parallel` divides a parent range
 among concurrent verified native calls. The optional `cuda` backend evaluates
 one parent range on one explicitly selected NVIDIA device and verifies every
-reported candidate again in Python. Multiprocessing, SIMD, automatic device
-discovery and multi-GPU execution remain deferred. The CUDA implementation now
+reported candidate again in Python. `cuda-multi` partitions that same parent
+range across explicitly selected CUDA devices and reduces verified child
+results deterministically. Multiprocessing, SIMD, automatic device discovery,
+and real multi-GPU hardware validation remain deferred. The CUDA implementation now
 specializes Bitcoin header hashing and reuses device-owned resources behind the
 unchanged backend contract.
 
@@ -105,6 +107,12 @@ and no preferred batch size. Its only runtime identifier is the configured
 nonnegative device ordinal. Availability requires the optional extension,
 successful runtime initialization, and the requested device; failures use a
 controlled category rather than a driver or compiler message.
+
+The `cuda-multi` backend declares kind `gpu`, implementation `cuda-multi`,
+parallel search, deterministic result order, explicit device selection, and no
+cooperative cancellation. Its only device metadata is a canonical ascending
+tuple of configured ordinals. Full ownership and proof details are in
+[`11-multi-gpu.md`](11-multi-gpu.md).
 
 ## Python Reference Backend
 
@@ -237,7 +245,7 @@ backend-name order, and performs no plugin loading, entry-point discovery, dynam
 import, or hardware probing.
 
 The built-in registry always contains `python` and also describes `cuda`,
-`native`, and `native-parallel` whether available or unavailable. An ordinary
+`cuda-multi`, `native`, and `native-parallel` whether available or unavailable. An ordinary
 CPU registry leaves CUDA uninitialized, so importing Hashphere or selecting a
 CPU backend does not probe a GPU. CUDA listing or explicit selection performs
 the controlled extension/runtime/device initialization. Configuration accepts:
@@ -250,6 +258,8 @@ the controlled extension/runtime/device initialization. Configuration accepts:
   worker configuration are available;
 - `cuda`, selecting the optional extension only when the configured device
   initializes successfully.
+- `cuda-multi`, selecting only the explicitly configured device set when every
+  device initializes successfully.
 
 Unknown and unavailable selectors are controlled configuration errors detected
 before a mining command constructs a live client. `auto` does not currently
@@ -266,6 +276,12 @@ defaults to zero, and is parsed only for explicit CUDA selection. Invalid
 syntax fails before networking. CPU backends ignore it. No UUID, serial number,
 PCI address, compiler path, driver path, or automatic multi-device selection is
 part of the contract.
+
+`HASHPHERE_CUDA_DEVICES` is required for explicit `cuda-multi` selection. It
+contains one to 256 unique comma-separated ordinals, accepts surrounding
+element whitespace, and canonicalizes them into ascending order. It never
+discovers visible devices. A one-device list is a supported integration mode,
+not a scaling claim.
 
 There is no native-to-Python execution fallback. `auto` intentionally remains
 `python` until parity, packaging, and live benchmark evidence justify a separate
@@ -332,6 +348,8 @@ Mining commands emit one `compute_backend_selected` event after selection and
 before authorization. Safe fields are the backend name, kind, implementation,
 parallel flag, cooperative-cancellation flag, device-selection flag, optional
 worker count, and optional CUDA device ordinal.
+`cuda-multi` instead adds a safe device count and ascending ordinal list; it
+does not add per-device range events.
 Existing nonce-range events describe parent searches; there is no event per
 worker, assignment, or hash.
 
@@ -356,9 +374,13 @@ compiler paths, raw CUDA errors, targets, headers, digests, candidates, and
 per-thread or per-block data. Backend summary aggregation naturally counts
 `cuda` without creating a device-specific high-cardinality section.
 
+Multi-CUDA selection uses stable name and implementation `cuda-multi`, a device
+count, and sanitized ordinals. The summary continues to aggregate only by
+stable backend name and remains compatible with old records.
+
 ## Offline Benchmark
 
-`compute-benchmark` selects an explicit `cuda`, `python`, `native`, or
+`compute-benchmark` selects an explicit `cuda`, `cuda-multi`, `python`, `native`, or
 `native-parallel` backend without loading runtime settings, credentials, event
 sinks, or network code. It uses
 fixed public synthetic `PreparedMiningWork`, accepts one strict half-open range,
@@ -375,6 +397,10 @@ zero, and reports that ordinal. It exercises the same deterministic synthetic
 work and host verification without Stratum or live opt-ins. Availability and
 syntax failures return status 2; execution, verification, or cleanup failures
 return status 1. No speed threshold or comparison is asserted.
+
+Multi-CUDA benchmarking requires `--devices`, reports only count and ordinals,
+and divides aggregate exact hashes by parent-call wall time. It creates no
+socket, event sink, credential, or per-device timing stream.
 
 Optional `--warmup-runs` and `--repetitions` provide an explicit repeated mode
 without changing one-shot defaults. It separates initialization, the first
@@ -406,7 +432,8 @@ CUDA 13.0: the `sm_121` extension passes the gated device-parity and host/build
 tests. Both sequential and orbiting-bit continue to pass exact
 ordinary parent ranges through the same backend contract. Later offline,
 controlled CKPool, and endurance measurements are recorded in the CUDA
-documentation as local evidence only. Metal, Vulkan, multi-GPU coordination,
-Windows CUDA builds, multiprocessing,
+documentation as local evidence only. Multi-GPU coordination architecture is
+implemented and deterministically tested; a two-device physical hardware gate
+remains pending. Metal, Vulkan, Windows CUDA builds, multiprocessing,
 SIMD, additional strategies, resource profiles, automatic selection, and
 portable CUDA wheel publishing remain deferred.
