@@ -94,6 +94,9 @@ limitation, not a portable-wheel design: CUDA wheels are not published, and a
 future wheel pipeline must choose and validate a relocatable runtime policy.
 CPU-only wheels have no CUDA runtime paths. Windows does not receive these
 POSIX runtime search paths. No username or home-directory path is required.
+The CUDA host compiler also remaps its Python installation prefix in embedded
+source metadata so the local development artifact does not retain a username
+or home-directory path.
 
 ## Runtime Availability and Configuration
 

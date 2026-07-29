@@ -61,6 +61,20 @@ def test_cpu_only_setup_ignores_cuda_architecture(monkeypatch: pytest.MonkeyPatc
     load_setup_module()
 
 
+def test_cuda_host_compiler_flags_remap_the_python_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_setup_module()
+    python_prefix = tmp_path / "private-python"
+    monkeypatch.setattr(module.sys, "base_prefix", str(python_prefix))
+    monkeypatch.setattr(module.sys, "platform", "linux")
+
+    assert module._cuda_host_compiler_flags() == [
+        "-Xcompiler=-fPIC",
+        f"-Xcompiler=-ffile-prefix-map={python_prefix}=/python",
+    ]
+
+
 def test_cuda_library_dirs_discover_supported_layouts(tmp_path: Path) -> None:
     module = load_setup_module()
     cuda_root = tmp_path / "cuda"

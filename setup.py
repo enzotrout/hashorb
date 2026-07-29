@@ -33,6 +33,16 @@ def _contains_cuda_runtime(directory: Path) -> bool:
     )
 
 
+def _cuda_host_compiler_flags() -> list[str]:
+    """Return host-compiler flags without retaining the local Python install path."""
+
+    flags = ["-Xcompiler=-fPIC"]
+    if sys.platform != "win32":
+        python_prefix = Path(sys.base_prefix).resolve()
+        flags.append(f"-Xcompiler=-ffile-prefix-map={python_prefix}=/python")
+    return flags
+
+
 def _discover_cuda_library_dirs(cuda_root: Path) -> list[str]:
     """Discover CUDA runtime library directories for the current toolkit layout."""
 
@@ -102,7 +112,7 @@ class CudaBuildExt(build_ext):
                 object_file,
                 "-std=c++17",
                 *_cuda_arch_flags(),
-                "-Xcompiler=-fPIC",
+                *_cuda_host_compiler_flags(),
             ]
             command.extend(
                 argument
