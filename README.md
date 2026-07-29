@@ -76,8 +76,9 @@ nonce after all running workers finish. These worker assignments remain private
 to the backend and do not change the selected global strategy. CUDA follows
 the same parent-range boundary and uses deterministic smallest-candidate
 reduction. SIMD, multiprocessing, cooperative mid-range cancellation,
-automatic device selection, multi-GPU execution, tuning, and resource profiles
-remain deferred.
+automatic device selection, multi-GPU execution, and resource profiles remain
+deferred. The validated CUDA path specializes Bitcoin header hashing and reuses
+device-owned work/result buffers without changing the parent-range contract.
 
 ## Choose a search strategy
 
@@ -206,8 +207,8 @@ uv run python -m hashphere stratum-mine \
 These commands are documentation only and are not executed automatically.
 
 Real validation on an NVIDIA GB10 with compute capability 12.1 and CUDA 13.0
-completed an AArch64 extension build, verified an `sm_121` cubin, passed all 7
-gated Python/CUDA hardware-parity tests, and passed 60 CUDA host/build tests.
+completed an AArch64 extension build, verified an `sm_121` cubin, and passed
+the gated Python/CUDA hardware-parity suite.
 Both sequential and orbiting-bit strategies supply the same validated parent
 ranges to that backend. Later controlled measurements are recorded in the CUDA
 documentation; their local rates are evidence for this host, not a general
@@ -268,6 +269,24 @@ exhausted/candidate status. Parallel rate is aggregate actual hashes divided by
 wall-clock elapsed time; worker times or rounded worker rates are never summed.
 The command never prints the fixture header, targets, digest, candidate nonce,
 or per-thread data.
+
+The ordinary command remains one-shot. Explicit repeated tuning adds a separate
+first launch, optional warmups, and bounded repetitions:
+
+```bash
+uv run python -m hashphere compute-benchmark \
+  --backend cuda \
+  --device 0 \
+  --hash-count 100000000 \
+  --warmup-runs 2 \
+  --repetitions 7
+```
+
+`--warmup-runs` accepts `0` through `100`; `--repetitions` accepts `1` through
+`100`. Their defaults, zero and one, preserve the original output and duration.
+Repeated output separates initialization, first launch, measured median and
+minimum/maximum, total backend-call wall time, and cleanup. It still reports no
+work, candidate, per-lane, or device-identity material.
 
 Rates are local measurements for that process, build, machine, and synthetic
 fixture. They are not pool performance guarantees and should not be converted
@@ -588,8 +607,9 @@ normal `KeyboardInterrupt` behavior remains unchanged elsewhere. The current
 backend range may finish, but no later range or reconnect attempt starts; a
 candidate returned by that exact completed search is still submitted once.
 CUDA has no unsafe mid-kernel cancellation, so stop responsiveness is bounded
-by the active range duration. At the measured live rate, the previously used
-500,000,000-nonce CUDA range took about 1.6 seconds.
+by the active range duration. After offline tuning, a 500,000,000-nonce
+synthetic range measured about 0.20 seconds locally; a later human-controlled
+live gate must establish the corresponding pool workload behavior.
 
 For an external-signal check, invoke the project interpreter directly rather
 than placing `uv` between the signal sender and Hashphere:
@@ -615,7 +635,7 @@ suspend detection remains deferred: supported systems differ on whether their
 monotonic clock advances during sleep, and an ordinary scheduling delay is not
 safe proof of suspend.
 
-One future manually authorized conservative CKPool check is:
+The five-minute manually authorized liveness gate used this conservative form:
 
 ```bash
 HASHPHERE_COMPUTE_BACKEND=cuda \
@@ -631,8 +651,10 @@ HASHPHERE_ENABLE_LIVE_MINING=1 \
   --log-file logs/liveness-check.jsonl
 ```
 
-This command is documentation only and is not run automatically. Deterministic
-local recovery needs no internet:
+That gate completed with `runtime_limit_reached` at approximately 307.62 MH/s,
+with no connection loss, reconnect, liveness warning, stale session, or command
+failure. It preceded CUDA tuning and is not evidence of post-tuning live speed.
+Deterministic local recovery needs no internet:
 
 ```bash
 uv run pytest -q tests/test_stratum_liveness.py \
@@ -683,7 +705,7 @@ errors, and other non-connection failures remain terminal. Most importantly,
 a `mining.submit` transport failure is never retried: its outcome is uncertain,
 and resending could duplicate a submission. Pool failover, random backoff
 jitter, cooperative mid-chunk cancellation, SIMD, multiprocessing, CUDA
-performance tuning, and multi-GPU execution remain deferred.
+multi-GPU execution remains deferred.
 
 To validate explicit native selection with a bounded live gate, use:
 

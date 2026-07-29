@@ -14,7 +14,9 @@ self-contained portable C extension. `native-parallel` divides a parent range
 among concurrent verified native calls. The optional `cuda` backend evaluates
 one parent range on one explicitly selected NVIDIA device and verifies every
 reported candidate again in Python. Multiprocessing, SIMD, automatic device
-discovery, multi-GPU execution, and performance tuning remain deferred.
+discovery and multi-GPU execution remain deferred. The CUDA implementation now
+specializes Bitcoin header hashing and reuses device-owned resources behind the
+unchanged backend contract.
 
 ## Public Contract
 
@@ -61,8 +63,11 @@ A backend does not own:
 - share submission or retry decisions;
 - signals, console output, event files, client cleanup, or event-sink cleanup.
 
-Prepared work is call-scoped. No built-in backend retains it after the search
-returns, and no cache contract exists.
+Prepared work is call-scoped from orchestration's perspective. A backend may
+retain an implementation-private derived cache only behind its lifecycle
+boundary. Such a cache must compare all relevant work and target bytes, replace
+state before searching changed work, remain invisible to strategy and Stratum,
+and be discarded on close.
 
 ## Capabilities
 
@@ -191,8 +196,11 @@ offsets for one lane = lane, lane + stride, lane + 2*stride, ...
 Only offsets below `stop_nonce - start_nonce` are evaluated. This partitions
 the logical range exactly once without gaps, duplication, wraparound, or
 out-of-range work. Each nonce is appended as four explicit unsigned
-little-endian bytes. Device SHA-256 runs twice, and raw digest bytes are
-compared inclusively and independently with the two little-endian targets.
+little-endian bytes. Host preparation computes the SHA-256 state after the
+fixed 64-byte first header block once per changed work value. Each nonce starts
+from that midstate, hashes the specialized 16-byte tail/padding block, and then
+uses a fixed 32-byte second-pass block. Digest words are compared inclusively
+and independently with the two little-endian targets.
 
 Parallel execution order is not observable. Every qualifying lane applies an
 atomic minimum to the absolute nonce, so the public candidate is always the
@@ -209,7 +217,11 @@ digest through the established `hash_block_header`, and checks both flags with
 `hash_meets_target`. A disagreement raises `ComputeBackendExecutionError`.
 Neither a fabricated nor an unverified candidate can reach submission.
 
-One CUDA backend instance owns one device selection for the mining invocation.
+One CUDA backend instance owns one device selection, one prepared-work buffer,
+one candidate buffer, and one flag buffer for the mining invocation. Stable
+work avoids repeat uploads; a prefix or target change replaces the complete
+derived device work before the next kernel, and every call resets candidate
+state.
 It survives chunks, job replacement, extra-nonce progression, network-time
 rolling, and Stratum recovery. Caller-owned cleanup synchronizes backend work
 once, is idempotent, and does not reset unrelated CUDA global state. The backend
@@ -364,6 +376,12 @@ work and host verification without Stratum or live opt-ins. Availability and
 syntax failures return status 2; execution, verification, or cleanup failures
 return status 1. No speed threshold or comparison is asserted.
 
+Optional `--warmup-runs` and `--repetitions` provide an explicit repeated mode
+without changing one-shot defaults. It separates initialization, the first
+launch, warmups, measured median/minimum/maximum, total backend-call wall time,
+and cleanup. Repetition counts are bounded at 100 and output remains aggregate
+and synthetic.
+
 The rate is calculated from unrounded totals:
 
 ```text
@@ -384,11 +402,11 @@ that they cannot cancel a running range. A future cancellation input can be
 added only with lifecycle and actual hash-accounting tests.
 
 The CUDA correctness boundary is validated on real NVIDIA GB10 hardware with
-CUDA 13.0: the `sm_121` extension passed all 7 gated device-parity tests and 60
-CUDA host/build tests. Both sequential and orbiting-bit continue to pass exact
+CUDA 13.0: the `sm_121` extension passes the gated device-parity and host/build
+tests. Both sequential and orbiting-bit continue to pass exact
 ordinary parent ranges through the same backend contract. Later offline,
 controlled CKPool, and endurance measurements are recorded in the CUDA
-documentation as local evidence only. Performance tuning,
-Metal, Vulkan, multi-GPU coordination, Windows CUDA builds, multiprocessing,
+documentation as local evidence only. Metal, Vulkan, multi-GPU coordination,
+Windows CUDA builds, multiprocessing,
 SIMD, additional strategies, resource profiles, automatic selection, and
 portable CUDA wheel publishing remain deferred.

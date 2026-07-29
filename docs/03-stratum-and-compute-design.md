@@ -620,11 +620,12 @@ syntax or opt-in failure, and one for runtime, recovery exhaustion, or cleanup
 failure. Python, native, native-parallel, and explicitly built CUDA backends
 are available; sequential and experimental orbiting-bit strategies remain
 independent of those backends. CUDA hardware parity passed on a CUDA 13.0
-NVIDIA GB10 `sm_121` build. CUDA performance tuning, multi-GPU execution,
-Windows CUDA packaging, portable CUDA wheels, and pool failover remain
-deferred. A later controlled CKPool CUDA run and endurance run completed without
-submission or command failure; their local rates are not general performance
-claims.
+NVIDIA GB10 `sm_121` build. Offline CUDA tuning retains this exact range and
+Python-verification boundary while using prepared midstates and backend-owned
+device resources. Multi-GPU execution, Windows CUDA packaging, portable CUDA
+wheels, and pool failover remain deferred. Controlled CKPool CUDA, endurance,
+and liveness runs completed without submission or command failure before
+tuning; their local rates are not post-tuning or general performance claims.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not

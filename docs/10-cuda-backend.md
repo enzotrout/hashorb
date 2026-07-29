@@ -166,17 +166,32 @@ unobservable GPU scheduling order.
 
 ## Header Hashing and Target Comparison
 
-For each nonce, the kernel copies the validated 76-byte prefix and appends:
+The original correctness kernel copied the full validated 76-byte prefix for
+every nonce, appended the nonce, and ran a generic byte-oriented SHA-256 helper
+over both passes. That recomputed the fixed first 64-byte header block for every
+nonce and produced a 256-byte per-thread stack frame.
+
+The tuned host boundary now computes the SHA-256 midstate after that fixed
+64-byte block once whenever prepared work changes. It also prepares the three
+fixed 32-bit words from header bytes 64 through 75 and losslessly converts both
+little-endian targets to eight-word form. For each nonce, the device hashes only
+the specialized second header block:
 
 ```text
-nonce.to_bytes(4, byteorder="little", signed=False)
+tail words || nonce.to_bytes(4, "little") || SHA-256 padding || 640-bit length
 ```
 
-It performs SHA-256 twice and leaves the raw 32 digest bytes unchanged. Share
-and network targets arrive as exact 32-byte little-endian values. Comparison
-walks from the most-significant little-endian byte down, applies `<=`
-inclusively, and evaluates the two targets independently. No displayed-hash
-conversion, target approximation, or endian reversal occurs.
+The second SHA-256 pass is specialized to its invariant 32-byte input, padding,
+and 256-bit length. A 16-word circular schedule with compile-time unrolling
+replaces the generic 64-word byte buffer. Compiler inspection for `sm_121`
+reports 48 registers, zero stack bytes, and zero spill loads/stores for the
+search kernel, compared with 47 registers and a 256-byte stack frame before
+tuning.
+
+The final state words retain exact SHA-256 semantics. Comparison walks the
+corresponding little-endian numerical words from most significant to least,
+applies `<=` inclusively, and evaluates share and network targets independently.
+No displayed-hash conversion or target approximation occurs.
 
 ## Candidate Reduction and Hash Accounting
 
@@ -193,9 +208,17 @@ hashes_checked = stop_nonce - start_nonce
 ```
 
 The wrapper's `elapsed_ns` uses `perf_counter_ns` around the complete extension
-call. The interval includes allocation, transfers, launch, synchronization,
-candidate retrieval, flag retrieval, and required cleanup. It is not a sum of
-per-thread timings. A negative measured delta is safely clamped to zero.
+call. It includes necessary work upload, candidate reset, launch, candidate
+retrieval, and Python-extension orchestration. It is not a sum of per-thread
+timings. A negative measured delta is safely clamped to zero.
+
+Initialization allocates one device work structure, candidate value, and flag
+buffer. Exact prefix and target bytes form the cache identity. Stable work skips
+repeat upload across ranges; any changed prefix or target replaces the complete
+derived work before launch. Candidate state resets for every call. Close
+synchronizes and frees these resources once. This synchronous, GIL-protected
+ownership adds no asynchronous pipeline and cannot carry a candidate across a
+work or session boundary.
 
 ## Python Candidate Verification
 
@@ -253,13 +276,98 @@ uv run python -m hashphere compute-benchmark \
   --hash-count 1000000
 ```
 
-It uses the same public deterministic synthetic work as CPU backends. A
-controlled Spark measurement recorded approximately 323.9 MH/s; this is local
-evidence, not a portable performance guarantee. Output is
-limited to stable backend identity, ordinal, hashes checked, elapsed
-nanoseconds, rate or unavailable, and exhausted/candidate status. It excludes
-the fixture header, targets, digest, candidate nonce, device UUID, serial, PCI
-address, compiler path, and driver path. No performance threshold is asserted.
+The one-shot command remains unchanged. Explicit repeated measurements use:
+
+```bash
+uv run python -m hashphere compute-benchmark \
+  --backend cuda \
+  --device 0 \
+  --hash-count 100000000 \
+  --warmup-runs 2 \
+  --repetitions 7
+```
+
+This separates cold runtime/device initialization, the first kernel call,
+warmups, measured median/minimum/maximum, total backend-call wall time, and
+cleanup. Counts are bounded to keep accidental invocations finite. The fixture
+uses exhausted deterministic synthetic work so candidate frequency cannot
+distort timings.
+
+The exact pre-change and post-change kernels were built for `sm_121` and measured
+in the same Spark session. Each table row used one first launch, one per-size
+warmup, and five measured repetitions on the same backend instance:
+
+| Hashes | Pre median MH/s | Pre min–max | Post median MH/s | Post min–max | Change |
+|---:|---:|---:|---:|---:|---:|
+| 1,000,000 | 337.27 | 274.98–340.92 | 2,645.44 | 2,639.86–2,650.38 | +684.3% |
+| 10,000,000 | 325.80 | 310.00–339.02 | 2,320.72 | 2,196.27–2,724.27 | +612.3% |
+| 100,000,000 | 308.14 | 305.31–321.86 | 2,373.06 | 2,342.27–2,413.63 | +670.1% |
+| 500,000,000 | 307.89 | 307.36–310.64 | 2,438.85 | 2,349.39–2,490.87 | +692.1% |
+
+Cold initialization remained about 0.3 seconds and is separated from warmed
+rates. Nsight Systems measured the 100-million search kernel at approximately
+316.30 ms before and 40.17 ms after tuning; corresponding backend calls were
+approximately 317.00 ms and 40.55 ms. Hardware performance counters were not
+available to the unprivileged process, so no achieved-occupancy or pipeline
+claim is made.
+
+Sustained 500-million synthetic runs recorded a 2,440.27 MH/s median across 100
+measured repetitions, with 2,348.50–2,549.12 MH/s observed. During a sanitized
+sample window, GPU-reported telemetry showed 55–58°C, roughly 65.9–67.5 W,
+95% utilization, and a 2,405 MHz SM clock. The approximate local ratio is about
+36.7 MH/s per reported GPU watt; this is board telemetry, not whole-system
+efficiency. No fan, clock, persistence, power-limit, driver, or firmware setting
+was changed.
+
+Output remains limited to aggregate identity and timing. It excludes fixture
+bytes, targets, digest, candidate nonce, UUID, serial, PCI address, and paths.
+All rates are local offline evidence, not a portable or live-pool performance
+guarantee.
+
+## Deferred Human Post-Tuning Gate
+
+No command in this section was executed during tuning. A manually authorized
+60-second gate is:
+
+```bash
+HASHPHERE_COMPUTE_BACKEND=cuda \
+HASHPHERE_CUDA_DEVICE=0 \
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+./.venv/bin/python -m hashphere stratum-mine \
+  --chunk-size 500000000 \
+  --max-runtime-seconds 60 \
+  --max-server-silence-seconds 120 \
+  --max-job-age-seconds 600 \
+  --max-reconnect-attempts 5 \
+  --log-file logs/cuda-post-tuning-60s.jsonl
+```
+
+The five-minute form changes only duration and output file:
+
+```bash
+HASHPHERE_COMPUTE_BACKEND=cuda \
+HASHPHERE_CUDA_DEVICE=0 \
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+./.venv/bin/python -m hashphere stratum-mine \
+  --chunk-size 500000000 \
+  --max-runtime-seconds 300 \
+  --max-server-silence-seconds 120 \
+  --max-job-age-seconds 600 \
+  --max-reconnect-attempts 5 \
+  --log-file logs/cuda-post-tuning-5m.jsonl
+```
+
+Compare only sanitized summaries from separately retained logs:
+
+```bash
+diff -u \
+  <(./.venv/bin/python -m hashphere logs-summary \
+      --log-file logs/cuda-pre-tuning.jsonl) \
+  <(./.venv/bin/python -m hashphere logs-summary \
+      --log-file logs/cuda-post-tuning-5m.jsonl)
+```
 
 ## Hardware Parity Gate
 
@@ -273,14 +381,15 @@ uv run pytest -q tests/test_cuda_hardware.py
 
 The gated suite compares CUDA with `PythonSequentialBackend` over exhausted,
 share, network, both-target, first/final nonce, `2**32` boundary, and fixed-seed
-random small ranges. It checks exact candidate nonce, Python-reconstructed
-digest and flags, full CUDA range count, and cleanup. It skips cleanly if the
-extension or requested device is absent.
+random small ranges, repeated resource use, and work replacement. It checks
+exact candidate nonce, Python-reconstructed digest and flags, full CUDA range
+count, and cleanup. It skips cleanly if the extension or requested device is
+absent.
 
 The DGX Spark hardware gate is complete. On NVIDIA GB10 compute capability 12.1
 with CUDA 13.0, the AArch64 extension compiled, artifact inspection confirmed
-an `sm_121` cubin, all 7 gated parity tests passed, and 60 CUDA host/build tests
-passed. This validates both sequential and orbiting-bit compatibility because
+an `sm_121` cubin, and the gated parity suite passed. This validates both
+sequential and orbiting-bit compatibility because
 both strategies hand the backend the same exact parent-range contract. Host
 fake tests and source review alone remain insufficient for any new platform.
 Toolkit, driver, and device details belong only in a local validation report,
@@ -304,8 +413,7 @@ This slice does not implement:
 
 - early termination or cooperative mid-range cancellation;
 - automatic block/grid tuning;
-- pinned-memory or persistent-buffer optimization;
-- DGX Spark/GB10 performance tuning;
+- pinned host memory or asynchronous pipelines;
 - multiple GPUs or cross-device reduction;
 - CUDA wheel publication or automatic toolkit installation;
 - fallback, retry, reconnect, or compute profiles;
@@ -319,6 +427,11 @@ internal-runtime endurance gate then completed 360,982,285,568 hashes across
 connection loss, reconnect, or command failure. CUDA still finishes its current
 range before graceful cleanup.
 
-Performance tuning remains the next GPU milestone. Multi-GPU execution,
-Windows CUDA validation, and portable CUDA wheel packaging follow later. The
-recorded rates are local evidence only and do not claim a general speedup.
+The five-minute pre-tuning liveness gate also completed cleanly at approximately
+307.62 MH/s with no stale warning, reconnect, connection loss, or command
+failure. No live Stratum or CKPool command was run during tuning. A later
+human-controlled live gate is required before claiming live improvement.
+
+Multi-GPU execution, Lite/Auto/Max/Custom profiles, Windows CUDA validation,
+and portable CUDA wheel packaging remain deferred. The recorded rates are local
+evidence only and do not claim a general or pool speedup.

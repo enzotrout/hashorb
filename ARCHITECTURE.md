@@ -192,8 +192,10 @@ remains `python`; `cpu` is retained as a configuration compatibility alias.
 Explicit unavailable backend selection fails before a live mining connection
 is opened, as do invalid parallel worker or CUDA device configurations.
 The same selected instance survives job changes, local work progression, and
-fresh Stratum sessions, while each prepared work value remains call-scoped and
-is not retained after search.
+fresh Stratum sessions. Python orchestration treats each prepared work value as
+call-scoped. A backend may retain only an implementation-private derived cache
+behind its lifecycle boundary and must replace it on any byte-level work or
+target change.
 
 `PythonSequentialBackend` delegates to the existing validated
 `search_nonce_range` function and is the correctness oracle for future
@@ -228,12 +230,16 @@ by mining orchestration.
 
 `CudaBackend` is a verified Python wrapper around the optional `_cuda`
 extension. The extension owns one correctness-first grid-stride kernel for an
-exact supplied parent range, device buffers for the 76-byte prefix and two
-little-endian targets, and deterministic atomic-minimum candidate reduction.
-The synchronized kernel evaluates the complete range, so its hash count is the
-exact range size and its timing covers transfer, launch, synchronization, and
-retrieval. It neither sees strategy state nor owns Stratum, work progression,
-submission, settings loading, output, events, or client cleanup.
+exact supplied parent range, persistent device buffers, and deterministic
+atomic-minimum candidate reduction. Host preparation computes the SHA-256 state
+after the fixed first 64-byte header block. The device specializes the remaining
+16 header bytes and fixed 32-byte second SHA-256 pass, eliminating per-thread
+header reconstruction and the former stack-resident generic schedule. Derived
+work is uploaded only when the prefix or either target changes; every range
+still resets its candidate result. The complete kernel evaluates the full range,
+so its hash count is exact. It neither sees strategy state nor owns Stratum,
+work progression, submission, settings loading, output, events, or client
+cleanup.
 
 The wrapper reconstructs the exact 80-byte header for every device candidate,
 rehashes it through the existing Python `hash_block_header`, and independently
@@ -249,10 +255,10 @@ one narrowly validated numeric `HASHPHERE_CUDA_ARCH`; it neither guesses from
 the host nor accepts raw compiler flags. Normal source and wheel builds do not
 invoke `nvcc`, while source distributions retain the CUDA source. The default
 test suite uses an injected extension-shaped fake and never initializes CUDA.
-The gated real-device suite passed all 7 parity tests on a CUDA 13.0 NVIDIA GB10
-build containing an `sm_121` cubin; the 60 CUDA host/build tests also passed.
+The gated real-device suite passes on a CUDA 13.0 NVIDIA GB10 build containing
+an `sm_121` cubin.
 Sequential and orbiting-bit remain backend-independent and compatible.
-Multi-GPU ownership, Windows CUDA builds, tuning, and portable published CUDA
+Multi-GPU ownership, Windows CUDA builds, profiles, and portable published CUDA
 wheels remain future boundaries.
 
 The native extension is optional at build and import time, preserving
