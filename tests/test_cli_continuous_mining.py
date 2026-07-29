@@ -17,11 +17,14 @@ import hashphere.__main__ as cli_module
 from hashphere.compute import ComputeBackendCapabilities, ComputeBackendExecutionError
 from hashphere.config import Settings
 from hashphere.mining import (
+    MAX_RUNTIME_SECONDS,
+    ContinuousMiningOutcome,
     ContinuousMiningPlan,
     MiningJob,
     NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
+    StopController,
 )
 from hashphere.network.stratum import (
     MiningNotifyNotification,
@@ -340,6 +343,7 @@ def arguments(
     start_nonce: str | None = None,
     max_chunks: str | None = "3",
     max_reconnect_attempts: str | None = None,
+    max_runtime_seconds: str | None = None,
     log_file: Path | None = None,
 ) -> list[str]:
     """Build one continuous command argument list."""
@@ -351,6 +355,8 @@ def arguments(
         result.extend(["--max-chunks", max_chunks])
     if max_reconnect_attempts is not None:
         result.extend(["--max-reconnect-attempts", max_reconnect_attempts])
+    if max_runtime_seconds is not None:
+        result.extend(["--max-runtime-seconds", max_runtime_seconds])
     if log_file is not None:
         result.extend(["--log-file", str(log_file)])
     return result
@@ -374,6 +380,29 @@ def test_parse_continuous_plan_supports_unlimited_and_limited_forms() -> None:
     assert cli_module._parse_continuous_mining_plan(
         ["--start-nonce", "7", "--max-chunks", "3", "--chunk-size", "10"]
     ) == ContinuousMiningPlan(7, 10, 3)
+    assert cli_module._parse_continuous_mining_plan(
+        ["--chunk-size", "10", "--max-runtime-seconds", "1.25"]
+    ) == ContinuousMiningPlan(0, 10, None, 1.25)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0",
+        "-1",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "not-a-duration",
+        str(int(MAX_RUNTIME_SECONDS) + 1),
+        "1e-400",
+    ],
+)
+def test_parse_continuous_plan_rejects_invalid_runtime_limits(value: str) -> None:
+    with pytest.raises(ValueError, match="max-runtime-seconds"):
+        cli_module._parse_continuous_mining_plan(
+            ["--chunk-size", "10", "--max-runtime-seconds", value]
+        )
 
 
 def test_parse_continuous_reconnect_policy_defaults_and_accepts_bounds() -> None:
@@ -653,7 +682,66 @@ def test_omitted_max_chunks_prints_unlimited_and_signal_stops_after_chunk(
     assert signals.current == signals.previous
     output = capsys.readouterr().out
     assert "Maximum chunks: unlimited" in output
+    assert "Maximum runtime seconds: unlimited" in output
     assert "Result: stopped_by_user" in output
+
+
+def test_runtime_limit_is_a_completed_logged_outcome_with_clean_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runtime-limit.jsonl"
+    client = FakeClient()
+    _, signals = install_fakes(monkeypatch, client, deterministic_log=True)
+    now = [0.0]
+
+    def controller_factory(max_runtime_seconds: float | None) -> StopController:
+        controller = StopController(max_runtime_seconds, clock=lambda: now[0])
+        now[0] = 1.5
+        return controller
+
+    monkeypatch.setattr(cli_module, "StopController", controller_factory)
+
+    assert (
+        cli_module.main(arguments(max_chunks=None, max_runtime_seconds="1.5", log_file=path)) == 0
+    )
+
+    records = read_events(path)
+    assert records[-1]["event"] == "command_completed"
+    assert records[-1]["outcome"] == ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED.value
+    assert [record["event"] for record in records].count("command_completed") == 1
+    assert "mining_stop_requested" not in [record["event"] for record in records]
+    summary = summarize_jsonl(path)
+    assert summary.completed_run_count == 1
+    assert summary.incomplete_run_count == 0
+    assert client.handshake_calls == 0
+    assert client.close_calls == 0
+    assert signals.current == signals.previous
+    output = capsys.readouterr().out
+    assert "Maximum runtime seconds: 1.5" in output
+    assert "Result: runtime_limit_reached" in output
+
+
+@pytest.mark.parametrize("signal_number", [signal.SIGINT, signal.SIGTERM])
+def test_first_and_repeated_stop_signals_complete_gracefully(
+    monkeypatch: pytest.MonkeyPatch,
+    signal_number: signal.Signals,
+) -> None:
+    client = FakeClient()
+    harness = SearchHarness(signal_trigger_call=1)
+    harness, signals = install_fakes(monkeypatch, client, harness)
+
+    def repeated_signal() -> None:
+        signals.trigger(signal_number)
+        signals.trigger(signal_number)
+
+    harness.signal_trigger = repeated_signal
+
+    assert cli_module.main(arguments(max_chunks=None)) == 0
+    assert len(harness.search_calls) == 1
+    assert client.close_calls == 1
+    assert signals.current == signals.previous
 
 
 def test_initial_wait_timeout_then_stop_is_responsive_and_does_not_search(
@@ -900,6 +988,37 @@ def test_stop_during_reconnect_backoff_is_successful_and_creates_no_new_client(
     assert "Result: stopped_by_user" in output
     assert "Reconnect attempts: 0" in output
     assert "Sessions established: 0" in output
+
+
+def test_runtime_limit_during_reconnect_backoff_creates_no_new_client(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failed = FakeClient(handshake_failure=StratumConnectionError("private failure"))
+    unused = FakeClient()
+    harness, _ = install_fakes(monkeypatch, failed, additional_clients=[unused])
+    now = [0.0]
+
+    def controller_factory(max_runtime_seconds: float | None) -> StopController:
+        return StopController(max_runtime_seconds, clock=lambda: now[0])
+
+    def reach_deadline(delay_seconds: float, stop_token: object) -> bool:
+        harness.reconnect_delays.append(delay_seconds)
+        now[0] = 1.0
+        return not stop_token.stop_requested  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(cli_module, "StopController", controller_factory)
+    monkeypatch.setattr(cli_module, "wait_for_reconnect_delay", reach_deadline)
+
+    assert cli_module.main(arguments(max_chunks=None, max_runtime_seconds="1")) == 0
+
+    assert harness.reconnect_delays == [1.0]
+    assert failed.close_calls == 1
+    assert unused.handshake_calls == 0
+    assert unused.close_calls == 0
+    output = capsys.readouterr().out
+    assert "Result: runtime_limit_reached" in output
+    assert "Reconnect attempts: 0" in output
 
 
 def test_reconnect_exhaustion_is_sanitized_runtime_failure(

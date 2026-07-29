@@ -8,6 +8,7 @@ from dataclasses import FrozenInstanceError, dataclass, field
 import pytest
 
 from hashphere.mining import (
+    MAX_RUNTIME_SECONDS,
     ContinuousMiningError,
     ContinuousMiningOutcome,
     ContinuousMiningPlan,
@@ -394,6 +395,7 @@ def test_plan_represents_unlimited_session_and_is_frozen_and_slotted() -> None:
     plan = ContinuousMiningPlan(start_nonce=0, chunk_size=100)
 
     assert plan.max_chunks is None
+    assert plan.max_runtime_seconds is None
     assert not hasattr(plan, "__dict__")
     with pytest.raises(FrozenInstanceError):
         plan.chunk_size = 1  # type: ignore[misc]
@@ -411,6 +413,13 @@ def test_plan_represents_unlimited_session_and_is_frozen_and_slotted() -> None:
         ("max_chunks", True),
         ("max_chunks", 0),
         ("max_chunks", 2**32 + 1),
+        ("max_runtime_seconds", True),
+        ("max_runtime_seconds", 0),
+        ("max_runtime_seconds", -1),
+        ("max_runtime_seconds", float("nan")),
+        ("max_runtime_seconds", float("inf")),
+        ("max_runtime_seconds", -float("inf")),
+        ("max_runtime_seconds", MAX_RUNTIME_SECONDS + 1),
     ],
 )
 def test_plan_rejects_invalid_values(field_name: str, value: object) -> None:
@@ -418,6 +427,7 @@ def test_plan_rejects_invalid_values(field_name: str, value: object) -> None:
         "start_nonce": 0,
         "chunk_size": 1,
         "max_chunks": 1,
+        "max_runtime_seconds": 1.0,
     }
     values[field_name] = value
 
@@ -582,6 +592,94 @@ def test_repeated_stop_requests_are_safe() -> None:
     controller.request_stop()
 
     assert controller.stop_requested is True
+    assert controller.runtime_limit_reached is False
+
+
+def test_runtime_limit_before_first_chunk_has_distinct_outcome() -> None:
+    now = [10.0]
+    controller = StopController(1.0, clock=lambda: now[0])
+    harness = Harness(controller=controller)
+    now[0] = 11.0
+
+    _, _, result = run_with_harness(ContinuousMiningPlan(0, 1, max_runtime_seconds=1), harness)
+
+    assert result.outcome is ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
+    assert result.chunks_completed == 0
+    assert harness.search_calls == []
+    assert ("stopped",) not in harness.observations
+
+
+def test_runtime_limit_after_one_range_prevents_the_next_range() -> None:
+    now = [0.0]
+    controller = StopController(1.0, clock=lambda: now[0])
+    harness = Harness(controller=controller)
+    original_search = harness.search
+
+    def advance_after_search(
+        work: PreparedMiningWork, start_nonce: int, stop_nonce: int
+    ) -> NonceSearchResult:
+        result = original_search(work, start_nonce, stop_nonce)
+        now[0] = 1.0
+        return result
+
+    harness.search = advance_after_search  # type: ignore[method-assign]
+
+    _, _, result = run_with_harness(ContinuousMiningPlan(0, 1, max_runtime_seconds=1), harness)
+
+    assert result.outcome is ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
+    assert result.chunks_completed == 1
+    assert len(harness.search_calls) == 1
+    assert result.total_hashes_checked == 1
+
+
+def test_runtime_limit_during_job_replacement_prevents_replacement_search() -> None:
+    now = [0.0]
+    controller = StopController(1.0, clock=lambda: now[0])
+    harness = Harness(
+        controller=controller,
+        notifications=deque([notification("replacement"), None]),
+    )
+    original_prepare = harness.prepare
+
+    def advance_during_replacement(job: MiningJob, extra_nonce_2: str) -> PreparedMiningWork:
+        work = original_prepare(job, extra_nonce_2)
+        if len(harness.prepare_calls) == 2:
+            now[0] = 1.0
+        return work
+
+    harness.prepare = advance_during_replacement  # type: ignore[method-assign]
+
+    _, _, result = run_with_harness(ContinuousMiningPlan(0, 1, max_runtime_seconds=1), harness)
+
+    assert result.outcome is ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
+    assert [work.job_id for work, _, _ in harness.search_calls] == ["initial-job"]
+    assert result.job_replacements == 1
+
+
+def test_runtime_limit_during_progression_prevents_successor_search() -> None:
+    now = [0.0]
+    controller = StopController(1.0, clock=lambda: now[0])
+    harness = Harness(controller=controller)
+    original_prepare = harness.prepare
+
+    def advance_during_progression(job: MiningJob, extra_nonce_2: str) -> PreparedMiningWork:
+        work = original_prepare(job, extra_nonce_2)
+        if len(harness.prepare_calls) == 2:
+            now[0] = 1.0
+        return work
+
+    harness.prepare = advance_during_progression  # type: ignore[method-assign]
+
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0xFFFFFFFF, 1, max_runtime_seconds=1),
+        harness,
+        extra_nonce_2_size=1,
+        extra_nonce_2="fe",
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
+    assert len(harness.search_calls) == 1
+    assert [extra for _, extra in harness.prepare_calls] == ["fe", "ff"]
 
 
 def test_stop_during_replacement_preparation_prevents_next_search() -> None:
