@@ -58,7 +58,7 @@ Progress:
 - ✅ Portable parallel native CPU backend
 - ✅ Search-strategy abstraction and sequential reference strategy
 - ✅ Deterministic orbiting-bit search strategy
-- 🟨 GPU/CUDA correctness backend implemented; hardware validation gated
+- ✅ GPU/CUDA correctness backend validated on DGX Spark GB10
 - ⬜ Pool failover
 
 ---
@@ -101,7 +101,7 @@ Progress:
 - ✅ Portable parallel native CPU mining
 - ✅ Search-strategy abstraction and sequential reference strategy
 - ✅ Deterministic orbiting-bit search strategy
-- 🟨 GPU/CUDA correctness backend implemented; hardware validation gated
+- ✅ GPU/CUDA correctness backend validated on DGX Spark GB10
 - ⬜ Pool failover
 - ⬜ Direct block submission
 - ⬜ Persistent best hash
@@ -167,24 +167,26 @@ Planned:
 
 # Current Milestone
 
-**Optional CUDA Correctness Backend — Implemented, Hardware Gate Pending**
+**Optional CUDA Correctness Backend — DGX Spark Parity Complete**
 
 Objective:
 
 Add an explicitly built and selected CUDA backend that searches exact parent
 ranges, reduces to the smallest qualifying nonce, and verifies every device
 candidate through the existing Python correctness primitives. CPU-only builds,
-Python defaults, and both search strategies remain operational. CUDA source,
-host integration, mocked tests, and build tooling are complete; `nvcc`, an
-NVIDIA runtime, and a CUDA device are unavailable on the current validation
-host, so device parity and performance remain unclaimed.
+Python defaults, and both search strategies remain operational. On NVIDIA GB10
+compute capability 12.1 with CUDA 13.0, the AArch64 extension compiled for
+`sm_121`, its cubin was verified, all 7 gated hardware-parity tests passed, and
+60 CUDA host/build tests passed. No CUDA benchmark or live CKPool CUDA mining
+run has been recorded, so performance and live-mining behavior remain
+unclaimed.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, the
 compute-backend boundary, portable native sequential execution, and portable
 parallel execution, the strategy abstraction, and both sequential and
-orbiting-bit orders remain complete. CUDA hardware parity is the current gate,
-followed by DGX Spark/GB10 correctness tuning, multi-GPU execution,
+orbiting-bit orders remain complete. CUDA performance tuning is the next GPU
+step, followed by multi-GPU execution,
 Lite/Auto/Max/Custom operating profiles, macOS/Windows/Linux/Docker packaging,
 broader pool support and Bitcoin Core true solo mining, distributed workers and
 adaptive tuning, then Prometheus/Grafana-compatible metrics. Pool failover
@@ -198,5 +200,6 @@ strategy-expansion point.
 
 Continue with:
 
-**Compile and exercise the optional CUDA backend on NVIDIA hardware, then begin
-DGX Spark/GB10 correctness tuning without making unsupported speed claims.**
+**Benchmark and tune the validated DGX Spark/GB10 CUDA backend offline without
+making unsupported speed claims. Keep multi-GPU, Windows CUDA builds, and
+portable CUDA wheel publication deferred.**

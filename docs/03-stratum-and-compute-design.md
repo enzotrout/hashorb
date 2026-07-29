@@ -574,8 +574,10 @@ Controlled outcomes are `stopped_by_user`, `chunk_limit_reached`,
 syntax or opt-in failure, and one for runtime, recovery exhaustion, or cleanup
 failure. Python, native, native-parallel, and explicitly built CUDA backends
 are available; sequential and experimental orbiting-bit strategies remain
-independent of those backends. CUDA hardware validation, tuning, multi-GPU
-execution, and pool failover remain deferred.
+independent of those backends. CUDA hardware parity passed on a CUDA 13.0
+NVIDIA GB10 `sm_121` build. CUDA performance tuning, multi-GPU execution,
+Windows CUDA packaging, portable CUDA wheels, and pool failover remain
+deferred; no live CKPool CUDA mining run has been executed.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not

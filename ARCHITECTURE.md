@@ -222,13 +222,16 @@ work changes, and recovered Stratum sessions and are closed once by the same
 caller-owned backend cleanup as CPU resources. Cleanup synchronizes owned work
 without resetting unrelated global CUDA state.
 
-CUDA compilation is deliberately gated by `HASHPHERE_BUILD_CUDA=1`. Normal
-source and wheel builds do not invoke `nvcc`, while source distributions retain
-the CUDA source. The default test suite uses an injected extension-shaped fake
-and never initializes CUDA. Device parity tests require the separate
-`HASHPHERE_ENABLE_CUDA_TESTS=1` gate and skip cleanly when the extension or
-device is absent. Multi-GPU ownership, device discovery policy, tuning, and
-published CUDA wheels remain future boundaries.
+CUDA compilation is deliberately gated by `HASHPHERE_BUILD_CUDA=1` and requires
+one narrowly validated numeric `HASHPHERE_CUDA_ARCH`; it neither guesses from
+the host nor accepts raw compiler flags. Normal source and wheel builds do not
+invoke `nvcc`, while source distributions retain the CUDA source. The default
+test suite uses an injected extension-shaped fake and never initializes CUDA.
+The gated real-device suite passed all 7 parity tests on a CUDA 13.0 NVIDIA GB10
+build containing an `sm_121` cubin; the 60 CUDA host/build tests also passed.
+Sequential and orbiting-bit remain backend-independent and compatible.
+Multi-GPU ownership, Windows CUDA builds, tuning, and portable published CUDA
+wheels remain future boundaries.
 
 The native extension is optional at build and import time, preserving
 Python-only installs; both native modes then report controlled unavailability.

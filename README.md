@@ -137,8 +137,9 @@ The GPU checks every nonce in that range and reports the smallest match. Python
 then rebuilds and hashes that candidate again before it can be submitted.
 
 Prerequisites are a supported NVIDIA GPU, installed CUDA toolkit and runtime,
-and `nvcc` on `PATH`. Enable the extension deliberately on the DGX Spark GB10
-validation host with:
+and `nvcc` on `PATH`. CUDA builds require an explicit, narrowly validated
+architecture; the build never probes a GPU or accepts raw compiler flags. On
+the DGX Spark GB10 validation host use:
 
 ```bash
 HASHPHERE_BUILD_CUDA=1 \
@@ -150,7 +151,11 @@ Without `HASHPHERE_BUILD_CUDA=1`, `_cuda.cu` is included in source
 distributions but is not compiled or imported. CPU-only packages continue to
 provide Python and optional native CPU operation. When the switch is set,
 missing `nvcc` or compilation failure stops the CUDA-enabled build instead of
-silently producing a package that appears CUDA-capable.
+silently producing a package that appears CUDA-capable. Omitting
+`HASHPHERE_CUDA_ARCH`, or setting anything other than the currently tested
+numeric values `120` and `121`, stops the CUDA build. Future Windows and Linux
+hosts must select an explicitly supported architecture for their GPU and
+toolkit; normal package imports never probe hardware.
 
 CUDA remains explicit:
 
@@ -200,9 +205,12 @@ uv run python -m hashphere stratum-mine \
 
 These commands are documentation only and are not executed automatically.
 
-This repository has completed CPU-only builds and fake-runtime correctness
-tests. CUDA compilation and Python/CUDA parity still require an NVIDIA CUDA
-host; no speed or hardware-validation claim is made until that gate passes.
+Real validation on an NVIDIA GB10 with compute capability 12.1 and CUDA 13.0
+completed an AArch64 extension build, verified an `sm_121` cubin, passed all 7
+gated Python/CUDA hardware-parity tests, and passed 60 CUDA host/build tests.
+Both sequential and orbiting-bit strategies supply the same validated parent
+ranges to that backend. No CUDA benchmark or live CKPool CUDA mining run has
+been recorded, so no speed or live-mining claim is made.
 See [`docs/10-cuda-backend.md`](docs/10-cuda-backend.md).
 
 `uv sync --locked` attempts to compile the optional self-contained C extension
@@ -582,7 +590,7 @@ errors, and other non-connection failures remain terminal. Most importantly,
 a `mining.submit` transport failure is never retried: its outcome is uncertain,
 and resending could duplicate a submission. Pool failover, random backoff
 jitter, cooperative mid-chunk cancellation, SIMD, multiprocessing, CUDA
-hardware validation and tuning, and multi-GPU execution remain deferred.
+performance tuning, and multi-GPU execution remain deferred.
 
 To validate explicit native selection with a bounded live gate, use:
 

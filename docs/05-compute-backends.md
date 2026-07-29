@@ -383,8 +383,11 @@ mid-range cancellation is deferred; all current backends truthfully declare
 that they cannot cancel a running range. A future cancellation input can be
 added only with lifecycle and actual hash-accounting tests.
 
-The CUDA correctness boundary is implemented but remains unvalidated on real
-hardware until the explicitly gated toolkit/device parity suite passes. DGX
-Spark/GB10 tuning follows that correctness gate. Metal, Vulkan, multi-GPU
-coordination, multiprocessing, SIMD, additional strategies, resource profiles,
-automatic selection, and CUDA wheel publishing remain deferred.
+The CUDA correctness boundary is validated on real NVIDIA GB10 hardware with
+CUDA 13.0: the `sm_121` extension passed all 7 gated device-parity tests and 60
+CUDA host/build tests. Both sequential and orbiting-bit continue to pass exact
+ordinary parent ranges through the same backend contract. No offline CUDA
+benchmark or live CKPool CUDA mining run has been recorded. Performance tuning,
+Metal, Vulkan, multi-GPU coordination, Windows CUDA builds, multiprocessing,
+SIMD, additional strategies, resource profiles, automatic selection, and
+portable CUDA wheel publishing remain deferred.

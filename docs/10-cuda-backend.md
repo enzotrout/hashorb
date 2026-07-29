@@ -8,9 +8,10 @@ one ordinary half-open parent nonce range, evaluates that complete range on one
 explicitly selected NVIDIA device, and returns the existing immutable
 `NonceSearchResult`.
 
-The implementation is correctness-first. CUDA compilation, toolkit/runtime
-initialization, and real-device parity are explicitly gated. The Python and
-native CPU paths remain independent and operational without CUDA.
+The implementation is correctness-first. CUDA compilation and toolkit/runtime
+initialization are explicitly gated. Real-device parity has passed on the DGX
+Spark validation host. The Python and native CPU paths remain independent and
+operational without CUDA.
 
 ## Why
 
@@ -68,13 +69,31 @@ Prerequisites are:
 
 The explicit build adds `_cuda` and links it with the toolkit's CUDA runtime.
 On the DGX Spark GB10 validation host, the supported target is `sm_121`
-through `HASHPHERE_CUDA_ARCH=121`. The build script also discovers CUDA
-runtime libraries from the toolkit's `lib`, `lib64`, or `targets/<platform>/lib`
-layouts so the ARM64 toolkit path is used correctly. If
+through `HASHPHERE_CUDA_ARCH=121`. Every CUDA build must provide
+`HASHPHERE_CUDA_ARCH` explicitly; omission fails, and the only currently tested
+numeric values are `120` and `121`. Prefixes, lists, arbitrary compiler flags,
+and untested architectures are rejected. The build does not probe an installed
+GPU, and CPU-only builds and normal imports ignore this setting.
+
+The build script discovers directories containing an actual CUDA runtime in
+deterministic order: `CUDA_HOME/lib64`, `CUDA_HOME/lib`, `CUDA_HOME/lib/x64`,
+then each sorted `CUDA_HOME/targets/<platform>/lib` and `lib64`. `CUDA_HOME` or `CUDA_PATH` wins
+when set; otherwise the toolkit root is derived from `nvcc`. This supports the
+Spark ARM64 toolkit without assuming `/usr/local/cuda` and supplies the same
+explicit mechanism for future Windows and other Linux validation. If
 `HASHPHERE_BUILD_CUDA=1` is set and `nvcc` is missing or compilation fails,
 the build fails. It does not silently publish a CPU package that claims CUDA
 availability. Normal CPU builds and forced native-C compiler-failure builds do
 not attempt CUDA compilation. CUDA wheel publication is deferred.
+
+On non-Windows local development builds, setuptools embeds the discovered
+absolute toolkit directories as runtime search paths. The validated Spark
+artifact therefore imports against its local CUDA 13.0 installation without
+hiding loader or linker failures. This is intentionally a development-build
+limitation, not a portable-wheel design: CUDA wheels are not published, and a
+future wheel pipeline must choose and validate a relocatable runtime policy.
+CPU-only wheels have no CUDA runtime paths. Windows does not receive these
+POSIX runtime search paths. No username or home-directory path is required.
 
 ## Runtime Availability and Configuration
 
@@ -253,10 +272,14 @@ random small ranges. It checks exact candidate nonce, Python-reconstructed
 digest and flags, full CUDA range count, and cleanup. It skips cleanly if the
 extension or requested device is absent.
 
-Hardware validation is complete only after the extension compiles and this
-suite executes on a real CUDA device. Host fake tests and source review are not
-a substitute. Toolkit, driver, and device details belong only in the local
-validation report, never privacy-sensitive JSONL.
+The DGX Spark hardware gate is complete. On NVIDIA GB10 compute capability 12.1
+with CUDA 13.0, the AArch64 extension compiled, artifact inspection confirmed
+an `sm_121` cubin, all 7 gated parity tests passed, and 60 CUDA host/build tests
+passed. This validates both sequential and orbiting-bit compatibility because
+both strategies hand the backend the same exact parent-range contract. Host
+fake tests and source review alone remain insufficient for any new platform.
+Toolkit, driver, and device details belong only in a local validation report,
+never privacy-sensitive JSONL.
 
 ## Observability and Privacy
 
@@ -277,12 +300,13 @@ This slice does not implement:
 - early termination or cooperative mid-range cancellation;
 - automatic block/grid tuning;
 - pinned-memory or persistent-buffer optimization;
-- architecture-specific kernels or DGX Spark/GB10 tuning;
+- DGX Spark/GB10 performance tuning;
 - multiple GPUs or cross-device reduction;
 - CUDA wheel publication or automatic toolkit installation;
 - fallback, retry, reconnect, or compute profiles;
 - mining lifecycle, Stratum, strategy, or submission behavior inside CUDA.
 
-DGX Spark/GB10 correctness and performance tuning is the next GPU milestone
-after real-device parity. Multi-GPU execution follows later. No speed advantage
-is claimed before controlled hardware evidence exists.
+DGX Spark/GB10 offline benchmarking and performance tuning are the next GPU
+milestone. Multi-GPU execution, Windows CUDA build validation, and portable
+CUDA wheel packaging follow later. No CUDA benchmark or live CKPool CUDA mining
+run has been recorded, and no speed advantage or live-mining result is claimed.
