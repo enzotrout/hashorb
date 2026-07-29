@@ -41,6 +41,14 @@ from hashphere.mining.job import (
     MiningJobStateError,
     MiningJobValidationError,
 )
+from hashphere.mining.liveness import (
+    MAX_LIVENESS_SECONDS,
+    StratumLivenessError,
+    StratumLivenessPolicy,
+    StratumLivenessTracker,
+    StratumLivenessViolation,
+    StratumStaleReason,
+)
 from hashphere.mining.merkle import (
     MerkleError,
     MerkleValidationError,
@@ -138,6 +146,7 @@ __all__ = [
     "ContinuousMiningValidationError",
     "ExtraNonceSeedFactory",
     "MAX_RECONNECT_ATTEMPTS",
+    "MAX_LIVENESS_SECONDS",
     "MAX_RUNTIME_SECONDS",
     "MiningJob",
     "MiningJobAssembler",
@@ -150,6 +159,11 @@ __all__ = [
     "MiningWorkIdentity",
     "MiningWorkProgress",
     "MiningWorkProgressionError",
+    "StratumLivenessError",
+    "StratumLivenessPolicy",
+    "StratumLivenessTracker",
+    "StratumLivenessViolation",
+    "StratumStaleReason",
     "MiningWorkProgressionValidationError",
     "MiningWorkVariant",
     "MerkleError",

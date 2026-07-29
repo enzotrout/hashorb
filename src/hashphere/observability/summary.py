@@ -57,6 +57,14 @@ class LogSummary:
     reconnect_success_count: int
     reconnect_failure_count: int
     reconnect_exhausted_count: int
+    liveness_warning_count: int
+    stale_session_count: int
+    stale_reconnect_started_count: int
+    stale_reconnect_success_count: int
+    stale_reconnect_failure_count: int
+    stale_reason_counts: tuple[tuple[str, int], ...]
+    configured_server_silence_limits: tuple[tuple[float, int], ...]
+    configured_job_age_limits: tuple[tuple[float, int], ...]
     completed_nonce_range_count: int
     total_hashes_checked: int
     total_mining_elapsed_ns: int
@@ -98,6 +106,14 @@ class _Accumulator:
     reconnect_success_count: int = 0
     reconnect_failure_count: int = 0
     reconnect_exhausted_count: int = 0
+    liveness_warning_count: int = 0
+    stale_session_count: int = 0
+    stale_reconnect_started_count: int = 0
+    stale_reconnect_success_count: int = 0
+    stale_reconnect_failure_count: int = 0
+    stale_reason_counts: Counter[str] = field(default_factory=Counter)
+    configured_server_silence_limits: Counter[float] = field(default_factory=Counter)
+    configured_job_age_limits: Counter[float] = field(default_factory=Counter)
     completed_nonce_range_count: int = 0
     total_hashes_checked: int = 0
     total_mining_elapsed_ns: int = 0
@@ -278,7 +294,19 @@ def _aggregate_known_event(
     event: str,
     record: dict[str, object],
 ) -> None:
-    if event == "command_completed":
+    if event == "command_started":
+        if "max_server_silence_seconds" in record:
+            limit = float(
+                _positive_number(
+                    record["max_server_silence_seconds"],
+                    "max_server_silence_seconds",
+                )
+            )
+            accumulator.configured_server_silence_limits[limit] += 1
+        if "max_job_age_seconds" in record:
+            limit = float(_positive_number(record["max_job_age_seconds"], "max_job_age_seconds"))
+            accumulator.configured_job_age_limits[limit] += 1
+    elif event == "command_completed":
         outcome = _nonblank_string(_required(record, "outcome"), "outcome")
         accumulator.outcome_counts[outcome] += 1
     elif event == "command_failed":
@@ -380,6 +408,30 @@ def _aggregate_known_event(
         _nonblank_string(_required(record, "recovery_stage"), "recovery_stage")
         _nonblank_string(_required(record, "error_category"), "error_category")
         accumulator.reconnect_exhausted_count += 1
+    elif event in {
+        "stratum_liveness_warning",
+        "stratum_session_stale",
+    }:
+        reason = _nonblank_string(_required(record, "reason"), "reason")
+        _positive_number(_required(record, "threshold_seconds"), "threshold_seconds")
+        _nonnegative_number(_required(record, "elapsed_seconds"), "elapsed_seconds")
+        if event == "stratum_liveness_warning":
+            accumulator.liveness_warning_count += 1
+        else:
+            accumulator.stale_session_count += 1
+            accumulator.stale_reason_counts[reason] += 1
+    elif event in {
+        "stratum_stale_reconnect_started",
+        "stratum_stale_reconnect_succeeded",
+        "stratum_stale_reconnect_failed",
+    }:
+        _nonblank_string(_required(record, "reason"), "reason")
+        if event == "stratum_stale_reconnect_started":
+            accumulator.stale_reconnect_started_count += 1
+        elif event == "stratum_stale_reconnect_succeeded":
+            accumulator.stale_reconnect_success_count += 1
+        else:
+            accumulator.stale_reconnect_failure_count += 1
     elif event == "nonce_range_completed":
         hashes_checked = _nonnegative_int(_required(record, "hashes_checked"), "hashes_checked")
         elapsed_ns = _nonnegative_int(_required(record, "elapsed_ns"), "elapsed_ns")
@@ -516,6 +568,16 @@ def _build_summary(accumulator: _Accumulator) -> LogSummary:
         reconnect_success_count=accumulator.reconnect_success_count,
         reconnect_failure_count=accumulator.reconnect_failure_count,
         reconnect_exhausted_count=accumulator.reconnect_exhausted_count,
+        liveness_warning_count=accumulator.liveness_warning_count,
+        stale_session_count=accumulator.stale_session_count,
+        stale_reconnect_started_count=accumulator.stale_reconnect_started_count,
+        stale_reconnect_success_count=accumulator.stale_reconnect_success_count,
+        stale_reconnect_failure_count=accumulator.stale_reconnect_failure_count,
+        stale_reason_counts=tuple(sorted(accumulator.stale_reason_counts.items())),
+        configured_server_silence_limits=tuple(
+            sorted(accumulator.configured_server_silence_limits.items())
+        ),
+        configured_job_age_limits=tuple(sorted(accumulator.configured_job_age_limits.items())),
         completed_nonce_range_count=accumulator.completed_nonce_range_count,
         total_hashes_checked=accumulator.total_hashes_checked,
         total_mining_elapsed_ns=accumulator.total_mining_elapsed_ns,

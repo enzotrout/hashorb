@@ -70,6 +70,10 @@ class StratumTransport:
                 (self.host, self.port),
                 timeout=self.timeout,
             )
+            try:
+                connection.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            except OSError:
+                pass
             connection.settimeout(self.timeout)
         except OSError as exc:
             raise StratumConnectionError(f"could not connect to {self.host}:{self.port}") from exc

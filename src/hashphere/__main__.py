@@ -6,7 +6,7 @@ import os
 import secrets
 import signal
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from types import FrameType
@@ -25,6 +25,7 @@ from hashphere.compute import (
 )
 from hashphere.config import DEFAULT_CUDA_DEVICE, MAX_CUDA_DEVICE, Settings
 from hashphere.mining import (
+    MAX_LIVENESS_SECONDS,
     MAX_RECONNECT_ATTEMPTS,
     MAX_RUNTIME_SECONDS,
     BlockHeaderError,
@@ -53,6 +54,7 @@ from hashphere.mining import (
     SessionRecoveryError,
     SessionRecoveryExhaustedError,
     StopController,
+    StratumLivenessViolation,
     StratumRecoveryStage,
     StratumRecoveryStatistics,
     StratumSessionRecovery,
@@ -425,6 +427,42 @@ class _ContinuousEventObserver(_ChunkedEventObserver):
         self._stop_emitted = True
         self._events.emit("mining_stop_requested")
 
+    def session_stale(self, violation: StratumLivenessViolation) -> None:
+        """Emit one warning and stale transition with sanitized timing only."""
+
+        fields: dict[str, EventValue] = {
+            "reason": violation.reason.value,
+            "threshold_seconds": violation.threshold_seconds,
+            "elapsed_seconds": violation.elapsed_seconds,
+        }
+        self._events.emit("stratum_liveness_warning", level="WARNING", fields=fields)
+        self._events.emit("stratum_session_stale", level="WARNING", fields=fields)
+
+    def stale_reconnect_started(self, violation: StratumLivenessViolation) -> None:
+        """Emit stale-session entry into the shared reconnect owner."""
+
+        self._events.emit(
+            "stratum_stale_reconnect_started",
+            fields={"reason": violation.reason.value},
+        )
+
+    def stale_reconnect_succeeded(self, violation: StratumLivenessViolation) -> None:
+        """Emit fresh usable session installation after stale recovery."""
+
+        self._events.emit(
+            "stratum_stale_reconnect_succeeded",
+            fields={"reason": violation.reason.value},
+        )
+
+    def stale_reconnect_failed(self, violation: StratumLivenessViolation) -> None:
+        """Emit stale recovery failure without raw errors."""
+
+        self._events.emit(
+            "stratum_stale_reconnect_failed",
+            level="ERROR",
+            fields={"reason": violation.reason.value},
+        )
+
     def nonce_space_exhausted(self, work: PreparedMiningWork) -> None:
         """Emit safe metadata when one prepared work exhausts its nonce space."""
 
@@ -580,6 +618,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 reconnect_policy,
                 events,
             ),
+            started_fields={
+                **(
+                    {"max_server_silence_seconds": continuous_plan.max_server_silence_seconds}
+                    if continuous_plan.max_server_silence_seconds is not None
+                    else {}
+                ),
+                **(
+                    {"max_job_age_seconds": continuous_plan.max_job_age_seconds}
+                    if continuous_plan.max_job_age_seconds is not None
+                    else {}
+                ),
+            },
         )
 
     print(_USAGE, file=sys.stderr)
@@ -739,6 +789,17 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
     print(f"  Reconnect successes: {summary.reconnect_success_count}")
     print(f"  Reconnect failures: {summary.reconnect_failure_count}")
     print(f"  Reconnect exhausted events: {summary.reconnect_exhausted_count}")
+    print(f"  Liveness warnings: {summary.liveness_warning_count}")
+    print(f"  Stale sessions: {summary.stale_session_count}")
+    print(f"  Stale reconnect starts: {summary.stale_reconnect_started_count}")
+    print(f"  Stale reconnect successes: {summary.stale_reconnect_success_count}")
+    print(f"  Stale reconnect failures: {summary.stale_reconnect_failure_count}")
+    for reason, count in summary.stale_reason_counts:
+        print(f"  Stale reason {reason}: {count}")
+    for limit, count in summary.configured_server_silence_limits:
+        print(f"  Configured server silence {limit:g} seconds: {count}")
+    for limit, count in summary.configured_job_age_limits:
+        print(f"  Configured job age {limit:g} seconds: {count}")
     print(f"  Nonce ranges completed: {summary.completed_nonce_range_count}")
     print(f"  Hashes checked: {summary.total_hashes_checked}")
     print(f"  Mining elapsed: {summary.total_mining_elapsed_ns} ns")
@@ -758,6 +819,8 @@ def _run_with_event_sink(
     command: str,
     log_file: str | None,
     operation: Callable[[EventSink], int],
+    *,
+    started_fields: Mapping[str, EventValue] | None = None,
 ) -> int:
     """Run one command with an initialized sink and deterministic cleanup."""
 
@@ -772,7 +835,7 @@ def _run_with_event_sink(
     status = 1
     raised = False
     try:
-        events.emit("command_started")
+        events.emit("command_started", fields=started_fields)
         status = operation(events)
     except EventLogError:
         print("Structured event logging failed.", file=sys.stderr)
@@ -1183,6 +1246,7 @@ def _run_stratum_mine(
                 prepare_work=prepare_mining_work,
                 search_range=backend.search_nonce_range,
                 recover_session=recovery.recover_session,
+                recover_stale_session=recovery.recover_stale_session,
                 recovery_statistics=lambda: recovery.statistics,
             )
             if recovery.current_session is not None:
@@ -1284,10 +1348,15 @@ def _run_stratum_mine(
         raise RuntimeError("continuous mining completed without an outcome")
 
     completion_level = "WARNING" if outcome is ContinuousMiningOutcome.SHARE_REJECTED else "INFO"
+    completion_fields: dict[str, EventValue] = {"outcome": outcome.value}
+    if plan.max_server_silence_seconds is not None:
+        completion_fields["max_server_silence_seconds"] = plan.max_server_silence_seconds
+    if plan.max_job_age_seconds is not None:
+        completion_fields["max_job_age_seconds"] = plan.max_job_age_seconds
     events.emit(
         "command_completed",
         level=completion_level,
-        fields={"outcome": outcome.value},
+        fields=completion_fields,
     )
     _print_continuous_mining_outcome(
         settings,
@@ -1538,6 +1607,8 @@ def _parse_continuous_mining_arguments(
             "--max-chunks",
             "--max-reconnect-attempts",
             "--max-runtime-seconds",
+            "--max-server-silence-seconds",
+            "--max-job-age-seconds",
             "--log-file",
         },
         unsupported_message="unsupported stratum-mine argument",
@@ -1565,6 +1636,8 @@ def _parse_continuous_mining_plan(arguments: Sequence[str]) -> ContinuousMiningP
             "--max-chunks",
             "--max-reconnect-attempts",
             "--max-runtime-seconds",
+            "--max-server-silence-seconds",
+            "--max-job-age-seconds",
         },
         unsupported_message="unsupported stratum-mine argument",
     )
@@ -1613,8 +1686,30 @@ def _continuous_plan_from_options(
         else None
     )
     max_runtime_seconds = (
-        _parse_runtime_seconds_option(option_values["--max-runtime-seconds"])
+        _parse_positive_seconds_option(
+            "--max-runtime-seconds",
+            option_values["--max-runtime-seconds"],
+            MAX_RUNTIME_SECONDS,
+        )
         if "--max-runtime-seconds" in option_values
+        else None
+    )
+    max_server_silence_seconds = (
+        _parse_positive_seconds_option(
+            "--max-server-silence-seconds",
+            option_values["--max-server-silence-seconds"],
+            MAX_LIVENESS_SECONDS,
+        )
+        if "--max-server-silence-seconds" in option_values
+        else None
+    )
+    max_job_age_seconds = (
+        _parse_positive_seconds_option(
+            "--max-job-age-seconds",
+            option_values["--max-job-age-seconds"],
+            MAX_LIVENESS_SECONDS,
+        )
+        if "--max-job-age-seconds" in option_values
         else None
     )
     return ContinuousMiningPlan(
@@ -1622,25 +1717,29 @@ def _continuous_plan_from_options(
         chunk_size=chunk_size,
         max_chunks=max_chunks,
         max_runtime_seconds=max_runtime_seconds,
+        max_server_silence_seconds=max_server_silence_seconds,
+        max_job_age_seconds=max_job_age_seconds,
     )
 
 
-def _parse_runtime_seconds_option(value: str) -> float:
-    """Parse one positive finite decimal runtime without accepting flag syntax."""
+def _parse_positive_seconds_option(
+    option_name: str,
+    value: str,
+    maximum: float,
+) -> float:
+    """Parse one positive finite decimal duration without accepting flag syntax."""
 
     if not value or value != value.strip():
-        raise ValueError("--max-runtime-seconds must be a positive decimal number")
+        raise ValueError(f"{option_name} must be a positive decimal number")
     try:
         parsed = Decimal(value)
     except InvalidOperation as exc:
-        raise ValueError("--max-runtime-seconds must be a positive decimal number") from exc
-    if not parsed.is_finite() or parsed <= 0 or parsed > Decimal(str(MAX_RUNTIME_SECONDS)):
-        raise ValueError(
-            f"--max-runtime-seconds must be finite and between 0 and {int(MAX_RUNTIME_SECONDS)}"
-        )
+        raise ValueError(f"{option_name} must be a positive decimal number") from exc
+    if not parsed.is_finite() or parsed <= 0 or parsed > Decimal(str(maximum)):
+        raise ValueError(f"{option_name} must be finite and between 0 and {int(maximum)}")
     converted = float(parsed)
     if converted == 0.0:
-        raise ValueError("--max-runtime-seconds is too small")
+        raise ValueError(f"{option_name} is too small")
     return converted
 
 
@@ -2246,6 +2345,16 @@ def _print_continuous_mining_outcome(
     print(
         "Maximum runtime seconds: "
         f"{plan.max_runtime_seconds if plan.max_runtime_seconds is not None else 'unlimited'}"
+    )
+    server_silence = (
+        plan.max_server_silence_seconds
+        if plan.max_server_silence_seconds is not None
+        else "disabled"
+    )
+    print(f"Maximum server silence seconds: {server_silence}")
+    print(
+        "Maximum job age seconds: "
+        f"{plan.max_job_age_seconds if plan.max_job_age_seconds is not None else 'disabled'}"
     )
     print(f"Maximum reconnect attempts: {reconnect_policy.maximum_attempts}")
     print(f"Chunks completed: {result.chunks_completed if result is not None else 0}")

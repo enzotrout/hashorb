@@ -10,6 +10,11 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from hashphere.mining.job import MiningJob, MiningJobAssembler
+from hashphere.mining.liveness import (
+    StratumLivenessPolicy,
+    StratumLivenessTracker,
+    StratumLivenessViolation,
+)
 from hashphere.mining.progression import (
     MiningJobContextIdentity,
     MiningWorkCursor,
@@ -52,6 +57,7 @@ type SessionRecoverer = Callable[
     [StratumConnectionError, StratumRecoveryStage],
     StratumMiningSession | None,
 ]
+type StaleSessionRecoverer = Callable[[], StratumMiningSession | None]
 type RecoveryStatisticsProvider = Callable[[], StratumRecoveryStatistics]
 
 _NONCE_LIMIT = 1 << 32
@@ -88,6 +94,8 @@ class ContinuousMiningPlan:
     chunk_size: int
     max_chunks: int | None = None
     max_runtime_seconds: float | None = None
+    max_server_silence_seconds: float | None = None
+    max_job_age_seconds: float | None = None
 
     def __post_init__(self) -> None:
         """Validate the plan without inventing a hidden session limit."""
@@ -113,6 +121,13 @@ class ContinuousMiningPlan:
                 raise ContinuousMiningValidationError(
                     f"max_runtime_seconds must be between 0 and {int(MAX_RUNTIME_SECONDS)}"
                 )
+        try:
+            StratumLivenessPolicy(
+                self.max_server_silence_seconds,
+                self.max_job_age_seconds,
+            )
+        except ValueError as exc:
+            raise ContinuousMiningValidationError(str(exc)) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +358,18 @@ class ContinuousMiningObserver(Protocol):
     def stop_requested(self) -> None:
         """Observe a controlled cooperative stop."""
 
+    def session_stale(self, violation: StratumLivenessViolation) -> None:
+        """Observe one configured liveness threshold crossing."""
+
+    def stale_reconnect_started(self, violation: StratumLivenessViolation) -> None:
+        """Observe entry into existing recovery for a stale session."""
+
+    def stale_reconnect_succeeded(self, violation: StratumLivenessViolation) -> None:
+        """Observe fresh usable session state after stale recovery."""
+
+    def stale_reconnect_failed(self, violation: StratumLivenessViolation) -> None:
+        """Observe stale recovery escaping without fresh usable state."""
+
     def nonce_space_exhausted(self, work: PreparedMiningWork) -> None:
         """Observe exhaustion of the current prepared work's nonce space."""
 
@@ -415,6 +442,18 @@ class NullContinuousMiningObserver:
     def stop_requested(self) -> None:
         """Discard a stop observation."""
 
+    def session_stale(self, violation: StratumLivenessViolation) -> None:
+        """Discard a stale-session observation."""
+
+    def stale_reconnect_started(self, violation: StratumLivenessViolation) -> None:
+        """Discard stale reconnect entry."""
+
+    def stale_reconnect_succeeded(self, violation: StratumLivenessViolation) -> None:
+        """Discard stale reconnect success."""
+
+    def stale_reconnect_failed(self, violation: StratumLivenessViolation) -> None:
+        """Discard stale reconnect failure."""
+
     def nonce_space_exhausted(self, work: PreparedMiningWork) -> None:
         """Discard a nonce-space exhaustion observation."""
 
@@ -454,7 +493,9 @@ def run_continuous_mining(
     prepare_work: WorkPreparer = prepare_mining_work,
     search_range: RangeSearcher = search_nonce_range,
     recover_session: SessionRecoverer | None = None,
+    recover_stale_session: StaleSessionRecoverer | None = None,
     recovery_statistics: RecoveryStatisticsProvider | None = None,
+    liveness_clock: Callable[[], float] = time.monotonic,
 ) -> ContinuousMiningResult:
     """Mine strategy-scheduled chunks until a controlled terminal outcome occurs."""
 
@@ -474,10 +515,19 @@ def run_continuous_mining(
         prepare_work,
         search_range,
         recover_session,
+        recover_stale_session,
         recovery_statistics,
+        liveness_clock,
     )
     event_observer: ContinuousMiningObserver = (
         NullContinuousMiningObserver() if observer is None else observer
+    )
+    liveness = StratumLivenessTracker(
+        StratumLivenessPolicy(
+            plan.max_server_silence_seconds,
+            plan.max_job_age_seconds,
+        ),
+        clock=liveness_clock,
     )
     if stop_token.stop_requested:
         outcome = _controlled_stop_outcome(stop_token)
@@ -697,6 +747,7 @@ def run_continuous_mining(
         current_work_searched = False
         last_ignored_pool_identity = None
         strategy_cursor = _create_strategy_cursor(selected_strategy, plan)
+        liveness.session_replaced()
 
     def recover_connection(
         error: StratumConnectionError,
@@ -714,9 +765,34 @@ def run_continuous_mining(
         install_recovered_session(recovered)
         return True
 
+    def recover_stale(violation: StratumLivenessViolation) -> bool:
+        if recover_stale_session is None:
+            raise ContinuousMiningError("stale-session recovery is unavailable")
+        event_observer.session_stale(violation)
+        event_observer.stale_reconnect_started(violation)
+        try:
+            recovered = recover_stale_session()
+        except BaseException:
+            event_observer.stale_reconnect_failed(violation)
+            raise
+        if recovered is None:
+            return False
+        if not isinstance(recovered, StratumMiningSession):
+            raise ContinuousMiningValidationError(
+                "recover_stale_session must return StratumMiningSession or None"
+            )
+        install_recovered_session(recovered)
+        event_observer.stale_reconnect_succeeded(violation)
+        return True
+
     while True:
         if stop_token.stop_requested:
             return finish_stopped()
+        stale = liveness.violation()
+        if stale is not None:
+            if not recover_stale(stale):
+                return finish_stopped()
+            continue
         if plan.max_chunks is not None and chunks_completed >= plan.max_chunks:
             return finish(ContinuousMiningOutcome.CHUNK_LIMIT_REACHED)
 
@@ -742,6 +818,13 @@ def run_continuous_mining(
         chunks_completed += 1
         total_hashes += chunk_result.hashes_checked
         total_elapsed_ns += chunk_result.elapsed_ns
+        liveness.range_completed()
+
+        stale = liveness.violation()
+        if stale is not None:
+            if not recover_stale(stale):
+                return finish_stopped()
+            continue
 
         if chunk_result.match is not None:
             match = chunk_result.match
@@ -779,6 +862,7 @@ def run_continuous_mining(
                 stop_token,
                 current_receive_notification,
                 event_observer,
+                notification_observer=liveness.notification_received,
             )
         except StratumConnectionError as error:
             if not recover_connection(error, StratumRecoveryStage.NOTIFICATION_POLL):
@@ -835,18 +919,25 @@ def run_continuous_mining(
                     return finish_stopped()
                 break
             if notification is None:
+                stale = liveness.violation()
+                if stale is not None:
+                    if not recover_stale(stale):
+                        return finish_stopped()
+                    break
                 continue
             waiting_job = _apply_notification(
                 current_assembler,
                 notification,
                 event_observer,
             )
+            liveness.notification_received(notification)
             try:
                 drained_job = _drain_notifications(
                     current_assembler,
                     stop_token,
                     current_receive_notification,
                     event_observer,
+                    notification_observer=liveness.notification_received,
                 )
             except StratumConnectionError as error:
                 if not recover_connection(error, StratumRecoveryStage.REPLACEMENT_WAIT):
@@ -865,6 +956,8 @@ def _drain_notifications(
     stop_token: StopToken,
     receive_notification: NotificationReceiver,
     observer: ContinuousMiningObserver,
+    *,
+    notification_observer: Callable[[MiningNotification], None] | None = None,
 ) -> MiningJob | None:
     selected_job: MiningJob | None = None
     while not stop_token.stop_requested:
@@ -872,6 +965,8 @@ def _drain_notifications(
         if notification is None:
             break
         received_job = _apply_notification(assembler, notification, observer)
+        if notification_observer is not None:
+            notification_observer(notification)
         if received_job is not None:
             selected_job = received_job
     return selected_job
@@ -906,7 +1001,9 @@ def _validate_run_inputs(
     prepare_work: object,
     search_range: object,
     recover_session: object,
+    recover_stale_session: object,
     recovery_statistics: object,
+    liveness_clock: object,
 ) -> None:
     if not isinstance(plan, ContinuousMiningPlan):
         raise ContinuousMiningValidationError("plan must be a ContinuousMiningPlan")
@@ -925,6 +1022,7 @@ def _validate_run_inputs(
         (submit_share, "submit_share"),
         (prepare_work, "prepare_work"),
         (search_range, "search_range"),
+        (liveness_clock, "liveness_clock"),
     ):
         if not callable(callback):
             raise ContinuousMiningValidationError(f"{name} must be callable")
@@ -932,8 +1030,16 @@ def _validate_run_inputs(
         raise ContinuousMiningValidationError(
             "recover_session and recovery_statistics must be provided together"
         )
+    liveness_enabled = (
+        plan.max_server_silence_seconds is not None or plan.max_job_age_seconds is not None
+    )
+    if liveness_enabled and recover_stale_session is None:
+        raise ContinuousMiningValidationError(
+            "recover_stale_session is required when liveness limits are configured"
+        )
     for callback, name in (
         (recover_session, "recover_session"),
+        (recover_stale_session, "recover_stale_session"),
         (recovery_statistics, "recovery_statistics"),
     ):
         if callback is not None and not callable(callback):

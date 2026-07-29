@@ -71,6 +71,7 @@ class StratumRecoveryStage(StrEnum):
     SESSION_WORK = "session_work"
     NOTIFICATION_POLL = "notification_poll"
     REPLACEMENT_WAIT = "replacement_wait"
+    LIVENESS = "liveness"
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,6 +449,20 @@ class StratumSessionRecovery:
         if self._stop_token.stop_requested:
             return None
         return self._retry(_RecoverableSessionFailure(error=error, stage=stage))
+
+    def recover_stale_session(self) -> StratumMiningSession | None:
+        """Replace a configured-stale session through the existing retry path."""
+
+        self._close_current_best_effort()
+        if self._stop_token.stop_requested:
+            return None
+        error = StratumConnectionError("configured Stratum liveness threshold exceeded")
+        return self._retry(
+            _RecoverableSessionFailure(
+                error=error,
+                stage=StratumRecoveryStage.LIVENESS,
+            )
+        )
 
     def close(self) -> None:
         """Close the current client and clear ownership; repeated calls are safe."""
