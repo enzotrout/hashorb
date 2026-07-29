@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError, dataclass, field
 
 import pytest
@@ -25,6 +26,7 @@ from hashphere.mining import (
     SearchStrategyExecutionError,
     SequentialSearchStrategy,
     StopController,
+    StratumLivenessViolation,
     StratumMiningSession,
     StratumRecoveryStage,
     StratumRecoveryStatistics,
@@ -220,6 +222,18 @@ class Harness:
     def stop_requested(self) -> None:
         self.observations.append(("stopped",))
 
+    def session_stale(self, violation: StratumLivenessViolation) -> None:
+        self.observations.append(("stale", violation.reason.value))
+
+    def stale_reconnect_started(self, violation: StratumLivenessViolation) -> None:
+        self.observations.append(("stale-started", violation.reason.value))
+
+    def stale_reconnect_succeeded(self, violation: StratumLivenessViolation) -> None:
+        self.observations.append(("stale-succeeded", violation.reason.value))
+
+    def stale_reconnect_failed(self, violation: StratumLivenessViolation) -> None:
+        self.observations.append(("stale-failed", violation.reason.value))
+
     def nonce_space_exhausted(self, work: PreparedMiningWork) -> None:
         self.observations.append(("exhausted", work.job_id))
 
@@ -367,6 +381,8 @@ def run_with_harness(
     extra_nonce_2: str | None = None,
     network_time: str = "65f04abc",
     strategy: MiningSearchStrategy | None = None,
+    recover_stale_session: Callable[[], StratumMiningSession | None] | None = None,
+    liveness_clock: Callable[[], float] | None = None,
 ) -> tuple[MiningJobAssembler, MiningJob, ContinuousMiningResult]:
     """Run continuous orchestration against one synthetic initial job."""
 
@@ -387,6 +403,8 @@ def run_with_harness(
         strategy=strategy,
         prepare_work=harness.prepare,
         search_range=harness.search,
+        recover_stale_session=recover_stale_session,
+        liveness_clock=(lambda: 0.0) if liveness_clock is None else liveness_clock,
     )
     return assembler, initial_job, result
 
@@ -685,6 +703,88 @@ def test_runtime_limit_during_progression_prevents_successor_search() -> None:
     assert result.outcome is ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
     assert len(harness.search_calls) == 1
     assert [extra for _, extra in harness.prepare_calls] == ["fe", "ff"]
+
+
+@pytest.mark.parametrize("strategy", [SequentialSearchStrategy(), OrbitingBitSearchStrategy()])
+def test_stale_session_recovers_once_and_preserves_counters_without_new_old_work(
+    strategy: MiningSearchStrategy,
+) -> None:
+    now = [0.0]
+    harness = Harness()
+    original_search = harness.search
+    session, recovered_client = recovered_session()
+    recover_calls = 0
+
+    def age_session(
+        work: PreparedMiningWork, start_nonce: int, stop_nonce: int
+    ) -> NonceSearchResult:
+        result = original_search(work, start_nonce, stop_nonce)
+        if len(harness.search_calls) == 1:
+            now[0] = 1.0
+        return result
+
+    def recover() -> StratumMiningSession:
+        nonlocal recover_calls
+        recover_calls += 1
+        return session
+
+    harness.search = age_session  # type: ignore[method-assign]
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(
+            0,
+            1,
+            max_chunks=2,
+            max_server_silence_seconds=1,
+        ),
+        harness,
+        strategy=strategy,
+        recover_stale_session=recover,
+        liveness_clock=lambda: now[0],
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.CHUNK_LIMIT_REACHED
+    assert recover_calls == 1
+    assert [work.job_id for work, _, _ in harness.search_calls] == [
+        "initial-job",
+        "recovered-job",
+    ]
+    assert result.chunks_completed == 2
+    assert result.total_hashes_checked == 2
+    assert recovered_client.submit_calls == []
+    assert ("stale", "server_silence") in harness.observations
+    assert ("stale-succeeded", "server_silence") in harness.observations
+
+
+def test_candidate_from_newly_stale_session_is_not_submitted() -> None:
+    now = [0.0]
+    harness = Harness(match_call=1)
+    original_search = harness.search
+    session, _ = recovered_session()
+
+    def age_session(
+        work: PreparedMiningWork, start_nonce: int, stop_nonce: int
+    ) -> NonceSearchResult:
+        result = original_search(work, start_nonce, stop_nonce)
+        if len(harness.search_calls) == 1:
+            now[0] = 1.0
+        return result
+
+    harness.search = age_session  # type: ignore[method-assign]
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(
+            0,
+            1,
+            max_chunks=2,
+            max_job_age_seconds=1,
+        ),
+        harness,
+        recover_stale_session=lambda: session,
+        liveness_clock=lambda: now[0],
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.CHUNK_LIMIT_REACHED
+    assert harness.submit_calls == []
+    assert not any(item[0] == "candidate" for item in harness.observations)
 
 
 def test_stop_during_replacement_preparation_prevents_next_search() -> None:

@@ -31,6 +31,10 @@ class FakeSocket:
         self.timeout: float | None = None
         self.timeout_history: list[float | None] = []
         self.recv_calls = 0
+        self.socket_options: list[tuple[int, int, int]] = []
+
+    def setsockopt(self, level: int, option: int, value: int) -> None:
+        self.socket_options.append((level, option, value))
 
     def settimeout(self, timeout: float | None) -> None:
         self.timeout = timeout
@@ -109,6 +113,25 @@ def test_connect_opens_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_socket = FakeSocket()
+
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    assert transport.is_connected is True
+    assert fake_socket.timeout == 5.0
+    assert fake_socket.socket_options == [
+        (transport_module.socket.SOL_SOCKET, transport_module.socket.SO_KEEPALIVE, 1)
+    ]
+
+
+def test_unsupported_keepalive_degrades_to_connected_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class KeepaliveUnsupportedSocket(FakeSocket):
+        def setsockopt(self, level: int, option: int, value: int) -> None:
+            del level, option, value
+            raise OSError("unsupported")
+
+    fake_socket = KeepaliveUnsupportedSocket()
 
     transport = connect_fake_socket(monkeypatch, fake_socket)
 

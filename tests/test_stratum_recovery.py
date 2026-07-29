@@ -481,6 +481,66 @@ def test_active_session_recovery_closes_old_client_and_changes_size() -> None:
     assert recovery.statistics.successful_reconnects == 1
 
 
+def test_stale_session_recovery_closes_old_and_installs_fresh_session_data() -> None:
+    old_client = FakeClient(subscribe_result=subscription(1))
+    fresh_client = FakeClient(
+        subscribe_result=SubscribeResult(
+            subscriptions=(("mining.notify", "fresh-subscription"),),
+            extra_nonce_1="09000003",
+            extra_nonce_2_size=2,
+        ),
+        notifications=[difficulty(200), job("fresh-job"), None],
+    )
+    harness = Harness(
+        clients=deque([old_client, fresh_client]),
+        seed_values=deque(["ab", "cdcd"]),
+    )
+    recovery = harness.recovery(maximum_attempts=1)
+    old_session = recovery.establish_initial_session()
+    assert old_session is not None
+
+    fresh_session = recovery.recover_stale_session()
+
+    assert fresh_session is not None
+    assert old_client.close_calls == 1
+    assert fresh_session.client is fresh_client
+    assert fresh_session.extra_nonce_2_seed == "cdcd"
+    assert fresh_session.subscription.extra_nonce_1 != old_session.subscription.extra_nonce_1
+    assert harness.waits == [1.0]
+    assert ("attempted", 1, 1, "liveness") in harness.observations
+    assert not any(item[0] == "lost" for item in harness.observations)
+
+
+def test_stop_during_stale_reconnect_delay_prevents_new_client_attempt() -> None:
+    old_client = FakeClient()
+    unused = FakeClient()
+    harness = Harness(clients=deque([old_client, unused]), stop_during_wait=True)
+    recovery = harness.recovery(maximum_attempts=1)
+    assert recovery.establish_initial_session() is not None
+
+    assert recovery.recover_stale_session() is None
+
+    assert old_client.close_calls == 1
+    assert unused.handshake_calls == 0
+    assert harness.waits == [1.0]
+
+
+def test_stale_reconnect_exhaustion_retains_liveness_stage() -> None:
+    old_client = FakeClient()
+    failed = FakeClient(handshake_failure=StratumConnectionError("private failure"))
+    harness = Harness(clients=deque([old_client, failed]))
+    recovery = harness.recovery(maximum_attempts=1)
+    assert recovery.establish_initial_session() is not None
+
+    with pytest.raises(SessionRecoveryExhaustedError) as raised:
+        recovery.recover_stale_session()
+
+    assert raised.value.recovery_stage is StratumRecoveryStage.HANDSHAKE
+    assert old_client.close_calls == 1
+    assert failed.close_calls == 1
+    assert ("attempted", 1, 1, "liveness") in harness.observations
+
+
 def test_failed_client_close_does_not_hide_recovery() -> None:
     old_client = FakeClient(close_failure=OSError("close failed"))
     new_client = FakeClient()

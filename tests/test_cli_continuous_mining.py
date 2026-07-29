@@ -344,6 +344,8 @@ def arguments(
     max_chunks: str | None = "3",
     max_reconnect_attempts: str | None = None,
     max_runtime_seconds: str | None = None,
+    max_server_silence_seconds: str | None = None,
+    max_job_age_seconds: str | None = None,
     log_file: Path | None = None,
 ) -> list[str]:
     """Build one continuous command argument list."""
@@ -357,6 +359,10 @@ def arguments(
         result.extend(["--max-reconnect-attempts", max_reconnect_attempts])
     if max_runtime_seconds is not None:
         result.extend(["--max-runtime-seconds", max_runtime_seconds])
+    if max_server_silence_seconds is not None:
+        result.extend(["--max-server-silence-seconds", max_server_silence_seconds])
+    if max_job_age_seconds is not None:
+        result.extend(["--max-job-age-seconds", max_job_age_seconds])
     if log_file is not None:
         result.extend(["--log-file", str(log_file)])
     return result
@@ -383,6 +389,16 @@ def test_parse_continuous_plan_supports_unlimited_and_limited_forms() -> None:
     assert cli_module._parse_continuous_mining_plan(
         ["--chunk-size", "10", "--max-runtime-seconds", "1.25"]
     ) == ContinuousMiningPlan(0, 10, None, 1.25)
+    assert cli_module._parse_continuous_mining_plan(
+        [
+            "--chunk-size",
+            "10",
+            "--max-server-silence-seconds",
+            "2.5",
+            "--max-job-age-seconds",
+            "3",
+        ]
+    ) == ContinuousMiningPlan(0, 10, None, None, 2.5, 3.0)
 
 
 @pytest.mark.parametrize(
@@ -403,6 +419,19 @@ def test_parse_continuous_plan_rejects_invalid_runtime_limits(value: str) -> Non
         cli_module._parse_continuous_mining_plan(
             ["--chunk-size", "10", "--max-runtime-seconds", value]
         )
+
+
+@pytest.mark.parametrize("option", ["--max-server-silence-seconds", "--max-job-age-seconds"])
+@pytest.mark.parametrize(
+    "value",
+    ["0", "-1", "NaN", "Infinity", "-Infinity", "bad", "31536001", "1e-400"],
+)
+def test_parse_continuous_plan_rejects_invalid_liveness_limits(
+    option: str,
+    value: str,
+) -> None:
+    with pytest.raises(ValueError, match=option.removeprefix("--")):
+        cli_module._parse_continuous_mining_plan(["--chunk-size", "10", option, value])
 
 
 def test_parse_continuous_reconnect_policy_defaults_and_accepts_bounds() -> None:
@@ -1082,6 +1111,84 @@ def test_runtime_limit_during_reconnect_backoff_creates_no_new_client(
     output = capsys.readouterr().out
     assert "Result: runtime_limit_reached" in output
     assert "Reconnect attempts: 0" in output
+
+
+def test_stale_session_recovery_is_logged_sanitized_and_completes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "stale-session.jsonl"
+    old_client = FakeClient()
+    fresh_client = FakeClient(notifications=[difficulty(20000), job("fresh-job"), None])
+    harness, _ = install_fakes(
+        monkeypatch,
+        old_client,
+        deterministic_log=True,
+        additional_clients=[fresh_client],
+    )
+    now = [0.0]
+    base_search = cli_module.search_nonce_range
+    base_run = cli_module.run_continuous_mining
+
+    def aging_search(
+        work: PreparedMiningWork,
+        start_nonce: int,
+        stop_nonce: int,
+    ) -> NonceSearchResult:
+        result = base_search(work, start_nonce, stop_nonce)
+        if len(harness.search_calls) == 1:
+            now[0] = 1.0
+        return result
+
+    def run_with_clock(*args: object, **kwargs: object) -> object:
+        kwargs["liveness_clock"] = lambda: now[0]
+        return base_run(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli_module, "search_nonce_range", aging_search)
+    monkeypatch.setattr(cli_module, "run_continuous_mining", run_with_clock)
+
+    assert (
+        cli_module.main(
+            arguments(
+                max_chunks="2",
+                max_reconnect_attempts="1",
+                max_server_silence_seconds="1",
+                log_file=path,
+            )
+        )
+        == 0
+    )
+
+    records = read_events(path)
+    events = [record["event"] for record in records]
+    assert records[0]["max_server_silence_seconds"] == 1.0
+    assert events.count("stratum_session_stale") == 1
+    assert events.count("stratum_stale_reconnect_started") == 1
+    assert events.count("stratum_stale_reconnect_succeeded") == 1
+    assert "stratum_stale_reconnect_failed" not in events
+    assert records[-1]["event"] == "command_completed"
+    assert records[-1]["max_server_silence_seconds"] == 1.0
+    assert old_client.close_calls == 1
+    assert fresh_client.close_calls == 1
+    assert [work.job_id for work, _, _ in harness.search_calls] == [
+        "initial-job",
+        "fresh-job",
+    ]
+    summary = summarize_jsonl(path)
+    assert summary.liveness_warning_count == 1
+    assert summary.stale_session_count == 1
+    assert summary.stale_reconnect_started_count == 1
+    assert summary.stale_reconnect_success_count == 1
+    assert summary.stale_reconnect_failure_count == 0
+    assert summary.stale_reason_counts == (("server_silence", 1),)
+    assert summary.configured_server_silence_limits == ((1.0, 1),)
+    serialized = path.read_text(encoding="utf-8")
+    for forbidden in (
+        make_settings().stratum_password,
+        make_settings().bitcoin_address,
+        harness.generated_extra_nonce_2,
+    ):
+        assert forbidden not in serialized
 
 
 def test_reconnect_exhaustion_is_sanitized_runtime_failure(
