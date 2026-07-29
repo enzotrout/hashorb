@@ -1,22 +1,28 @@
-# Python virtual environment
+```gitignore
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+*.pem
+*.p12
+*.key
+
+# Python virtual environments
 .venv/
+venv/
 
 # Python bytecode
 __pycache__/
 *.py[cod]
 
-# Tool caches
+# Python tool caches and coverage
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .coverage
 htmlcov/
-
-# macOS
-.DS_Store
-
-# VS Code local workspace
-.vscode/*.code-workspace
 
 # Build artifacts
 build/
@@ -25,11 +31,19 @@ dist/
 *.so
 *.pyd
 
-# Misc
-.cache/
-logs/
+# Node.js
+node_modules/
 
-# Environment files
-.env
-.env.*
-!.env.example
+# Editors
+.vscode/*.code-workspace
+.idea/
+
+# Operating system files
+.DS_Store
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+.cache/
+```
