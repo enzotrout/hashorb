@@ -306,13 +306,16 @@ def test_registry_lists_builtins_deterministically_and_is_isolated() -> None:
     assert first.list_capabilities() == second.list_capabilities()
     assert tuple(item.backend_name for item in first.list_capabilities()) == (
         "cuda",
+        "cuda-multi",
         "native",
         "native-parallel",
         "python",
     )
-    assert first.list_capabilities()[3] == PythonSequentialBackend().capabilities
+    assert first.list_capabilities()[4] == PythonSequentialBackend().capabilities
     assert first.list_capabilities()[0].available is False
     assert first.list_capabilities()[0].unavailable_reason == "NotInitialized"
+    assert first.list_capabilities()[1].available is False
+    assert first.list_capabilities()[1].unavailable_reason == "NotInitialized"
     assert list_compute_backends(first) == first.list_capabilities()
 
 
@@ -342,10 +345,13 @@ def test_registry_exposes_controlled_unavailable_native_without_affecting_python
         native_backend=NativeSequentialBackend(None),
     )
 
-    cuda, native, native_parallel, python = registry.list_capabilities()
+    cuda, cuda_multi, native, native_parallel, python = registry.list_capabilities()
     assert cuda.backend_name == "cuda"
     assert cuda.available is False
     assert cuda.unavailable_reason == "NotInitialized"
+    assert cuda_multi.backend_name == "cuda-multi"
+    assert cuda_multi.available is False
+    assert cuda_multi.unavailable_reason == "NotInitialized"
     assert native.backend_name == "native"
     assert native.available is False
     assert native.unavailable_reason == "ExtensionNotInstalled"

@@ -12,10 +12,15 @@ from hashphere.compute.backend import (
     MiningComputeBackend,
 )
 from hashphere.compute.cuda import CudaBackend
+from hashphere.compute.cuda_multi import CudaMultiBackend
 from hashphere.compute.native import NativeSequentialBackend
 from hashphere.compute.parallel import NativeParallelBackend
 from hashphere.compute.python import PythonSequentialBackend, RangeSearcher
-from hashphere.config import DEFAULT_COMPUTE_WORKERS, DEFAULT_CUDA_DEVICE
+from hashphere.config import (
+    DEFAULT_COMPUTE_WORKERS,
+    DEFAULT_CUDA_DEVICE,
+    DEFAULT_CUDA_DEVICES,
+)
 
 _AUTO_SELECTOR = "auto"
 _LEGACY_CPU_SELECTOR = "cpu"
@@ -83,9 +88,12 @@ def builtin_compute_backend_registry(
     native_backend: NativeSequentialBackend | None = None,
     native_parallel_backend: NativeParallelBackend | None = None,
     cuda_backend: CudaBackend | None = None,
+    cuda_multi_backend: CudaMultiBackend | None = None,
     worker_count: int = DEFAULT_COMPUTE_WORKERS,
     cuda_device: int = DEFAULT_CUDA_DEVICE,
+    cuda_devices: tuple[int, ...] = DEFAULT_CUDA_DEVICES,
     initialize_cuda: bool = False,
+    initialize_cuda_multi: bool = False,
 ) -> ComputeBackendRegistry:
     """Create a registry containing Python and optional native and CUDA modes."""
 
@@ -111,8 +119,21 @@ def builtin_compute_backend_registry(
     )
     if not isinstance(selected_cuda, CudaBackend):
         raise ComputeBackendValidationError("cuda_backend must be CudaBackend")
+    selected_cuda_multi = (
+        CudaMultiBackend(cuda_devices, initialize=initialize_cuda_multi)
+        if cuda_multi_backend is None
+        else cuda_multi_backend
+    )
+    if not isinstance(selected_cuda_multi, CudaMultiBackend):
+        raise ComputeBackendValidationError("cuda_multi_backend must be CudaMultiBackend")
     return ComputeBackendRegistry(
-        (python_backend, selected_cuda, selected_native, selected_parallel)
+        (
+            python_backend,
+            selected_cuda,
+            selected_cuda_multi,
+            selected_native,
+            selected_parallel,
+        )
     )
 
 
@@ -121,13 +142,16 @@ def select_compute_backend(
     registry: ComputeBackendRegistry | None = None,
     *,
     cuda_device: int = DEFAULT_CUDA_DEVICE,
+    cuda_devices: tuple[int, ...] = DEFAULT_CUDA_DEVICES,
 ) -> MiningComputeBackend:
     """Select an operational backend from a caller registry or fresh built-ins."""
 
     selected_registry = (
         builtin_compute_backend_registry(
             cuda_device=cuda_device,
+            cuda_devices=cuda_devices,
             initialize_cuda=backend_name == "cuda",
+            initialize_cuda_multi=backend_name == "cuda-multi",
         )
         if registry is None
         else registry

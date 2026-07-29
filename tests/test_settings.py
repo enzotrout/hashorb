@@ -20,6 +20,7 @@ _ENVIRONMENT_VARIABLES = (
     "HASHPHERE_COMPUTE_WORKERS",
     "HASHPHERE_SEARCH_STRATEGY",
     "HASHPHERE_CUDA_DEVICE",
+    "HASHPHERE_CUDA_DEVICES",
 )
 
 
@@ -88,6 +89,7 @@ def test_settings_load_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.compute_workers == 2
     assert settings.search_strategy == "sequential"
     assert settings.cuda_device == 0
+    assert settings.cuda_devices == (0,)
 
 
 def test_settings_load_explicit_values(
@@ -159,6 +161,72 @@ def test_cuda_device_environment_does_not_affect_cpu_backends(
 
     assert settings.compute_backend == "native"
     assert settings.cuda_device == 0
+
+
+@pytest.mark.parametrize(
+    ("devices", "expected"),
+    [("0", (0,)), ("1,0", (0, 1)), (" 3, 1,2 ", (1, 2, 3))],
+)
+def test_cuda_devices_are_explicit_canonical_and_whitespace_tolerant(
+    monkeypatch: pytest.MonkeyPatch,
+    devices: str,
+    expected: tuple[int, ...],
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda-multi")
+    monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", devices)
+
+    settings = Settings.from_env()
+
+    assert settings.cuda_devices == expected
+    assert settings.cuda_device == 0
+
+
+def test_cuda_multi_requires_explicit_device_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda-multi")
+
+    with pytest.raises(ValueError, match="HASHPHERE_CUDA_DEVICES is required"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    "devices",
+    ["", " ", ",", "0,", ",0", "0,,1", "0,0", "-1", "+1", "01", "１", str(1 << 31)],
+)
+def test_cuda_devices_reject_malformed_empty_duplicate_and_out_of_range_values(
+    monkeypatch: pytest.MonkeyPatch,
+    devices: str,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda-multi")
+    monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", devices)
+
+    with pytest.raises(ValueError, match="HASHPHERE_CUDA_DEVICES"):
+        Settings.from_env()
+
+
+def test_cuda_devices_reject_an_excessive_device_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda-multi")
+    monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", ",".join(str(item) for item in range(257)))
+
+    with pytest.raises(ValueError, match="at most 256"):
+        Settings.from_env()
+
+
+def test_cuda_devices_environment_does_not_affect_other_backends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "native")
+    monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", "not-a-device")
+
+    assert Settings.from_env().cuda_devices == (0,)
 
 
 def test_missing_bitcoin_address_is_rejected() -> None:

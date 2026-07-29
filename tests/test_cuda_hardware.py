@@ -8,7 +8,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from hashphere.compute import CudaBackend, PythonSequentialBackend
+from hashphere.compute import CudaBackend, CudaMultiBackend, PythonSequentialBackend
 from hashphere.mining import PreparedMiningWork, block_hash_to_int, hash_block_header
 
 _CUDA_TEST_FLAG = "HASHPHERE_ENABLE_CUDA_TESTS"
@@ -178,3 +178,23 @@ def test_cuda_reuses_resources_and_replaces_prepared_work(
     assert_cuda_python_match_parity(cuda_backend, first_work, 113, 129)
     assert_cuda_python_match_parity(cuda_backend, replacement_work, 100, 129)
     assert_cuda_python_match_parity(cuda_backend, first_work, 129, 145)
+
+
+def test_one_device_cuda_multi_has_real_hardware_parity() -> None:
+    """Validate orchestration plumbing on one GPU; this is not a scaling claim."""
+
+    device_ordinal = int(os.getenv("HASHPHERE_CUDA_DEVICE", "0"))
+    backend = CudaMultiBackend((device_ordinal,))
+    if not backend.capabilities.available:
+        pytest.skip("CUDA extension or requested CUDA device is unavailable")
+    work = prepared_work(share_target=_MAX_TARGET, network_target=1)
+    try:
+        cuda_result = backend.search_nonce_range(work, 31, 47)
+    finally:
+        backend.close()
+    python_result = PythonSequentialBackend().search_nonce_range(work, 31, 47)
+
+    assert cuda_result.start_nonce == 31
+    assert cuda_result.stop_nonce == 47
+    assert cuda_result.hashes_checked == 16
+    assert cuda_result.match == python_result.match

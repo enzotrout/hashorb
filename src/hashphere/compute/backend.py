@@ -155,3 +155,25 @@ def compute_backend_device_ordinal(backend: MiningComputeBackend) -> int | None:
     ):
         raise ComputeBackendValidationError("backend device_ordinal must be nonnegative")
     return device_ordinal
+
+
+def compute_backend_device_ordinals(
+    backend: MiningComputeBackend,
+) -> tuple[int, ...] | None:
+    """Return safe optional explicit device ordinals for observability."""
+
+    if not isinstance(backend, MiningComputeBackend):
+        raise ComputeBackendValidationError("backend must implement MiningComputeBackend")
+    device_ordinals = getattr(backend, "device_ordinals", None)
+    if device_ordinals is None:
+        return None
+    if not isinstance(device_ordinals, tuple) or not device_ordinals:
+        raise ComputeBackendValidationError("backend device_ordinals must be a nonempty tuple")
+    for ordinal in device_ordinals:
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 0:
+            raise ComputeBackendValidationError(
+                "backend device_ordinals must contain nonnegative integers"
+            )
+    if tuple(sorted(set(device_ordinals))) != device_ordinals:
+        raise ComputeBackendValidationError("backend device_ordinals must be unique and ascending")
+    return device_ordinals

@@ -17,7 +17,9 @@ DEFAULT_COMPUTE_WORKERS = 2
 MAX_COMPUTE_WORKERS = 256
 DEFAULT_SEARCH_STRATEGY = "sequential"
 DEFAULT_CUDA_DEVICE = 0
+DEFAULT_CUDA_DEVICES = (DEFAULT_CUDA_DEVICE,)
 MAX_CUDA_DEVICE = (1 << 31) - 1
+MAX_CUDA_DEVICES = 256
 
 _WORKER_INVALID_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]+")
 
@@ -57,6 +59,7 @@ class Settings:
     compute_workers: int = DEFAULT_COMPUTE_WORKERS
     search_strategy: str = DEFAULT_SEARCH_STRATEGY
     cuda_device: int = DEFAULT_CUDA_DEVICE
+    cuda_devices: tuple[int, ...] = DEFAULT_CUDA_DEVICES
 
     @property
     def stratum_username(self) -> str:
@@ -107,6 +110,11 @@ class Settings:
             if compute_backend == "cuda"
             else DEFAULT_CUDA_DEVICE
         )
+        cuda_devices = (
+            parse_cuda_devices(_required_cuda_devices_environment())
+            if compute_backend == "cuda-multi"
+            else DEFAULT_CUDA_DEVICES
+        )
 
         return cls(
             stratum_host=os.getenv(
@@ -130,6 +138,7 @@ class Settings:
             compute_workers=compute_workers,
             search_strategy=search_strategy,
             cuda_device=cuda_device,
+            cuda_devices=cuda_devices,
         )
 
 
@@ -171,3 +180,39 @@ def _parse_cuda_device(value: object) -> int:
     if not 0 <= device_ordinal <= MAX_CUDA_DEVICE:
         raise ValueError(f"HASHPHERE_CUDA_DEVICE must be between 0 and {MAX_CUDA_DEVICE}")
     return device_ordinal
+
+
+def parse_cuda_devices(value: object) -> tuple[int, ...]:
+    """Parse an explicit comma-separated CUDA device list into canonical order."""
+
+    if not isinstance(value, str) or not value:
+        raise ValueError("HASHPHERE_CUDA_DEVICES must be a nonempty device list")
+    fields = value.split(",")
+    if len(fields) > MAX_CUDA_DEVICES:
+        raise ValueError(f"HASHPHERE_CUDA_DEVICES must contain at most {MAX_CUDA_DEVICES} devices")
+    ordinals: list[int] = []
+    for field in fields:
+        token = field.strip()
+        if (
+            not token
+            or not token.isascii()
+            or not token.isdecimal()
+            or (len(token) > 1 and token.startswith("0"))
+        ):
+            raise ValueError("HASHPHERE_CUDA_DEVICES must contain unpadded ASCII decimal integers")
+        ordinal = int(token)
+        if ordinal > MAX_CUDA_DEVICE:
+            raise ValueError(
+                f"HASHPHERE_CUDA_DEVICES ordinals must be between 0 and {MAX_CUDA_DEVICE}"
+            )
+        ordinals.append(ordinal)
+    if len(set(ordinals)) != len(ordinals):
+        raise ValueError("HASHPHERE_CUDA_DEVICES must not contain duplicate ordinals")
+    return tuple(sorted(ordinals))
+
+
+def _required_cuda_devices_environment() -> str:
+    value = os.getenv("HASHPHERE_CUDA_DEVICES")
+    if value is None:
+        raise ValueError("HASHPHERE_CUDA_DEVICES is required for cuda-multi")
+    return value
