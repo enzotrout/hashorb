@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -55,6 +57,7 @@ type RecoveryStatisticsProvider = Callable[[], StratumRecoveryStatistics]
 _NONCE_LIMIT = 1 << 32
 _MAX_NONCE = _NONCE_LIMIT - 1
 _MAX_CHUNKS = _NONCE_LIMIT
+MAX_RUNTIME_SECONDS = 31_536_000.0
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 _NOTIFICATION_WAIT_SECONDS = 0.25
 
@@ -71,6 +74,7 @@ class ContinuousMiningOutcome(StrEnum):
     """Controlled terminal outcomes for one continuous mining session."""
 
     STOPPED_BY_USER = "stopped_by_user"
+    RUNTIME_LIMIT_REACHED = "runtime_limit_reached"
     CHUNK_LIMIT_REACHED = "chunk_limit_reached"
     SHARE_ACCEPTED = "share_accepted"
     SHARE_REJECTED = "share_rejected"
@@ -83,6 +87,7 @@ class ContinuousMiningPlan:
     start_nonce: int
     chunk_size: int
     max_chunks: int | None = None
+    max_runtime_seconds: float | None = None
 
     def __post_init__(self) -> None:
         """Validate the plan without inventing a hidden session limit."""
@@ -97,6 +102,17 @@ class ContinuousMiningPlan:
             _validate_integer(self.max_chunks, "max_chunks")
             if not 1 <= self.max_chunks <= _MAX_CHUNKS:
                 raise ContinuousMiningValidationError("max_chunks must be between 1 and 2**32")
+        if self.max_runtime_seconds is not None:
+            if isinstance(self.max_runtime_seconds, bool) or not isinstance(
+                self.max_runtime_seconds, (int, float)
+            ):
+                raise ContinuousMiningValidationError("max_runtime_seconds must be a number")
+            if not math.isfinite(self.max_runtime_seconds):
+                raise ContinuousMiningValidationError("max_runtime_seconds must be finite")
+            if not 0 < self.max_runtime_seconds <= MAX_RUNTIME_SECONDS:
+                raise ContinuousMiningValidationError(
+                    f"max_runtime_seconds must be between 0 and {int(MAX_RUNTIME_SECONDS)}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,21 +242,58 @@ class StopToken(Protocol):
 class StopController:
     """Small idempotent stop controller suitable for CLI signal handlers."""
 
-    __slots__ = ("_stop_requested",)
+    __slots__ = ("_clock", "_max_runtime_seconds", "_started_at", "_stop_reason")
 
-    def __init__(self) -> None:
-        self._stop_requested = False
+    def __init__(
+        self,
+        max_runtime_seconds: float | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if max_runtime_seconds is not None:
+            ContinuousMiningPlan(0, 1, max_runtime_seconds=max_runtime_seconds)
+        if not callable(clock):
+            raise ContinuousMiningValidationError("clock must be callable")
+        started_at = clock()
+        if isinstance(started_at, bool) or not isinstance(started_at, (int, float)):
+            raise ContinuousMiningValidationError("clock must return a number")
+        if not math.isfinite(started_at):
+            raise ContinuousMiningValidationError("clock must return a finite number")
+        self._clock = clock
+        self._max_runtime_seconds = max_runtime_seconds
+        self._started_at = float(started_at)
+        self._stop_reason: ContinuousMiningOutcome | None = None
 
     @property
     def stop_requested(self) -> bool:
         """Return whether a caller has requested graceful shutdown."""
 
-        return self._stop_requested
+        self._observe_runtime_limit()
+        return self._stop_reason is not None
+
+    @property
+    def runtime_limit_reached(self) -> bool:
+        """Return whether the monotonic runtime boundary caused this stop."""
+
+        self._observe_runtime_limit()
+        return self._stop_reason is ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
 
     def request_stop(self) -> None:
         """Request shutdown; repeated requests have no additional effect."""
 
-        self._stop_requested = True
+        if self._stop_reason is None:
+            self._stop_reason = ContinuousMiningOutcome.STOPPED_BY_USER
+
+    def _observe_runtime_limit(self) -> None:
+        if self._stop_reason is not None or self._max_runtime_seconds is None:
+            return
+        current = self._clock()
+        if isinstance(current, bool) or not isinstance(current, (int, float)):
+            raise ContinuousMiningValidationError("clock must return a number")
+        if not math.isfinite(current):
+            raise ContinuousMiningValidationError("clock must return a finite number")
+        if float(current) - self._started_at >= self._max_runtime_seconds:
+            self._stop_reason = ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
 
 
 class ContinuousMiningObserver(Protocol):
@@ -427,9 +480,11 @@ def run_continuous_mining(
         NullContinuousMiningObserver() if observer is None else observer
     )
     if stop_token.stop_requested:
-        event_observer.stop_requested()
+        outcome = _controlled_stop_outcome(stop_token)
+        if outcome is ContinuousMiningOutcome.STOPPED_BY_USER:
+            event_observer.stop_requested()
         return ContinuousMiningResult(
-            outcome=ContinuousMiningOutcome.STOPPED_BY_USER,
+            outcome=outcome,
             initial_job=initial_job,
             final_job=initial_job,
             match=None,
@@ -528,8 +583,10 @@ def run_continuous_mining(
         event_observer.stop_requested()
 
     def finish_stopped() -> ContinuousMiningResult:
-        observe_stop()
-        return finish(ContinuousMiningOutcome.STOPPED_BY_USER)
+        outcome = _controlled_stop_outcome(stop_token)
+        if outcome is ContinuousMiningOutcome.STOPPED_BY_USER:
+            observe_stop()
+        return finish(outcome)
 
     def ignore_duplicate(reason: str) -> None:
         nonlocal duplicates
@@ -894,6 +951,15 @@ def _validate_search_result(
         raise ContinuousMiningValidationError(
             "search_range result must describe the requested nonce range"
         )
+
+
+def _controlled_stop_outcome(stop_token: StopToken) -> ContinuousMiningOutcome:
+    runtime_limit_reached = getattr(stop_token, "runtime_limit_reached", False)
+    if not isinstance(runtime_limit_reached, bool):
+        raise ContinuousMiningValidationError("runtime_limit_reached must be a Boolean")
+    if runtime_limit_reached:
+        return ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
+    return ContinuousMiningOutcome.STOPPED_BY_USER
 
 
 def _create_strategy_cursor(

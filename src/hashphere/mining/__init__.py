@@ -16,6 +16,7 @@ from hashphere.mining.coinbase import (
     hash_coinbase_transaction,
 )
 from hashphere.mining.continuous import (
+    MAX_RUNTIME_SECONDS,
     ContinuousMiningError,
     ContinuousMiningObserver,
     ContinuousMiningOutcome,
@@ -137,6 +138,7 @@ __all__ = [
     "ContinuousMiningValidationError",
     "ExtraNonceSeedFactory",
     "MAX_RECONNECT_ATTEMPTS",
+    "MAX_RUNTIME_SECONDS",
     "MiningJob",
     "MiningJobAssembler",
     "MiningJobContextIdentity",

@@ -8,6 +8,7 @@ import signal
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from types import FrameType
 
 from hashphere.compute import (
@@ -25,6 +26,7 @@ from hashphere.compute import (
 from hashphere.config import DEFAULT_CUDA_DEVICE, MAX_CUDA_DEVICE, Settings
 from hashphere.mining import (
     MAX_RECONNECT_ATTEMPTS,
+    MAX_RUNTIME_SECONDS,
     BlockHeaderError,
     ChunkedMiningError,
     ChunkedMiningPlan,
@@ -1136,7 +1138,7 @@ def _run_stratum_mine(
         return 2
     backend, strategy = selection
 
-    controller = StopController()
+    controller = StopController(plan.max_runtime_seconds)
     signal_scope = _StopSignalScope(controller)
     observer = _ContinuousEventObserver(events, settings)
     recovery: StratumSessionRecovery | None = None
@@ -1159,7 +1161,8 @@ def _run_stratum_mine(
         session = recovery.establish_initial_session()
         if session is None:
             stopped_before_work = True
-            observer.stop_requested()
+            if not controller.runtime_limit_reached:
+                observer.stop_requested()
         else:
             subscription = session.subscription
             result = run_continuous_mining(
@@ -1270,7 +1273,11 @@ def _run_stratum_mine(
     if status != 0:
         return status
     if stopped_before_work:
-        outcome = ContinuousMiningOutcome.STOPPED_BY_USER
+        outcome = (
+            ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
+            if controller.runtime_limit_reached
+            else ContinuousMiningOutcome.STOPPED_BY_USER
+        )
     elif result is not None:
         outcome = result.outcome
     else:
@@ -1530,6 +1537,7 @@ def _parse_continuous_mining_arguments(
             "--chunk-size",
             "--max-chunks",
             "--max-reconnect-attempts",
+            "--max-runtime-seconds",
             "--log-file",
         },
         unsupported_message="unsupported stratum-mine argument",
@@ -1556,6 +1564,7 @@ def _parse_continuous_mining_plan(arguments: Sequence[str]) -> ContinuousMiningP
             "--chunk-size",
             "--max-chunks",
             "--max-reconnect-attempts",
+            "--max-runtime-seconds",
         },
         unsupported_message="unsupported stratum-mine argument",
     )
@@ -1603,11 +1612,36 @@ def _continuous_plan_from_options(
         if "--max-chunks" in option_values
         else None
     )
+    max_runtime_seconds = (
+        _parse_runtime_seconds_option(option_values["--max-runtime-seconds"])
+        if "--max-runtime-seconds" in option_values
+        else None
+    )
     return ContinuousMiningPlan(
         start_nonce=start_nonce,
         chunk_size=chunk_size,
         max_chunks=max_chunks,
+        max_runtime_seconds=max_runtime_seconds,
     )
+
+
+def _parse_runtime_seconds_option(value: str) -> float:
+    """Parse one positive finite decimal runtime without accepting flag syntax."""
+
+    if not value or value != value.strip():
+        raise ValueError("--max-runtime-seconds must be a positive decimal number")
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError("--max-runtime-seconds must be a positive decimal number") from exc
+    if not parsed.is_finite() or parsed <= 0 or parsed > Decimal(str(MAX_RUNTIME_SECONDS)):
+        raise ValueError(
+            f"--max-runtime-seconds must be finite and between 0 and {int(MAX_RUNTIME_SECONDS)}"
+        )
+    converted = float(parsed)
+    if converted == 0.0:
+        raise ValueError("--max-runtime-seconds is too small")
+    return converted
 
 
 def _chunked_plan_from_options(option_values: dict[str, str]) -> ChunkedMiningPlan:
@@ -2209,6 +2243,10 @@ def _print_continuous_mining_outcome(
     print(f"Start nonce: {plan.start_nonce}")
     print(f"Chunk size: {plan.chunk_size}")
     print(f"Maximum chunks: {plan.max_chunks if plan.max_chunks is not None else 'unlimited'}")
+    print(
+        "Maximum runtime seconds: "
+        f"{plan.max_runtime_seconds if plan.max_runtime_seconds is not None else 'unlimited'}"
+    )
     print(f"Maximum reconnect attempts: {reconnect_policy.maximum_attempts}")
     print(f"Chunks completed: {result.chunks_completed if result is not None else 0}")
     print(f"Jobs used: {result.jobs_used if result is not None else 0}")
