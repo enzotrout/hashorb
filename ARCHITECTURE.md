@@ -147,6 +147,17 @@ strategy's next assignment. The optional CUDA backend receives the same
 ordinary parent-range contract and does not reinterpret sequential or orbiting
 order. Future multi-GPU coordination must preserve this ownership split.
 
+Continuous CLI ownership includes one monotonic `StopController`. An optional
+positive runtime limit begins only after configuration and compute/strategy
+selection, then shares the same cooperative boundary used by SIGINT and
+SIGTERM, initial notification waits, reconnect backoff, and mining. The first
+observed cause is stable: a signal produces `stopped_by_user`, while deadline
+expiry produces `runtime_limit_reached`. Both are successful completions. The
+controller creates no timer thread or subprocess. Cleanup restores prior signal
+handlers and closes the recovery owner, selected backend, and event sink.
+Non-cancellable compute calls finish their current parent range before the stop
+is observed; no new range or reconnect attempt begins afterward.
+
 ---
 
 # Compute Backend Boundary

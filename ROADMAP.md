@@ -167,26 +167,28 @@ Planned:
 
 # Current Milestone
 
-**Optional CUDA Correctness Backend — DGX Spark Parity Complete**
+**Graceful Time-Bounded Continuous Mining — Implemented**
 
 Objective:
 
-Add an explicitly built and selected CUDA backend that searches exact parent
-ranges, reduces to the smallest qualifying nonce, and verifies every device
-candidate through the existing Python correctness primitives. CPU-only builds,
-Python defaults, and both search strategies remain operational. On NVIDIA GB10
-compute capability 12.1 with CUDA 13.0, the AArch64 extension compiled for
-`sm_121`, its cubin was verified, all 7 gated hardware-parity tests passed, and
-60 CUDA host/build tests passed. No CUDA benchmark or live CKPool CUDA mining
-run has been recorded, so performance and live-mining behavior remain
-unclaimed.
+Continuous mining now owns an optional monotonic runtime limit and graceful
+SIGINT/SIGTERM shutdown. Runtime expiry is a successful
+`runtime_limit_reached` completion with full aggregate reporting and resource
+cleanup. The CUDA correctness gate remains complete. Later measurements
+recorded approximately 323.9 MH/s offline, 312.7 MH/s in a controlled CKPool
+test, and 311.9 MH/s across a 20-minute endurance run covering approximately
+382.9 billion hashes without connection, reconnect, submission, or command
+failure.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, the
 compute-backend boundary, portable native sequential execution, and portable
 parallel execution, the strategy abstraction, and both sequential and
-orbiting-bit orders remain complete. CUDA performance tuning is the next GPU
-step, followed by multi-GPU execution,
+orbiting-bit orders remain complete. The endurance wrapper ultimately forced
+exit status 137 after its SIGINT did not reach a graceful terminal record; this
+was a shutdown-control problem, not CUDA instability. The internal runtime
+boundary removes wrapper signal forwarding from normal bounded runs. CUDA
+performance tuning remains next, followed by multi-GPU execution,
 Lite/Auto/Max/Custom operating profiles, macOS/Windows/Linux/Docker packaging,
 broader pool support and Bitcoin Core true solo mining, distributed workers and
 adaptive tuning, then Prometheus/Grafana-compatible metrics. Pool failover
@@ -200,6 +202,6 @@ strategy-expansion point.
 
 Continue with:
 
-**Benchmark and tune the validated DGX Spark/GB10 CUDA backend offline without
-making unsupported speed claims. Keep multi-GPU, Windows CUDA builds, and
-portable CUDA wheel publication deferred.**
+**Use the internal runtime boundary for controlled endurance validation, then
+tune the validated CUDA backend without making unsupported general speed
+claims. Keep multi-GPU, Windows CUDA builds, and portable CUDA wheels deferred.**

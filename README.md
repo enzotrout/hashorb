@@ -209,8 +209,9 @@ Real validation on an NVIDIA GB10 with compute capability 12.1 and CUDA 13.0
 completed an AArch64 extension build, verified an `sm_121` cubin, passed all 7
 gated Python/CUDA hardware-parity tests, and passed 60 CUDA host/build tests.
 Both sequential and orbiting-bit strategies supply the same validated parent
-ranges to that backend. No CUDA benchmark or live CKPool CUDA mining run has
-been recorded, so no speed or live-mining claim is made.
+ranges to that backend. Later controlled measurements are recorded in the CUDA
+documentation; their local rates are evidence for this host, not a general
+speed or pool-performance claim.
 See [`docs/10-cuda-backend.md`](docs/10-cuda-backend.md).
 
 `uv sync --locked` attempts to compile the optional self-contained C extension
@@ -483,8 +484,9 @@ engineering step, not yet the unlimited continuous miner.
 ## Run continuous live Stratum mining
 
 The continuous command repeats bounded nonce chunks, handles new difficulty and
-job notifications between chunks, and stops cleanly on Ctrl-C. It requires the
-same two exact live-mining opt-ins:
+job notifications between chunks, and stops cleanly on Ctrl-C, SIGTERM, or an
+optional internal monotonic runtime limit. It requires the same two exact
+live-mining opt-ins:
 
 ```bash
 HASHPHERE_ENABLE_LIVE_STRATUM=1 \
@@ -507,6 +509,15 @@ connection or initial attempt. Zero disables retries. The fixed retry delays
 are 1, 2, 4, 8, and 16 seconds for the default policy, with longer configured
 sequences capped at 30 seconds. There is no random jitter or endpoint
 failover. Ctrl-C interrupts backoff before another client is created.
+
+`--max-runtime-seconds` accepts a positive finite decimal duration, including a
+fractional duration, through a maximum of `31536000` seconds (365 days). The
+clock starts after settings and backend/strategy validation, when the command
+enters its active session lifecycle. The option uses monotonic time and is
+checked during bounded session waits and reconnect backoff and at safe mining
+boundaries. Reaching it is the successful `runtime_limit_reached` outcome; the
+final summary and `command_completed` retain all aggregate counters. Omitting
+it preserves unlimited runtime.
 
 For a controlled live validation, cap the number of actual searches:
 
@@ -549,10 +560,30 @@ searched. Both `clean_jobs=true` and `clean_jobs=false` select the newest job
 under Hashphere's freshness policy, and replacement work restarts at the
 configured start nonce without resetting cumulative counters.
 
-Ctrl-C and supported termination signals request cooperative shutdown. The
-current Python chunk may finish, but no later chunk or replacement poll starts;
-a candidate returned by that exact completed search is still submitted once.
-This milestone does not cancel a chunk mid-search.
+The first Ctrl-C/SIGINT or SIGTERM requests cooperative shutdown, and repeated
+signals are idempotent. Previous handlers are restored after the command, so
+normal `KeyboardInterrupt` behavior remains unchanged elsewhere. The current
+backend range may finish, but no later range or reconnect attempt starts; a
+candidate returned by that exact completed search is still submitted once.
+CUDA has no unsafe mid-kernel cancellation, so stop responsiveness is bounded
+by the active range duration. At the measured live rate, the previously used
+500,000,000-nonce CUDA range took about 1.6 seconds.
+
+For an external-signal check, invoke the project interpreter directly rather
+than placing `uv` between the signal sender and Hashphere:
+
+```bash
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+./.venv/bin/python -m hashphere stratum-mine \
+  --chunk-size 500000000 \
+  --max-runtime-seconds 60 \
+  --log-file logs/hashphere.jsonl
+```
+
+A graceful signal writes `command_completed` with `stopped_by_user`. SIGKILL
+cannot run Python cleanup or write a terminal event, so its run remains
+incomplete in `logs-summary`.
 
 If one prepared variant exhausts the remaining 32-bit nonce space, Hashphere
 does not wrap or repeat its nonce ranges. It first drains queued pool
@@ -662,9 +693,9 @@ without cursor positions or assignment history.
 Final output reports sanitized aggregate counters and weighted hash rate,
 including reconnect attempts, successful reconnects, failed reconnect
 attempts, and sessions established.
-Controlled stop, chunk-limit, accepted-share, and rejected-share outcomes exit
-with status `0`; syntax or opt-in failures return `2`, and runtime or cleanup
-failures return `1` without printing arbitrary exception details.
+Controlled stop, runtime-limit, chunk-limit, accepted-share, and rejected-share
+outcomes exit with status `0`; syntax or opt-in failures return `2`, and runtime
+or cleanup failures return `1` without printing arbitrary exception details.
 
 ## Write structured JSONL event logs
 

@@ -253,7 +253,9 @@ uv run python -m hashphere compute-benchmark \
   --hash-count 1000000
 ```
 
-It uses the same public deterministic synthetic work as CPU backends. Output is
+It uses the same public deterministic synthetic work as CPU backends. A
+controlled Spark measurement recorded approximately 323.9 MH/s; this is local
+evidence, not a portable performance guarantee. Output is
 limited to stable backend identity, ordinal, hashes checked, elapsed
 nanoseconds, rate or unavailable, and exhausted/candidate status. It excludes
 the fixture header, targets, digest, candidate nonce, device UUID, serial, PCI
@@ -309,7 +311,15 @@ This slice does not implement:
 - fallback, retry, reconnect, or compute profiles;
 - mining lifecycle, Stratum, strategy, or submission behavior inside CUDA.
 
-DGX Spark/GB10 offline benchmarking and performance tuning are the next GPU
-milestone. Multi-GPU execution, Windows CUDA build validation, and portable
-CUDA wheel packaging follow later. No CUDA benchmark or live CKPool CUDA mining
-run has been recorded, and no speed advantage or live-mining result is claimed.
+Controlled CKPool validation later measured approximately 312.7 MH/s. A
+20-minute endurance run completed approximately 382.9 billion hashes at about
+311.9 MH/s with no connection losses, reconnects, submissions, or command
+failures. Its external timeout wrapper sent SIGINT to an intermediate process,
+did not obtain graceful completion within 30 seconds, and ultimately forced
+exit status 137, leaving JSONL incomplete. That result exposed shutdown control,
+not CUDA correctness or stability. Continuous mining now owns an internal
+monotonic runtime limit; CUDA still finishes its current range before cleanup.
+
+Performance tuning remains the next GPU milestone. Multi-GPU execution,
+Windows CUDA validation, and portable CUDA wheel packaging follow later. The
+recorded rates are local evidence only and do not claim a general speedup.

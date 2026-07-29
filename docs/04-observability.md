@@ -175,13 +175,15 @@ local successor emits any cycle/time transition followed by
 `mining_work_advanced` before its first range. `mining_waiting_for_job` is
 emitted only after the complete extra-nonce cycle at maximum network time. A
 later `mining_job_replaced` precedes the next work-advance and range events.
-Controlled stop emits `mining_stop_requested` before terminal
-`command_completed`; no event follows that terminal record.
+Signal-controlled stop emits `mining_stop_requested` before terminal
+`command_completed`. Runtime expiry instead records
+`runtime_limit_reached` directly in `command_completed`; it is not mislabeled as
+a user request. No event follows either terminal record.
 
 An exhausted range emits no share events. The completion outcome is one of
 `handshake_succeeded`, `observation_succeeded`, `range_exhausted`,
 `hash_budget_exhausted`, `stopped_by_user`, `chunk_limit_reached`,
-`share_accepted`, or `share_rejected`.
+`runtime_limit_reached`, `share_accepted`, or `share_rejected`.
 
 ## Safe Field Policy
 
@@ -275,6 +277,12 @@ changing current mining totals. Known events validate only the fields used by
 their calculations: completion outcome, controlled failure stage/category,
 difficulty, received job identity, completed-range metrics, and submission
 acceptance.
+
+Any `command_completed` record, including `stopped_by_user` after graceful
+SIGINT/SIGTERM and `runtime_limit_reached`, is a completed run. A forced SIGKILL
+cannot execute cleanup or append a terminal event, so a started run remains
+incomplete. Historical records are never rewritten, and unknown future
+outcomes remain visible only under their exact recorded value.
 
 ## Aggregation and Privacy
 

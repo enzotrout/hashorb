@@ -386,8 +386,9 @@ added only with lifecycle and actual hash-accounting tests.
 The CUDA correctness boundary is validated on real NVIDIA GB10 hardware with
 CUDA 13.0: the `sm_121` extension passed all 7 gated device-parity tests and 60
 CUDA host/build tests. Both sequential and orbiting-bit continue to pass exact
-ordinary parent ranges through the same backend contract. No offline CUDA
-benchmark or live CKPool CUDA mining run has been recorded. Performance tuning,
+ordinary parent ranges through the same backend contract. Later offline,
+controlled CKPool, and endurance measurements are recorded in the CUDA
+documentation as local evidence only. Performance tuning,
 Metal, Vulkan, multi-GPU coordination, Windows CUDA builds, multiprocessing,
 SIMD, additional strategies, resource profiles, automatic selection, and
 portable CUDA wheel publishing remain deferred.

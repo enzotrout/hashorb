@@ -470,11 +470,13 @@ its internal skipped permutation indexes are not searched chunks.
 ## Continuous Mining Lifecycle
 
 `ContinuousMiningPlan` defines a configured start nonce, positive chunk size,
-and optional positive maximum searched-chunk count. Omitting `max_chunks`
-creates no hidden limit: the synchronous session continues until cooperative
-stop, a submission result, or failure. Supplying it provides a controlled live-
-validation boundary. Idle polls and notifications do not consume the limit,
-and replacement work does not reset it.
+optional positive maximum searched-chunk count, and optional positive finite
+runtime limit of at most 31,536,000 seconds. Omitting both limits creates no
+hidden boundary: the synchronous session continues until cooperative stop, a
+submission result, or failure. Runtime timing starts from a monotonic clock only
+after configuration and backend/strategy validation enter the active lifecycle.
+Idle polls and notifications consume runtime but do not consume chunk count;
+replacement work resets neither limit.
 
 The CLI creates one `StopController` and a `StratumSessionRecovery` owner. The
 owner handshakes, creates a fresh `MiningJobAssembler`, and generates one
@@ -504,13 +506,18 @@ documented freshness policy. A replacement abandons the old local progression
 cursor, starts from the same current-session seed and the new pool job's network
 time, restarts at the configured nonce, and preserves all session counters.
 
-`StopToken` is a read-only cooperative boundary. The CLI maps Ctrl-C and
-supported termination signals to idempotent stop requests, then restores every
-previous handler during cleanup. A stop never starts another chunk or polls for
-replacement work. The current Python search is not interrupted mid-chunk. If
-that completed call returns a candidate, the exact candidate is still
-submitted once before the session terminates; mid-chunk cancellation remains a
-future compute-backend capability.
+`StopToken` is a read-only cooperative boundary. The CLI maps the first SIGINT
+or SIGTERM to an idempotent user stop and restores every previous handler during
+cleanup; repeated signals have no additional effect. The same controller
+observes the optional monotonic deadline without a timer thread. A user signal
+finishes as `stopped_by_user`; deadline expiry finishes as
+`runtime_limit_reached`. Both return success and emit one `command_completed`.
+A stop prevents another range, progression search, reconnect attempt, or
+replacement wait. A running compute call is not interrupted mid-range. If that
+call returns a candidate, the exact candidate is still submitted once before
+termination. CUDA and native-parallel responsiveness is therefore bounded by
+the current parent-range duration; unsafe kernel or worker cancellation is not
+introduced.
 
 ## Deterministic Work-Space Expansion
 
@@ -577,7 +584,9 @@ are available; sequential and experimental orbiting-bit strategies remain
 independent of those backends. CUDA hardware parity passed on a CUDA 13.0
 NVIDIA GB10 `sm_121` build. CUDA performance tuning, multi-GPU execution,
 Windows CUDA packaging, portable CUDA wheels, and pool failover remain
-deferred; no live CKPool CUDA mining run has been executed.
+deferred. A later controlled CKPool CUDA run and endurance run completed without
+submission or command failure; their local rates are not general performance
+claims.
 
 The live command orchestration may emit explicitly sanitized structured events
 through the observability boundary. Networking and mining-domain modules do not
