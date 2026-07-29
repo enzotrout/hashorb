@@ -17,17 +17,20 @@ _CUDA_BUILD_FLAG = "HASHPHERE_BUILD_CUDA"
 def _cuda_arch_flags(arch: str | None = None) -> list[str]:
     """Return nvcc architecture flags for the configured CUDA target."""
 
-    requested = (arch or os.getenv("HASHPHERE_CUDA_ARCH", "121")).strip()
-    if not requested:
-        requested = "121"
-    normalized = requested.lower()
-    if normalized.startswith("sm_"):
-        normalized = normalized[3:]
-    elif normalized.startswith("compute_"):
-        normalized = normalized[8:]
-    if normalized in {"120", "121"}:
-        return ["-gencode", f"arch=compute_{normalized},code=sm_{normalized}"]
-    raise RuntimeError("HASHPHERE_CUDA_ARCH must be 120 or 121")
+    requested = arch if arch is not None else os.getenv("HASHPHERE_CUDA_ARCH")
+    if requested not in {"120", "121"}:
+        raise RuntimeError("HASHPHERE_CUDA_ARCH is required for CUDA builds and must be 120 or 121")
+    return ["-gencode", f"arch=compute_{requested},code=sm_{requested}"]
+
+
+def _contains_cuda_runtime(directory: Path) -> bool:
+    """Return whether a toolkit directory contains a linkable CUDA runtime."""
+
+    return any(
+        candidate.is_file()
+        for pattern in ("libcudart.so*", "libcudart_static.a", "cudart.lib")
+        for candidate in directory.glob(pattern)
+    )
 
 
 def _discover_cuda_library_dirs(cuda_root: Path) -> list[str]:
@@ -35,20 +38,17 @@ def _discover_cuda_library_dirs(cuda_root: Path) -> list[str]:
 
     discovered: list[str] = []
     seen: set[str] = set()
-    for base in (cuda_root, cuda_root / "targets"):
-        if not base.exists():
-            continue
-        for child in (base / "lib64", base / "lib"):
-            if child.exists() and str(child) not in seen:
-                discovered.append(str(child))
-                seen.add(str(child))
+    for child in (cuda_root / "lib64", cuda_root / "lib", cuda_root / "lib" / "x64"):
+        if _contains_cuda_runtime(child) and str(child) not in seen:
+            discovered.append(str(child))
+            seen.add(str(child))
     targets_root = cuda_root / "targets"
     if targets_root.exists():
         for target_dir in sorted(targets_root.iterdir()):
             if not target_dir.is_dir():
                 continue
             for child in (target_dir / "lib", target_dir / "lib64"):
-                if child.exists() and str(child) not in seen:
+                if _contains_cuda_runtime(child) and str(child) not in seen:
                     discovered.append(str(child))
                     seen.add(str(child))
     return discovered
