@@ -12,14 +12,7 @@ from hashphere.compute.backend import (
     compute_backend_worker_count,
 )
 from hashphere.compute.benchmark import deterministic_benchmark_work
-from hashphere.compute.cuda import (
-    CUDA_MAX_BLOCKS,
-    CUDA_SUPPORTED_THREADS_PER_BLOCK,
-    CUDA_THREADS_PER_BLOCK,
-    CudaBackend,
-    cuda_grid_stride_offsets,
-    cuda_launch_geometry,
-)
+from hashphere.compute.cuda import CudaBackend, cuda_grid_stride_offsets
 from hashphere.compute.native import NativeSequentialBackend
 from hashphere.compute.parallel import (
     NativeParallelBackend,
@@ -47,9 +40,6 @@ __all__ = [
     "ComputeBackendRegistry",
     "ComputeBackendSelectionError",
     "ComputeBackendValidationError",
-    "CUDA_MAX_BLOCKS",
-    "CUDA_SUPPORTED_THREADS_PER_BLOCK",
-    "CUDA_THREADS_PER_BLOCK",
     "CudaBackend",
     "DEFAULT_CUDA_DEVICE",
     "DEFAULT_COMPUTE_WORKERS",
@@ -65,7 +55,6 @@ __all__ = [
     "compute_backend_device_ordinal",
     "compute_backend_worker_count",
     "cuda_grid_stride_offsets",
-    "cuda_launch_geometry",
     "deterministic_benchmark_work",
     "list_compute_backends",
     "partition_nonce_range",
