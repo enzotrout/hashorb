@@ -10,11 +10,15 @@ import pytest
 
 import hashphere.compute.cuda as cuda_module
 from hashphere.compute import (
+    CUDA_MAX_BLOCKS,
+    CUDA_SUPPORTED_THREADS_PER_BLOCK,
+    CUDA_THREADS_PER_BLOCK,
     ComputeBackendCapabilities,
     ComputeBackendExecutionError,
     ComputeBackendValidationError,
     CudaBackend,
     cuda_grid_stride_offsets,
+    cuda_launch_geometry,
 )
 from hashphere.mining import PreparedMiningWork, block_hash_to_int, hash_block_header
 
@@ -443,6 +447,39 @@ def test_grid_stride_mapping_is_complete_unique_bounded_and_deterministic(
         )
         for lane in first
     )
+
+
+@pytest.mark.parametrize(
+    ("range_size", "expected"),
+    [
+        (1, (1, CUDA_THREADS_PER_BLOCK)),
+        (CUDA_THREADS_PER_BLOCK, (1, CUDA_THREADS_PER_BLOCK)),
+        (CUDA_THREADS_PER_BLOCK + 1, (2, CUDA_THREADS_PER_BLOCK)),
+        (2**32, (CUDA_MAX_BLOCKS, CUDA_THREADS_PER_BLOCK)),
+    ],
+)
+def test_cuda_launch_geometry_is_exact_and_capped(
+    range_size: int,
+    expected: tuple[int, int],
+) -> None:
+    assert cuda_launch_geometry(range_size) == expected
+
+
+@pytest.mark.parametrize("threads", sorted(CUDA_SUPPORTED_THREADS_PER_BLOCK))
+def test_cuda_launch_geometry_accepts_evaluated_block_sizes(threads: int) -> None:
+    assert cuda_launch_geometry(threads + 1, threads) == (2, threads)
+
+
+@pytest.mark.parametrize(
+    ("range_size", "threads"),
+    [(0, 256), (-1, 256), (2**32 + 1, 256), (1, 0), (1, 32), (1, 1024), (1, True)],
+)
+def test_cuda_launch_geometry_rejects_invalid_or_unsupported_values(
+    range_size: object,
+    threads: object,
+) -> None:
+    with pytest.raises(ComputeBackendValidationError):
+        cuda_launch_geometry(range_size, threads)  # type: ignore[arg-type]
 
 
 def test_cuda_backend_does_not_mutate_or_retain_work() -> None:

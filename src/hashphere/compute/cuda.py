@@ -31,6 +31,25 @@ _AUTO_LOAD = object()
 _TARGET_BYTE_LENGTH = 32
 _NONCE_BYTE_LENGTH = 4
 _NONCE_LIMIT = 1 << 32
+CUDA_THREADS_PER_BLOCK = 256
+CUDA_MAX_BLOCKS = 65_535
+CUDA_SUPPORTED_THREADS_PER_BLOCK = frozenset({64, 128, 256, 512})
+
+
+def cuda_launch_geometry(
+    range_size: int,
+    threads_per_block: int = CUDA_THREADS_PER_BLOCK,
+) -> tuple[int, int]:
+    """Return the validated deterministic launch geometry modeled by the extension."""
+
+    parsed_size = _validate_positive_integer(range_size, "range_size")
+    parsed_threads = _validate_positive_integer(threads_per_block, "threads_per_block")
+    if parsed_size > _NONCE_LIMIT:
+        raise ComputeBackendValidationError("range_size must not exceed 2**32")
+    if parsed_threads not in CUDA_SUPPORTED_THREADS_PER_BLOCK:
+        raise ComputeBackendValidationError("threads_per_block is unsupported")
+    required_blocks = (parsed_size + parsed_threads - 1) // parsed_threads
+    return min(required_blocks, CUDA_MAX_BLOCKS), parsed_threads
 
 
 def cuda_grid_stride_offsets(

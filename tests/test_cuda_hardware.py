@@ -166,3 +166,15 @@ def test_cuda_has_fixed_seed_randomized_small_range_parity(
             start_nonce,
             stop_nonce,
         )
+
+
+def test_cuda_reuses_resources_and_replaces_prepared_work(
+    cuda_backend: CudaBackend,
+) -> None:
+    first_work = prepared_work(header_prefix=bytes(range(76)))
+    replacement_work = prepared_work(header_prefix=bytes(reversed(range(76))))
+
+    assert_cuda_python_match_parity(cuda_backend, first_work, 100, 113)
+    assert_cuda_python_match_parity(cuda_backend, first_work, 113, 129)
+    assert_cuda_python_match_parity(cuda_backend, replacement_work, 100, 129)
+    assert_cuda_python_match_parity(cuda_backend, first_work, 129, 145)
