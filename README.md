@@ -137,10 +137,12 @@ The GPU checks every nonce in that range and reports the smallest match. Python
 then rebuilds and hashes that candidate again before it can be submitted.
 
 Prerequisites are a supported NVIDIA GPU, installed CUDA toolkit and runtime,
-and `nvcc` on `PATH`. Enable the extension deliberately:
+and `nvcc` on `PATH`. Enable the extension deliberately on the DGX Spark GB10
+validation host with:
 
 ```bash
 HASHPHERE_BUILD_CUDA=1 \
+HASHPHERE_CUDA_ARCH=121 \
 uv sync --locked --reinstall-package hashphere
 ```
 

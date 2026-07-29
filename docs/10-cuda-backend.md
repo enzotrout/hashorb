@@ -54,6 +54,7 @@ CUDA source is included in the sdist but the extension is built only with:
 
 ```bash
 HASHPHERE_BUILD_CUDA=1 \
+HASHPHERE_CUDA_ARCH=121 \
 uv sync --locked --reinstall-package hashphere
 ```
 
@@ -66,7 +67,11 @@ Prerequisites are:
 - a Python 3.13 development environment supported by the toolkit.
 
 The explicit build adds `_cuda` and links it with the toolkit's CUDA runtime.
-If `HASHPHERE_BUILD_CUDA=1` is set and `nvcc` is missing or compilation fails,
+On the DGX Spark GB10 validation host, the supported target is `sm_121`
+through `HASHPHERE_CUDA_ARCH=121`. The build script also discovers CUDA
+runtime libraries from the toolkit's `lib`, `lib64`, or `targets/<platform>/lib`
+layouts so the ARM64 toolkit path is used correctly. If
+`HASHPHERE_BUILD_CUDA=1` is set and `nvcc` is missing or compilation fails,
 the build fails. It does not silently publish a CPU package that claims CUDA
 availability. Normal CPU builds and forced native-C compiler-failure builds do
 not attempt CUDA compilation. CUDA wheel publication is deferred.
