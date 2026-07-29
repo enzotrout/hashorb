@@ -119,6 +119,37 @@ class ReferenceCudaRuntime(FakeCudaRuntime):
         return (*candidate, stop_nonce - start_nonce)
 
 
+class FakeContextCudaRuntime:
+    """Extension-shaped per-backend context boundary."""
+
+    def __init__(self) -> None:
+        self.contexts: list[dict[str, object]] = []
+
+    def create_device_context(self, ordinal: int) -> object:
+        context: dict[str, object] = {"ordinal": ordinal, "closed": False, "calls": []}
+        self.contexts.append(context)
+        return context
+
+    def search_device_context(
+        self,
+        context: object,
+        header_prefix: bytes,
+        share_target: bytes,
+        network_target: bytes,
+        start_nonce: int,
+        stop_nonce: int,
+    ) -> object:
+        assert isinstance(context, dict)
+        calls = context["calls"]
+        assert isinstance(calls, list)
+        calls.append((header_prefix, share_target, network_target, start_nonce, stop_nonce))
+        return None, False, False, stop_nonce - start_nonce
+
+    def close_device_context(self, context: object) -> None:
+        assert isinstance(context, dict)
+        context["closed"] = True
+
+
 def ticking_clock(values: tuple[object, object] = (100, 125)) -> Iterator[object]:
     """Yield two deterministic clock values."""
 
@@ -160,6 +191,34 @@ def test_uninitialized_cuda_backend_never_imports_or_initializes(
 
     assert backend.capabilities.available is False
     assert backend.capabilities.unavailable_reason == "NotInitialized"
+
+
+def test_cuda_backend_prefers_an_independent_opaque_context_per_instance() -> None:
+    runtime = FakeContextCudaRuntime()
+    first = CudaBackend(1, runtime)
+    second = CudaBackend(3, runtime)
+
+    first.search_nonce_range(prepared_work(), 0, 2)
+    second.search_nonce_range(prepared_work(), 2, 5)
+    first.close()
+    second.close()
+
+    assert [context["ordinal"] for context in runtime.contexts] == [1, 3]
+    assert runtime.contexts[0]["closed"] is True
+    assert runtime.contexts[1]["closed"] is True
+    assert len(runtime.contexts[0]["calls"]) == 1  # type: ignore[arg-type]
+    assert len(runtime.contexts[1]["calls"]) == 1  # type: ignore[arg-type]
+
+
+def test_partial_context_api_is_rejected_without_legacy_fallback() -> None:
+    runtime = FakeCudaRuntime()
+    runtime.create_device_context = lambda ordinal: object()  # type: ignore[attr-defined]
+
+    backend = CudaBackend(runtime=runtime)
+
+    assert backend.capabilities.available is False
+    assert backend.capabilities.unavailable_reason == "ExtensionInvalid"
+    assert runtime.initialize_calls == []
 
 
 @pytest.mark.parametrize(

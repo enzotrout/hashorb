@@ -25,6 +25,9 @@ from hashphere.mining.target import hash_meets_target
 type CudaInitializer = Callable[[int], object]
 type CudaSearcher = Callable[[bytes, bytes, bytes, int, int], object]
 type CudaCloser = Callable[[], object]
+type CudaContextCreator = Callable[[int], object]
+type CudaContextSearcher = Callable[[object, bytes, bytes, bytes, int, int], object]
+type CudaContextCloser = Callable[[object], object]
 type MonotonicClock = Callable[[], int]
 
 _AUTO_LOAD = object()
@@ -195,6 +198,19 @@ class CudaBackend:
         elif selected_runtime is None:
             return "ExtensionNotInstalled"
 
+        context_creator = getattr(selected_runtime, "create_device_context", None)
+        context_searcher = getattr(selected_runtime, "search_device_context", None)
+        context_closer = getattr(selected_runtime, "close_device_context", None)
+        context_methods = (context_creator, context_searcher, context_closer)
+        if any(callable(method) for method in context_methods):
+            if not all(callable(method) for method in context_methods):
+                return "ExtensionInvalid"
+            return self._initialize_context_runtime(
+                cast(CudaContextCreator, context_creator),
+                cast(CudaContextSearcher, context_searcher),
+                cast(CudaContextCloser, context_closer),
+            )
+
         initializer = getattr(selected_runtime, "initialize_device", None)
         searcher = getattr(selected_runtime, "search_nonce_range", None)
         closer = getattr(selected_runtime, "close_device", None)
@@ -217,6 +233,44 @@ class CudaBackend:
             return "ExtensionInvalid"
         self._searcher = cast(CudaSearcher, searcher)
         self._closer = selected_closer
+        return None
+
+    def _initialize_context_runtime(
+        self,
+        creator: CudaContextCreator,
+        searcher: CudaContextSearcher,
+        closer: CudaContextCloser,
+    ) -> str | None:
+        """Bind one opaque extension context to this backend instance."""
+
+        try:
+            context = creator(self.device_ordinal)
+        except Exception:
+            return "DeviceUnavailable"
+        if context is None:
+            return "ExtensionInvalid"
+
+        def search_bound_context(
+            header_prefix: bytes,
+            share_target: bytes,
+            network_target: bytes,
+            start_nonce: int,
+            stop_nonce: int,
+        ) -> object:
+            return searcher(
+                context,
+                header_prefix,
+                share_target,
+                network_target,
+                start_nonce,
+                stop_nonce,
+            )
+
+        def close_bound_context() -> object:
+            return closer(context)
+
+        self._searcher = search_bound_context
+        self._closer = close_bound_context
         return None
 
 

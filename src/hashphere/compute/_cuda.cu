@@ -12,8 +12,6 @@
 #define MAX_BLOCKS 65535
 #define NONCE_LIMIT 0x100000000ULL
 
-static int initialized_device = -1;
-
 #define SHA256_CONSTANT_VALUES                                                \
     0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU,         \
     0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U, 0xd807aa98U, 0x12835b01U,         \
@@ -49,7 +47,15 @@ typedef struct {
     bool work_loaded;
 } CudaResources;
 
-static CudaResources resources = {0};
+typedef struct {
+    int device_ordinal;
+    CudaResources resources;
+    bool initialized;
+} CudaContext;
+
+#define CUDA_CONTEXT_CAPSULE "hashphere.cuda_context"
+
+static CudaContext legacy_context = {-1, {0}, false};
 
 __host__ __device__ static inline uint32_t rotate_right(uint32_t value,
                                                         uint32_t count) {
@@ -334,40 +340,43 @@ static void prepare_cuda_work(PreparedCudaWork *prepared,
     }
 }
 
-static void release_resources(void) {
-    if (resources.flags != NULL) {
-        (void)cudaFree(resources.flags);
+static void release_resources(CudaContext *context) {
+    CudaResources *owned = &context->resources;
+    if (owned->flags != NULL) {
+        (void)cudaFree(owned->flags);
     }
-    if (resources.candidate != NULL) {
-        (void)cudaFree(resources.candidate);
+    if (owned->candidate != NULL) {
+        (void)cudaFree(owned->candidate);
     }
-    if (resources.work != NULL) {
-        (void)cudaFree(resources.work);
+    if (owned->work != NULL) {
+        (void)cudaFree(owned->work);
     }
-    memset(&resources, 0, sizeof(resources));
+    memset(owned, 0, sizeof(*owned));
 }
 
-static bool upload_work_if_changed(const uint8_t *header_prefix,
+static bool upload_work_if_changed(CudaContext *context,
+                                   const uint8_t *header_prefix,
                                    const uint8_t *share_target,
                                    const uint8_t *network_target) {
-    if (resources.work_loaded &&
-        memcmp(resources.cached_header, header_prefix, HEADER_PREFIX_LENGTH) == 0 &&
-        memcmp(resources.cached_share, share_target, TARGET_LENGTH) == 0 &&
-        memcmp(resources.cached_network, network_target, TARGET_LENGTH) == 0) {
+    CudaResources *owned = &context->resources;
+    if (owned->work_loaded &&
+        memcmp(owned->cached_header, header_prefix, HEADER_PREFIX_LENGTH) == 0 &&
+        memcmp(owned->cached_share, share_target, TARGET_LENGTH) == 0 &&
+        memcmp(owned->cached_network, network_target, TARGET_LENGTH) == 0) {
         return true;
     }
     PreparedCudaWork prepared;
     prepare_cuda_work(&prepared, header_prefix, share_target, network_target);
-    if (cudaMemcpy(resources.work,
+    if (cudaMemcpy(owned->work,
                    &prepared,
                    sizeof(prepared),
                    cudaMemcpyHostToDevice) != cudaSuccess) {
         return false;
     }
-    memcpy(resources.cached_header, header_prefix, HEADER_PREFIX_LENGTH);
-    memcpy(resources.cached_share, share_target, TARGET_LENGTH);
-    memcpy(resources.cached_network, network_target, TARGET_LENGTH);
-    resources.work_loaded = true;
+    memcpy(owned->cached_header, header_prefix, HEADER_PREFIX_LENGTH);
+    memcpy(owned->cached_share, share_target, TARGET_LENGTH);
+    memcpy(owned->cached_network, network_target, TARGET_LENGTH);
+    owned->work_loaded = true;
     return true;
 }
 
@@ -375,9 +384,44 @@ static void set_cuda_error(void) {
     PyErr_SetString(PyExc_RuntimeError, "CUDA operation failed");
 }
 
+static bool close_context(CudaContext *context) {
+    if (!context->initialized) {
+        return true;
+    }
+    bool failed = cudaSetDevice(context->device_ordinal) != cudaSuccess ||
+                  cudaDeviceSynchronize() != cudaSuccess;
+    release_resources(context);
+    context->device_ordinal = -1;
+    context->initialized = false;
+    return !failed;
+}
+
+static bool initialize_context(CudaContext *context, int device_ordinal) {
+    int device_count;
+    if (context->initialized && !close_context(context)) {
+        return false;
+    }
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess ||
+        device_ordinal >= device_count || cudaSetDevice(device_ordinal) != cudaSuccess ||
+        cudaFree(NULL) != cudaSuccess ||
+        cudaMalloc((void **)&context->resources.work,
+                   sizeof(PreparedCudaWork)) != cudaSuccess ||
+        cudaMalloc((void **)&context->resources.candidate,
+                   sizeof(unsigned long long)) != cudaSuccess ||
+        cudaMalloc((void **)&context->resources.flags, 2U) != cudaSuccess) {
+        release_resources(context);
+        context->device_ordinal = -1;
+        context->initialized = false;
+        return false;
+    }
+    context->device_ordinal = device_ordinal;
+    context->initialized = true;
+    return true;
+}
+
 static PyObject *cuda_initialize_device(PyObject *self, PyObject *args) {
     int device_ordinal;
-    int device_count;
+    bool succeeded;
     (void)self;
     if (!PyArg_ParseTuple(args, "i", &device_ordinal)) {
         return NULL;
@@ -386,29 +430,13 @@ static PyObject *cuda_initialize_device(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "CUDA device ordinal is invalid");
         return NULL;
     }
-    if (initialized_device >= 0) {
-        if (cudaSetDevice(initialized_device) != cudaSuccess ||
-            cudaDeviceSynchronize() != cudaSuccess) {
-            release_resources();
-            initialized_device = -1;
-            set_cuda_error();
-            return NULL;
-        }
-        release_resources();
-        initialized_device = -1;
-    }
-    if (cudaGetDeviceCount(&device_count) != cudaSuccess ||
-        device_ordinal >= device_count || cudaSetDevice(device_ordinal) != cudaSuccess ||
-        cudaFree(NULL) != cudaSuccess ||
-        cudaMalloc((void **)&resources.work, sizeof(PreparedCudaWork)) != cudaSuccess ||
-        cudaMalloc((void **)&resources.candidate,
-                   sizeof(unsigned long long)) != cudaSuccess ||
-        cudaMalloc((void **)&resources.flags, 2U) != cudaSuccess) {
-        release_resources();
+    Py_BEGIN_ALLOW_THREADS
+    succeeded = initialize_context(&legacy_context, device_ordinal);
+    Py_END_ALLOW_THREADS
+    if (!succeeded) {
         set_cuda_error();
         return NULL;
     }
-    initialized_device = device_ordinal;
     Py_RETURN_NONE;
 }
 
@@ -441,6 +469,55 @@ static PyObject *build_search_result(unsigned long long candidate,
     return result;
 }
 
+static bool search_context(CudaContext *context,
+                           const uint8_t *header_prefix,
+                           const uint8_t *share_target,
+                           const uint8_t *network_target,
+                           unsigned long long start_nonce,
+                           unsigned long long stop_nonce,
+                           unsigned long long *candidate,
+                           unsigned char flags[2]) {
+    if (!context->initialized || cudaSetDevice(context->device_ordinal) != cudaSuccess ||
+        !upload_work_if_changed(context,
+                                header_prefix,
+                                share_target,
+                                network_target) ||
+        cudaMemset(context->resources.candidate, 0xff, sizeof(*candidate)) !=
+            cudaSuccess) {
+        return false;
+    }
+    unsigned long long range_size = stop_nonce - start_nonce;
+    unsigned long long required_blocks =
+        (range_size + THREADS_PER_BLOCK - 1ULL) / THREADS_PER_BLOCK;
+    int block_count =
+        (int)(required_blocks < MAX_BLOCKS ? required_blocks : MAX_BLOCKS);
+    search_kernel<<<block_count, THREADS_PER_BLOCK>>>(context->resources.work,
+                                                      start_nonce,
+                                                      range_size,
+                                                      context->resources.candidate);
+    if (cudaGetLastError() != cudaSuccess ||
+        cudaMemcpy(candidate,
+                   context->resources.candidate,
+                   sizeof(*candidate),
+                   cudaMemcpyDeviceToHost) != cudaSuccess) {
+        return false;
+    }
+
+    if (*candidate != ULLONG_MAX) {
+        verify_candidate_kernel<<<1, 1>>>(context->resources.work,
+                                          (uint32_t)*candidate,
+                                          context->resources.flags);
+        if (cudaGetLastError() != cudaSuccess ||
+            cudaMemcpy(flags,
+                       context->resources.flags,
+                       2U,
+                       cudaMemcpyDeviceToHost) != cudaSuccess) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
     Py_buffer header_prefix = {0};
     Py_buffer share_target = {0};
@@ -449,10 +526,7 @@ static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
     unsigned long long stop_nonce;
     unsigned long long candidate = ULLONG_MAX;
     unsigned char flags[2] = {0U, 0U};
-    unsigned long long range_size = 0ULL;
-    unsigned long long required_blocks = 0ULL;
-    int block_count = 0;
-    bool failed = false;
+    bool succeeded;
     (void)self;
 
     if (!PyArg_ParseTuple(args,
@@ -464,58 +538,32 @@ static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
                           &stop_nonce)) {
         return NULL;
     }
-    if (initialized_device < 0 || header_prefix.len != HEADER_PREFIX_LENGTH ||
+    if (!legacy_context.initialized ||
+        header_prefix.len != HEADER_PREFIX_LENGTH ||
         share_target.len != TARGET_LENGTH || network_target.len != TARGET_LENGTH ||
         start_nonce >= stop_nonce || stop_nonce > NONCE_LIMIT) {
         PyErr_SetString(PyExc_ValueError, "CUDA search arguments are invalid");
-        failed = true;
         goto cleanup;
     }
-    if (cudaSetDevice(initialized_device) != cudaSuccess ||
-        !upload_work_if_changed((const uint8_t *)header_prefix.buf,
-                                (const uint8_t *)share_target.buf,
-                                (const uint8_t *)network_target.buf) ||
-        cudaMemset(resources.candidate, 0xff, sizeof(candidate)) != cudaSuccess) {
+    Py_BEGIN_ALLOW_THREADS
+    succeeded = search_context(&legacy_context,
+                               (const uint8_t *)header_prefix.buf,
+                               (const uint8_t *)share_target.buf,
+                               (const uint8_t *)network_target.buf,
+                               start_nonce,
+                               stop_nonce,
+                               &candidate,
+                               flags);
+    Py_END_ALLOW_THREADS
+    if (!succeeded) {
         set_cuda_error();
-        failed = true;
-        goto cleanup;
-    }
-
-    range_size = stop_nonce - start_nonce;
-    required_blocks = (range_size + THREADS_PER_BLOCK - 1ULL) / THREADS_PER_BLOCK;
-    block_count = (int)(required_blocks < MAX_BLOCKS ? required_blocks : MAX_BLOCKS);
-    search_kernel<<<block_count, THREADS_PER_BLOCK>>>(resources.work,
-                                                      start_nonce,
-                                                      range_size,
-                                                      resources.candidate);
-    if (cudaGetLastError() != cudaSuccess ||
-        cudaMemcpy(&candidate,
-                   resources.candidate,
-                   sizeof(candidate),
-                   cudaMemcpyDeviceToHost) != cudaSuccess) {
-        set_cuda_error();
-        failed = true;
-        goto cleanup;
-    }
-
-    if (candidate != ULLONG_MAX) {
-        verify_candidate_kernel<<<1, 1>>>(resources.work,
-                                          (uint32_t)candidate,
-                                          resources.flags);
-        if (cudaGetLastError() != cudaSuccess ||
-            cudaMemcpy(flags, resources.flags, sizeof(flags), cudaMemcpyDeviceToHost) !=
-                cudaSuccess) {
-            set_cuda_error();
-            failed = true;
-            goto cleanup;
-        }
     }
 
 cleanup:
     PyBuffer_Release(&network_target);
     PyBuffer_Release(&share_target);
     PyBuffer_Release(&header_prefix);
-    if (failed) {
+    if (PyErr_Occurred()) {
         return NULL;
     }
     return build_search_result(
@@ -523,19 +571,149 @@ cleanup:
 }
 
 static PyObject *cuda_close_device(PyObject *self, PyObject *args) {
+    bool succeeded;
     (void)self;
     if (!PyArg_ParseTuple(args, "")) {
         return NULL;
     }
-    if (initialized_device >= 0) {
-        bool failed = cudaSetDevice(initialized_device) != cudaSuccess ||
-                      cudaDeviceSynchronize() != cudaSuccess;
-        release_resources();
-        initialized_device = -1;
-        if (failed) {
-            set_cuda_error();
-            return NULL;
+    Py_BEGIN_ALLOW_THREADS
+    succeeded = close_context(&legacy_context);
+    Py_END_ALLOW_THREADS
+    if (!succeeded) {
+        set_cuda_error();
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static CudaContext *context_from_capsule(PyObject *capsule) {
+    return (CudaContext *)PyCapsule_GetPointer(capsule, CUDA_CONTEXT_CAPSULE);
+}
+
+static void cuda_context_capsule_destructor(PyObject *capsule) {
+    if (!PyCapsule_IsValid(capsule, CUDA_CONTEXT_CAPSULE)) {
+        return;
+    }
+    CudaContext *context = context_from_capsule(capsule);
+    if (context == NULL) {
+        PyErr_Clear();
+        return;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    (void)close_context(context);
+    Py_END_ALLOW_THREADS
+    PyMem_Free(context);
+}
+
+static PyObject *cuda_create_device_context(PyObject *self, PyObject *args) {
+    int device_ordinal;
+    bool succeeded;
+    (void)self;
+    if (!PyArg_ParseTuple(args, "i", &device_ordinal)) {
+        return NULL;
+    }
+    if (device_ordinal < 0) {
+        PyErr_SetString(PyExc_ValueError, "CUDA device ordinal is invalid");
+        return NULL;
+    }
+    CudaContext *context = (CudaContext *)PyMem_Calloc(1, sizeof(CudaContext));
+    if (context == NULL) {
+        return PyErr_NoMemory();
+    }
+    context->device_ordinal = -1;
+    Py_BEGIN_ALLOW_THREADS
+    succeeded = initialize_context(context, device_ordinal);
+    Py_END_ALLOW_THREADS
+    if (!succeeded) {
+        PyMem_Free(context);
+        set_cuda_error();
+        return NULL;
+    }
+    PyObject *capsule =
+        PyCapsule_New(context, CUDA_CONTEXT_CAPSULE, cuda_context_capsule_destructor);
+    if (capsule == NULL) {
+        Py_BEGIN_ALLOW_THREADS
+        (void)close_context(context);
+        Py_END_ALLOW_THREADS
+        PyMem_Free(context);
+        return NULL;
+    }
+    return capsule;
+}
+
+static PyObject *cuda_search_device_context(PyObject *self, PyObject *args) {
+    PyObject *capsule;
+    Py_buffer header_prefix = {0};
+    Py_buffer share_target = {0};
+    Py_buffer network_target = {0};
+    unsigned long long start_nonce;
+    unsigned long long stop_nonce;
+    unsigned long long candidate = ULLONG_MAX;
+    unsigned char flags[2] = {0U, 0U};
+    bool succeeded;
+    (void)self;
+    if (!PyArg_ParseTuple(args,
+                          "Oy*y*y*KK",
+                          &capsule,
+                          &header_prefix,
+                          &share_target,
+                          &network_target,
+                          &start_nonce,
+                          &stop_nonce)) {
+        return NULL;
+    }
+    CudaContext *context = context_from_capsule(capsule);
+    if (context == NULL || !context->initialized ||
+        header_prefix.len != HEADER_PREFIX_LENGTH ||
+        share_target.len != TARGET_LENGTH || network_target.len != TARGET_LENGTH ||
+        start_nonce >= stop_nonce || stop_nonce > NONCE_LIMIT) {
+        if (context != NULL) {
+            PyErr_SetString(PyExc_ValueError, "CUDA context search arguments are invalid");
         }
+        goto cleanup;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    succeeded = search_context(context,
+                               (const uint8_t *)header_prefix.buf,
+                               (const uint8_t *)share_target.buf,
+                               (const uint8_t *)network_target.buf,
+                               start_nonce,
+                               stop_nonce,
+                               &candidate,
+                               flags);
+    Py_END_ALLOW_THREADS
+    if (!succeeded) {
+        set_cuda_error();
+    }
+
+cleanup:
+    PyBuffer_Release(&network_target);
+    PyBuffer_Release(&share_target);
+    PyBuffer_Release(&header_prefix);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    return build_search_result(
+        candidate, flags[0], flags[1], stop_nonce - start_nonce);
+}
+
+static PyObject *cuda_close_device_context(PyObject *self, PyObject *args) {
+    PyObject *capsule;
+    bool succeeded;
+    (void)self;
+    if (!PyArg_ParseTuple(args, "O", &capsule)) {
+        return NULL;
+    }
+    CudaContext *context = context_from_capsule(capsule);
+    if (context == NULL) {
+        return NULL;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    succeeded = close_context(context);
+    Py_END_ALLOW_THREADS
+    if (!succeeded) {
+        set_cuda_error();
+        return NULL;
     }
     Py_RETURN_NONE;
 }
@@ -550,6 +728,18 @@ static PyMethodDef cuda_methods[] = {
      METH_VARARGS,
      "Search one exact half-open nonce range."},
     {"close_device", cuda_close_device, METH_VARARGS, "Synchronize backend-owned CUDA work."},
+    {"create_device_context",
+     cuda_create_device_context,
+     METH_VARARGS,
+     "Create one independently owned CUDA device context."},
+    {"search_device_context",
+     cuda_search_device_context,
+     METH_VARARGS,
+     "Search one exact range through an owned CUDA device context."},
+    {"close_device_context",
+     cuda_close_device_context,
+     METH_VARARGS,
+     "Close one independently owned CUDA device context."},
     {NULL, NULL, 0, NULL},
 };
 
