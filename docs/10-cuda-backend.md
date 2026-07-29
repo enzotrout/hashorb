@@ -311,14 +311,13 @@ This slice does not implement:
 - fallback, retry, reconnect, or compute profiles;
 - mining lifecycle, Stratum, strategy, or submission behavior inside CUDA.
 
-Controlled CKPool validation later measured approximately 312.7 MH/s. A
-20-minute endurance run completed approximately 382.9 billion hashes at about
-311.9 MH/s with no connection losses, reconnects, submissions, or command
-failures. Its external timeout wrapper sent SIGINT to an intermediate process,
-did not obtain graceful completion within 30 seconds, and ultimately forced
-exit status 137, leaving JSONL incomplete. That result exposed shutdown control,
-not CUDA correctness or stability. Continuous mining now owns an internal
-monotonic runtime limit; CUDA still finishes its current range before cleanup.
+Controlled CKPool validation later measured approximately 312.7 MH/s. The clean
+internal-runtime endurance gate then completed 360,982,285,568 hashes across
+756 ranges in 20 minutes at approximately 300.76 MH/s. It ended with
+`runtime_limit_reached`, one complete terminal JSONL event, 41 received jobs,
+40 replacements, 114 work variants, and 73 extra-nonce advances, with no
+connection loss, reconnect, or command failure. CUDA still finishes its current
+range before graceful cleanup.
 
 Performance tuning remains the next GPU milestone. Multi-GPU execution,
 Windows CUDA validation, and portable CUDA wheel packaging follow later. The

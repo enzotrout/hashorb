@@ -167,28 +167,29 @@ Planned:
 
 # Current Milestone
 
-**Graceful Time-Bounded Continuous Mining — Implemented**
+**Opt-In Stratum Work Liveness — Implemented**
 
 Objective:
 
-Continuous mining now owns an optional monotonic runtime limit and graceful
-SIGINT/SIGTERM shutdown. Runtime expiry is a successful
-`runtime_limit_reached` completion with full aggregate reporting and resource
-cleanup. The CUDA correctness gate remains complete. Later measurements
-recorded approximately 323.9 MH/s offline, 312.7 MH/s in a controlled CKPool
-test, and 311.9 MH/s across a 20-minute endurance run covering approximately
-382.9 billion hashes without connection, reconnect, submission, or command
-failure.
+Continuous mining now separates monotonic server activity, active-job age, and
+completed-work activity. Optional server-silence and job-age limits are
+disabled by default and recover stale sessions through the existing bounded
+reconnect owner. TCP keepalive supplements but does not replace application
+liveness. Runtime and signal shutdown remain active during recovery.
+
+The clean 20-minute CUDA endurance gate completed with
+`runtime_limit_reached`: 360,982,285,568 hashes across 756 ranges at
+approximately 300.76 MH/s, 41 jobs received, 40 replacements, 114 work
+variants, and 73 extra-nonce advances. It recorded no connection loss,
+reconnect, command failure, or incomplete terminal event.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, the
 compute-backend boundary, portable native sequential execution, and portable
 parallel execution, the strategy abstraction, and both sequential and
-orbiting-bit orders remain complete. The endurance wrapper ultimately forced
-exit status 137 after its SIGINT did not reach a graceful terminal record; this
-was a shutdown-control problem, not CUDA instability. The internal runtime
-boundary removes wrapper signal forwarding from normal bounded runs. CUDA
-performance tuning remains next, followed by multi-GPU execution,
+orbiting-bit orders remain complete. Conservative suspend-gap inference remains
+deferred because platform clocks differ and scheduler delay is not proof of
+suspend. CUDA performance tuning remains next, followed by multi-GPU execution,
 Lite/Auto/Max/Custom operating profiles, macOS/Windows/Linux/Docker packaging,
 broader pool support and Bitcoin Core true solo mining, distributed workers and
 adaptive tuning, then Prometheus/Grafana-compatible metrics. Pool failover

@@ -164,6 +164,14 @@ Continuous session recovery additionally emits:
 - `stratum_reconnect_exhausted` before terminal failure when the policy permits
   no further attempt.
 
+Configured liveness recovery additionally emits sanitized
+`stratum_liveness_warning`, `stratum_session_stale`,
+`stratum_stale_reconnect_started`, `stratum_stale_reconnect_succeeded`, and
+`stratum_stale_reconnect_failed` transitions. Fields are limited to the stable
+`server_silence` or `job_age` reason, configured threshold, and sampled
+monotonic elapsed duration. They contain no job identity, session nonce
+material, endpoint credentials, payload, socket error, or raw exception.
+
 Their stable fields are limited to attempt and maximum counts, delay seconds,
 controlled recovery stage and error category, successful reconnect count, and
 session index. Event order follows execution; a scheduled event precedes its
@@ -292,8 +300,10 @@ and completion-outcome counts,
 known mining event counts, work variants searched, extra-nonce advances and
 cycles, network-time rolls, duplicate work ignored, connection losses,
 reconnect attempts, reconnect successes, reconnect failures, reconnect
-exhaustion events, range totals, accepted and rejected submission counts, and
-sorted controlled failure-stage/category counts. Command counts
+exhaustion events, liveness warnings, stale sessions, stale reconnect
+starts/successes/failures, configured liveness limits, stable stale-reason
+counts, range totals, accepted and rejected submission counts, and sorted
+controlled failure-stage/category counts. Command counts
 are per distinct run ID rather than per record. The human-readable CLI always
 shows the five currently known commands in a stable order, including zero
 counts, followed by any future command names in sorted order.
@@ -321,6 +331,11 @@ Recovery event fields are validated before aggregation. The analyzer counts
 event occurrences rather than trusting cumulative reconnect or session-index
 fields. These recovery counters do not affect nonce-range totals or weighted
 hash rate.
+
+Liveness configuration is read only from optional safe numeric fields on
+`command_started`; old logs without those fields remain valid. Stale events are
+counted by occurrence and stable reason. Unknown future reasons remain visible
+without changing current mining totals.
 
 Aggregate mining rate is weighted from the integer totals:
 

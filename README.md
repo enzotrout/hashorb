@@ -519,6 +519,28 @@ boundaries. Reaching it is the successful `runtime_limit_reached` outcome; the
 final summary and `command_completed` retain all aggregate counters. Omitting
 it preserves unlimited runtime.
 
+Two independent opt-in liveness limits are also available and disabled by
+default:
+
+- `--max-server-silence-seconds` measures monotonic time since any supported,
+  complete incoming Stratum notification. Difficulty and job notifications
+  both refresh it.
+- `--max-job-age-seconds` measures monotonic time since the active job was
+  received. Unrelated difficulty traffic does not refresh it.
+
+Both accept positive finite decimal values through `31536000` seconds. There
+is no hard-coded CKPool interval. A quiet connection or old job is not
+universally invalid; an operator must deliberately enable the applicable
+policy for the selected server. Completed ranges update a separate work clock
+and never masquerade as server activity.
+
+At an exact configured boundary Hashsphere accounts for the current completed
+range, suppresses any candidate returned from the newly stale session, closes
+that session, and enters the existing reconnect policy. Fresh subscribe,
+authorization, difficulty, job, and session-specific extra-nonce state are
+required before another range. Runtime limits and SIGINT/SIGTERM remain active
+during recovery, and no reconnect begins after a stop request.
+
 For a controlled live validation, cap the number of actual searches:
 
 ```bash
@@ -584,6 +606,46 @@ HASHPHERE_ENABLE_LIVE_MINING=1 \
 A graceful signal writes `command_completed` with `stopped_by_user`. SIGKILL
 cannot run Python cleanup or write a terminal event, so its run remains
 incomplete in `logs-summary`.
+
+New TCP sockets enable portable `SO_KEEPALIVE` with operating-system default
+timing. No global or privileged tuning is performed. Keepalive can detect some
+dead peers but cannot prove that a Stratum application is delivering fresh
+work, so it does not replace the explicit liveness policy. Portable automatic
+suspend detection remains deferred: supported systems differ on whether their
+monotonic clock advances during sleep, and an ordinary scheduling delay is not
+safe proof of suspend.
+
+One future manually authorized conservative CKPool check is:
+
+```bash
+HASHPHERE_COMPUTE_BACKEND=cuda \
+HASHPHERE_CUDA_DEVICE=0 \
+HASHPHERE_ENABLE_LIVE_STRATUM=1 \
+HASHPHERE_ENABLE_LIVE_MINING=1 \
+./.venv/bin/python -m hashphere stratum-mine \
+  --chunk-size 500000000 \
+  --max-runtime-seconds 300 \
+  --max-server-silence-seconds 120 \
+  --max-job-age-seconds 600 \
+  --max-reconnect-attempts 5 \
+  --log-file logs/liveness-check.jsonl
+```
+
+This command is documentation only and is not run automatically. Deterministic
+local recovery needs no internet:
+
+```bash
+uv run pytest -q tests/test_stratum_liveness.py \
+  tests/test_stratum_recovery.py \
+  tests/test_continuous_mining.py -k 'liveness or stale'
+```
+
+Inspect only sanitized liveness transitions with:
+
+```bash
+jq 'select(.event | startswith("stratum_liveness") or contains("stale"))' \
+  logs/liveness-check.jsonl
+```
 
 If one prepared variant exhausts the remaining 32-bit nonce space, Hashphere
 does not wrap or repeat its nonce ranges. It first drains queued pool

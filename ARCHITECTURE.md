@@ -158,6 +158,17 @@ handlers and closes the recovery owner, selected backend, and event sink.
 Non-cancellable compute calls finish their current parent range before the stop
 is observed; no new range or reconnect attempt begins afterward.
 
+Opt-in Stratum liveness is a separate monotonic boundary. Server activity is
+time since any supported complete notification, job age is time since a job
+notification, and work activity is time since a completed range. Neither work
+completion nor difficulty traffic falsely refreshes job age. Limits are
+disabled by default because generic Stratum permits quiet sessions and long-
+lived valid jobs. A threshold crossing suppresses a candidate from the stale
+session, closes that session, and invokes the same `StratumSessionRecovery`
+owner used for connection loss. Fresh subscription state and usable work reset
+all session clocks before scheduling resumes. Socket `SO_KEEPALIVE` uses OS
+defaults only; portable suspend inference remains deferred.
+
 ---
 
 # Compute Backend Boundary

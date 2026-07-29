@@ -519,6 +519,39 @@ termination. CUDA and native-parallel responsiveness is therefore bounded by
 the current parent-range duration; unsafe kernel or worker cancellation is not
 introduced.
 
+## Opt-In Session and Work Liveness
+
+Continuous mining keeps three separate monotonic observations:
+
+- server activity, refreshed by every supported complete difficulty or job
+  notification;
+- active-job age, refreshed only by `mining.notify`; and
+- work activity, refreshed when one backend range completes.
+
+`--max-server-silence-seconds` and `--max-job-age-seconds` are optional positive
+finite decimal limits through 31,536,000 seconds and are disabled by default.
+Range completion never refreshes server activity, and difficulty traffic never
+refreshes job age. Job age alone is not universal proof of obsolete work: some
+compliant servers may legitimately keep one job active for a long interval, so
+only an explicit operator policy may enforce it.
+
+At a configured threshold, the just-completed range remains in aggregate hash
+accounting but no candidate from that stale session is submitted. The current
+client closes and `StratumSessionRecovery` performs its existing bounded delay,
+subscribe, authorize, difficulty, and usable-job sequence. The fresh session
+owns fresh subscription and extra-nonce state; old session state is never
+reused. Runtime expiry or a signal during delay prevents another client or
+range. Recovery success is not a command failure; exhaustion retains the
+existing terminal recovery failure semantics.
+
+The transport enables `SO_KEEPALIVE` with OS defaults when supported. It does
+not tune Linux, macOS, or Windows intervals and performs no privileged or global
+configuration. Keepalive may identify some dead peers but cannot detect an
+application that accepts TCP while withholding fresh work. Automatic suspend
+detection is deferred: Python monotonic clocks do not provide one portable
+suspend contract across supported systems, and comparing wall time can mistake
+ordinary scheduling delay or clock adjustment for sleep.
+
 ## Deterministic Work-Space Expansion
 
 The continuous hierarchy is:
