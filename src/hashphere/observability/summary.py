@@ -329,6 +329,22 @@ def _aggregate_known_event(
             _required(record, "supports_cooperative_cancellation"),
             "supports_cooperative_cancellation",
         )
+        if "device_count" in record or "device_ordinals" in record:
+            if "device_count" not in record or "device_ordinals" not in record:
+                raise _RecordValidationError(
+                    "device_count and device_ordinals must be reported together"
+                )
+            device_count = _positive_int(record["device_count"], "device_count")
+            device_ordinals = record["device_ordinals"]
+            if not isinstance(device_ordinals, list):
+                raise _RecordValidationError("device_ordinals must be a list")
+            parsed_ordinals = tuple(
+                _nonnegative_int(item, "device_ordinals") for item in device_ordinals
+            )
+            if len(parsed_ordinals) != device_count:
+                raise _RecordValidationError("device_count is inconsistent")
+            if tuple(sorted(set(parsed_ordinals))) != parsed_ordinals:
+                raise _RecordValidationError("device_ordinals must be unique and ascending")
         accumulator.compute_backend_counts[backend_name] += 1
     elif event == "search_strategy_selected":
         strategy_name = _nonblank_string(

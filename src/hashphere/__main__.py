@@ -21,11 +21,17 @@ from hashphere.compute import (
     builtin_compute_backend_registry,
     close_compute_backend,
     compute_backend_device_ordinal,
+    compute_backend_device_ordinals,
     compute_backend_worker_count,
     deterministic_benchmark_work,
     select_compute_backend,
 )
-from hashphere.config import DEFAULT_CUDA_DEVICE, MAX_CUDA_DEVICE, Settings
+from hashphere.config import (
+    DEFAULT_CUDA_DEVICE,
+    MAX_CUDA_DEVICE,
+    Settings,
+    parse_cuda_devices,
+)
 from hashphere.mining import (
     MAX_LIVENESS_SECONDS,
     MAX_RECONNECT_ATTEMPTS,
@@ -547,6 +553,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 backend_name,
                 worker_count,
                 device_ordinal,
+                device_ordinals,
                 start_nonce,
                 stop_nonce,
                 warmup_runs,
@@ -560,6 +567,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             backend_name,
             worker_count,
             device_ordinal,
+            device_ordinals,
             start_nonce,
             stop_nonce,
             warmup_runs,
@@ -662,6 +670,7 @@ def _run_compute_benchmark(
     backend_name: str,
     worker_count: int | None,
     device_ordinal: int | None,
+    device_ordinals: tuple[int, ...] | None,
     start_nonce: int,
     stop_nonce: int,
     warmup_runs: int,
@@ -671,11 +680,19 @@ def _run_compute_benchmark(
 
     initialization_started_ns = perf_counter_ns()
     try:
-        backend = _select_benchmark_compute_backend(
-            backend_name,
-            worker_count,
-            device_ordinal,
-        )
+        if device_ordinals is None:
+            backend = _select_benchmark_compute_backend(
+                backend_name,
+                worker_count,
+                device_ordinal,
+            )
+        else:
+            backend = _select_benchmark_compute_backend(
+                backend_name,
+                worker_count,
+                device_ordinal,
+                device_ordinals,
+            )
     except (ComputeBackendSelectionError, ComputeBackendValidationError):
         print("Compute benchmark backend is unavailable or invalid.", file=sys.stderr)
         return 2
@@ -746,6 +763,7 @@ def _select_benchmark_compute_backend(
     backend_name: str,
     worker_count: int | None,
     device_ordinal: int | None,
+    device_ordinals: tuple[int, ...] | None = None,
 ) -> MiningComputeBackend:
     """Select one offline backend without loading runtime configuration."""
 
@@ -753,7 +771,9 @@ def _select_benchmark_compute_backend(
         python_searcher=search_nonce_range,
         worker_count=worker_count if worker_count is not None else 2,
         cuda_device=(device_ordinal if device_ordinal is not None else DEFAULT_CUDA_DEVICE),
+        cuda_devices=device_ordinals if device_ordinals is not None else (DEFAULT_CUDA_DEVICE,),
         initialize_cuda=backend_name == "cuda",
+        initialize_cuda_multi=backend_name == "cuda-multi",
     )
     return select_compute_backend(backend_name, registry)
 
@@ -775,6 +795,10 @@ def _print_compute_benchmark(
     device_ordinal = compute_backend_device_ordinal(backend)
     if device_ordinal is not None:
         print(f"CUDA device: {device_ordinal}")
+    device_ordinals = compute_backend_device_ordinals(backend)
+    if device_ordinals is not None:
+        print(f"CUDA device count: {len(device_ordinals)}")
+        print("CUDA devices: " + ",".join(str(item) for item in device_ordinals))
     print(f"Hashes checked: {result.hashes_checked}")
     print(f"Elapsed time: {result.elapsed_ns} ns")
     print(f"Hashes per second: {'unavailable' if rate is None else f'{rate:.2f}'}")
@@ -803,6 +827,10 @@ def _print_compute_benchmark_series(
     device_ordinal = compute_backend_device_ordinal(backend)
     if device_ordinal is not None:
         print(f"CUDA device: {device_ordinal}")
+    device_ordinals = compute_backend_device_ordinals(backend)
+    if device_ordinals is not None:
+        print(f"CUDA device count: {len(device_ordinals)}")
+        print("CUDA devices: " + ",".join(str(item) for item in device_ordinals))
     print(f"Hashes per run: {series.first_result.hashes_checked}")
     print(f"Initialization: {series.initialization_ns} ns")
     print(f"First launch: {series.first_result.elapsed_ns} ns")
@@ -1525,7 +1553,9 @@ def _select_configured_compute_backend(settings: Settings) -> MiningComputeBacke
         python_searcher=search_nonce_range,
         worker_count=settings.compute_workers,
         cuda_device=settings.cuda_device,
+        cuda_devices=settings.cuda_devices,
         initialize_cuda=settings.compute_backend == "cuda",
+        initialize_cuda_multi=settings.compute_backend == "cuda-multi",
     )
     return select_compute_backend(settings.compute_backend, registry)
 
@@ -1598,7 +1628,7 @@ def _parse_summary_command_arguments(arguments: Sequence[str]) -> str:
 
 def _parse_compute_benchmark_arguments(
     arguments: Sequence[str],
-) -> tuple[str, int | None, int | None, int, int, int, int]:
+) -> tuple[str, int | None, int | None, tuple[int, ...] | None, int, int, int, int]:
     """Parse strict offline backend and half-open benchmark-range options."""
 
     option_values = _parse_option_values(
@@ -1607,6 +1637,7 @@ def _parse_compute_benchmark_arguments(
             "--backend",
             "--workers",
             "--device",
+            "--devices",
             "--start-nonce",
             "--hash-count",
             "--warmup-runs",
@@ -1619,8 +1650,8 @@ def _parse_compute_benchmark_arguments(
     if "--hash-count" not in option_values:
         raise ValueError("--hash-count is required")
     backend_name = option_values["--backend"]
-    if backend_name not in {"cuda", "python", "native", "native-parallel"}:
-        raise ValueError("--backend must be cuda, python, native, or native-parallel")
+    if backend_name not in {"cuda", "cuda-multi", "python", "native", "native-parallel"}:
+        raise ValueError("--backend must be cuda, cuda-multi, python, native, or native-parallel")
     workers_text = option_values.get("--workers")
     if workers_text is not None and backend_name != "native-parallel":
         raise ValueError("--workers is valid only for native-parallel")
@@ -1647,6 +1678,18 @@ def _parse_compute_benchmark_arguments(
         if backend_name == "cuda"
         else None
     )
+    devices_text = option_values.get("--devices")
+    if devices_text is not None and backend_name != "cuda-multi":
+        raise ValueError("--devices is valid only for cuda-multi")
+    if backend_name == "cuda-multi" and devices_text is None:
+        raise ValueError("--devices is required for cuda-multi")
+    if devices_text is None:
+        device_ordinals = None
+    else:
+        try:
+            device_ordinals = parse_cuda_devices(devices_text)
+        except ValueError as exc:
+            raise ValueError("--devices must be a valid explicit CUDA device list") from exc
     start_nonce = _parse_unpadded_decimal_option(
         "--start-nonce",
         option_values.get("--start-nonce", "0"),
@@ -1678,6 +1721,7 @@ def _parse_compute_benchmark_arguments(
         backend_name,
         worker_count,
         device_ordinal,
+        device_ordinals,
         start_nonce,
         stop_nonce,
         warmup_runs,
@@ -2188,6 +2232,10 @@ def _emit_compute_backend_selected(
     device_ordinal = compute_backend_device_ordinal(backend)
     if device_ordinal is not None:
         fields["device_ordinal"] = device_ordinal
+    device_ordinals = compute_backend_device_ordinals(backend)
+    if device_ordinals is not None:
+        fields["device_count"] = len(device_ordinals)
+        fields["device_ordinals"] = list(device_ordinals)
     events.emit(
         "compute_backend_selected",
         fields=fields,

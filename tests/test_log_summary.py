@@ -359,6 +359,65 @@ def test_backend_selections_are_aggregated_without_affecting_weighted_rate(
     assert summary.weighted_hashes_per_second == 500_000_000.0
 
 
+def test_multi_cuda_selection_metadata_is_validated_and_aggregated(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "cuda-multi.jsonl"
+    write_records(
+        path,
+        [
+            event_record("multi", 1, "command_started", command="stratum-mine"),
+            event_record(
+                "multi",
+                2,
+                "compute_backend_selected",
+                command="stratum-mine",
+                backend_name="cuda-multi",
+                backend_kind="gpu",
+                implementation="cuda-multi",
+                supports_parallel_search=True,
+                supports_cooperative_cancellation=False,
+                device_count=2,
+                device_ordinals=[0, 3],
+            ),
+        ],
+    )
+
+    assert summarize_jsonl(path).compute_backend_counts == (("cuda-multi", 1),)
+
+
+@pytest.mark.parametrize(
+    ("count", "ordinals"),
+    [(2, [0]), (1, [1, 0]), (2, [0, 0]), (1, "0"), (0, [])],
+)
+def test_multi_cuda_selection_rejects_inconsistent_device_metadata(
+    tmp_path: Path,
+    count: object,
+    ordinals: object,
+) -> None:
+    path = tmp_path / "invalid-cuda-multi.jsonl"
+    write_records(
+        path,
+        [
+            event_record(
+                "multi",
+                1,
+                "compute_backend_selected",
+                backend_name="cuda-multi",
+                backend_kind="gpu",
+                implementation="cuda-multi",
+                supports_parallel_search=True,
+                supports_cooperative_cancellation=False,
+                device_count=count,
+                device_ordinals=ordinals,
+            )
+        ],
+    )
+
+    with pytest.raises(LogSummaryError, match="line 1"):
+        summarize_jsonl(path)
+
+
 def test_strategy_selections_are_aggregated_without_cursor_state(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

@@ -28,6 +28,7 @@ class FakeBenchmarkBackend:
     close_calls: list[None]
     worker_count: int | None = None
     device_ordinal: int | None = None
+    device_ordinals: tuple[int, ...] | None = None
     close_failure: bool = False
 
     def search_nonce_range(
@@ -58,19 +59,19 @@ def fake_backend(
         capabilities=ComputeBackendCapabilities(
             backend_name=backend_name,
             display_name=f"{backend_name} benchmark fake",
-            backend_kind="gpu" if backend_name == "cuda" else "cpu",
+            backend_kind="gpu" if backend_name in {"cuda", "cuda-multi"} else "cpu",
             implementation=(
-                "cuda"
-                if backend_name == "cuda"
+                backend_name
+                if backend_name in {"cuda", "cuda-multi"}
                 else "c-threadpool"
                 if backend_name == "native-parallel"
                 else "c"
                 if backend_name == "native"
                 else "python"
             ),
-            supports_parallel_search=backend_name in {"cuda", "native-parallel"},
+            supports_parallel_search=backend_name in {"cuda", "cuda-multi", "native-parallel"},
             supports_cooperative_cancellation=False,
-            supports_device_selection=backend_name == "cuda",
+            supports_device_selection=backend_name in {"cuda", "cuda-multi"},
             deterministic_search_order=True,
             preferred_batch_size=None,
             available=True,
@@ -78,7 +79,11 @@ def fake_backend(
         result=NonceSearchResult(
             start_nonce=7,
             stop_nonce=10,
-            hashes_checked=(3 if match is None or backend_name == "cuda" else match.nonce - 7 + 1),
+            hashes_checked=(
+                3
+                if match is None or backend_name in {"cuda", "cuda-multi"}
+                else match.nonce - 7 + 1
+            ),
             elapsed_ns=elapsed_ns,
             match=match,
         ),
@@ -86,6 +91,7 @@ def fake_backend(
         close_calls=[],
         worker_count=4 if backend_name == "native-parallel" else None,
         device_ordinal=3 if backend_name == "cuda" else None,
+        device_ordinals=(0, 2) if backend_name == "cuda-multi" else None,
         close_failure=close_failure,
     )
 
@@ -179,6 +185,69 @@ def test_zero_elapsed_rate_is_unavailable(
     cli_module._print_compute_benchmark(backend, backend.result)
 
     assert "Hashes per second: unavailable" in capsys.readouterr().out
+
+
+def test_multi_cuda_benchmark_requires_devices_and_reports_only_safe_ordinals(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = fake_backend("cuda-multi")
+
+    def select(
+        name: str,
+        workers: int | None,
+        device: int | None,
+        devices: tuple[int, ...],
+    ) -> MiningComputeBackend:
+        assert (name, workers, device, devices) == ("cuda-multi", None, None, (0, 2))
+        return backend
+
+    monkeypatch.setattr(cli_module, "_select_benchmark_compute_backend", select)
+
+    assert (
+        cli_module.main(
+            [
+                "compute-benchmark",
+                "--backend",
+                "cuda-multi",
+                "--devices",
+                "2,0",
+                "--start-nonce",
+                "7",
+                "--hash-count",
+                "3",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "Backend: cuda-multi" in output
+    assert "Implementation: cuda-multi" in output
+    assert "CUDA device count: 2" in output
+    assert "CUDA devices: 0,2" in output
+
+
+def test_multi_cuda_benchmark_rejects_missing_and_malformed_devices(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert (
+        cli_module.main(["compute-benchmark", "--backend", "cuda-multi", "--hash-count", "1"]) == 2
+    )
+    assert (
+        cli_module.main(
+            [
+                "compute-benchmark",
+                "--backend",
+                "cuda-multi",
+                "--devices",
+                "0,0",
+                "--hash-count",
+                "1",
+            ]
+        )
+        == 2
+    )
+    assert "--devices" in capsys.readouterr().err
 
 
 def test_repeated_benchmark_separates_first_warmup_and_measured_runs(
