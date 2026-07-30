@@ -1,2 +1,12 @@
+include .env.example
+include ARCHITECTURE.md
+include README.md
+include ROADMAP.md
 include src/hashphere/compute/_native.c
 include src/hashphere/compute/_cuda.cu
+recursive-include docs *.md
+recursive-include scripts *.ps1 *.py *.sh
+prune journal
+prune tests
+exclude .env
+global-exclude *.pyd *.so

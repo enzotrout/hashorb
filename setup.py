@@ -14,6 +14,22 @@ from setuptools.command.build_ext import build_ext
 _CUDA_BUILD_FLAG = "HASHPHERE_BUILD_CUDA"
 
 
+def _reproducible_compile_flags() -> list[str]:
+    """Remove local source and interpreter roots from compiler-produced metadata."""
+
+    if sys.platform == "win32":
+        return []
+    mappings = (
+        (Path.cwd().resolve(), "/source"),
+        (Path(sys.base_prefix).resolve(), "/python"),
+    )
+    return [
+        f"{option}={source}={destination}"
+        for source, destination in mappings
+        for option in ("-ffile-prefix-map", "-fdebug-prefix-map")
+    ]
+
+
 def _cuda_arch_flags(arch: str | None = None) -> list[str]:
     """Return nvcc architecture flags for the configured CUDA target."""
 
@@ -162,6 +178,7 @@ extensions = [
     Extension(
         "hashphere.compute._native",
         sources=["src/hashphere/compute/_native.c"],
+        extra_compile_args=_reproducible_compile_flags(),
         optional=True,
     )
 ]

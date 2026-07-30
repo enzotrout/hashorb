@@ -18,6 +18,24 @@ from hashphere.compute import (
 from hashphere.mining import NonceSearchMatch, NonceSearchResult, PreparedMiningWork
 
 
+@pytest.fixture(autouse=True)
+def isolated_benchmark_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep offline CLI tests independent of an operator's local profile."""
+
+    monkeypatch.setattr(cli_module, "load_dotenv", lambda: False)
+    for name in (
+        "HASHPHERE_COMPUTE_PROFILE",
+        "HASHPHERE_COMPUTE_BACKEND",
+        "HASHPHERE_COMPUTE_WORKERS",
+        "HASHPHERE_CUDA_DEVICE",
+        "HASHPHERE_CUDA_DEVICES",
+        "HASHPHERE_CUDA_THREADS_PER_BLOCK",
+        "HASHPHERE_CHUNK_SIZE",
+        "HASHPHERE_INTER_RANGE_DELAY_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 @dataclass(frozen=True, slots=True)
 class FakeBenchmarkBackend:
     """Deterministic backend with captured benchmark calls."""

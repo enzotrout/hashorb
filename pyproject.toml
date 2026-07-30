@@ -5,10 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hashphere"
 version = "0.1.0"
-requires-python = ">=3.13"
+description = "Experimental correctness-first Bitcoin mining client"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "python-dotenv>=1.2.2",
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.scripts]
+hashsphere = "hashphere.__main__:main"
 
 [dependency-groups]
 dev = [
