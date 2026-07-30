@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import string
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter_ns
 
 from hashphere.mining.coinbase import (
@@ -44,11 +44,11 @@ class PreparedMiningWork:
     """Immutable header prefix and targets prepared for one mining job."""
 
     job_id: str
-    extra_nonce_2: str
+    extra_nonce_2: str = field(repr=False)
     network_time: str
-    header_prefix: bytes
-    network_target: int
-    share_target: int
+    header_prefix: bytes = field(repr=False)
+    network_target: int = field(repr=False)
+    share_target: int = field(repr=False)
 
     def __post_init__(self) -> None:
         """Validate direct construction without normalizing protocol values."""

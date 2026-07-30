@@ -1,5 +1,21 @@
 """Bitcoin Core true-solo primitives, isolated from Stratum."""
 
+from hashphere.bitcoin.block import (
+    SoloBlockCandidate,
+    SoloBlockError,
+    SoloWorkVariant,
+    assemble_solo_block,
+    prepare_solo_work,
+    serialize_solo_header,
+)
+from hashphere.bitcoin.coinbase import (
+    CoinbaseConstructionError,
+    SoloCoinbase,
+    build_solo_coinbase,
+    encode_push_data,
+    encode_script_number,
+    next_coinbase_extra_nonce,
+)
 from hashphere.bitcoin.rpc import (
     BitcoinCoreRpcClient,
     BitcoinRpcAuthenticationError,
@@ -14,18 +30,58 @@ from hashphere.bitcoin.rpc import (
     SubmissionOutcome,
     UrllibBitcoinRpcTransport,
 )
+from hashphere.bitcoin.serialization import (
+    BitcoinSerializationError,
+    ByteReader,
+    encode_compact_size,
+)
+from hashphere.bitcoin.template import (
+    BlockTemplate,
+    BlockTemplateError,
+    TemplateTransaction,
+    calculate_hash_merkle_root,
+    parse_block_template,
+)
+from hashphere.bitcoin.transaction import (
+    BitcoinTransactionError,
+    ParsedTransaction,
+    parse_transaction,
+)
 
 __all__ = [
     "BitcoinCoreRpcClient",
+    "BitcoinSerializationError",
+    "BitcoinTransactionError",
     "BitcoinRpcAuthenticationError",
     "BitcoinRpcError",
     "BitcoinRpcProtocolError",
     "BitcoinRpcRemoteError",
     "BitcoinRpcTransportError",
     "BlockchainInfo",
+    "BlockTemplate",
+    "BlockTemplateError",
+    "ByteReader",
+    "CoinbaseConstructionError",
     "HttpResponse",
     "PayoutDestination",
+    "ParsedTransaction",
     "ProposalOutcome",
+    "SoloBlockCandidate",
+    "SoloBlockError",
+    "SoloCoinbase",
+    "SoloWorkVariant",
     "SubmissionOutcome",
+    "TemplateTransaction",
     "UrllibBitcoinRpcTransport",
+    "assemble_solo_block",
+    "build_solo_coinbase",
+    "calculate_hash_merkle_root",
+    "encode_compact_size",
+    "encode_push_data",
+    "encode_script_number",
+    "next_coinbase_extra_nonce",
+    "parse_block_template",
+    "parse_transaction",
+    "prepare_solo_work",
+    "serialize_solo_header",
 ]
