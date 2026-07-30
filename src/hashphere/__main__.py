@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from statistics import median
 from time import perf_counter_ns
 from types import FrameType
@@ -42,6 +43,7 @@ from hashphere.config import (
     parse_cuda_devices,
     resolve_compute_profile,
 )
+from hashphere.diagnostics import build_doctor_report, format_doctor_report
 from hashphere.mining import (
     MAX_LIVENESS_SECONDS,
     MAX_RECONNECT_ATTEMPTS,
@@ -124,7 +126,7 @@ _KNOWN_LOG_COMMANDS = (
 _USAGE = (
     "Usage: python -m hashphere "
     "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-    "stratum-mine,logs-summary,compute-benchmark,profile-info} [options]"
+    "stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} [options]"
 )
 
 type _PythonSignalHandler = Callable[[int, FrameType | None], object]
@@ -566,6 +568,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected Hashphere command and return its process status."""
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments in (["--help"], ["-h"]):
+        print(_USAGE)
+        return 0
+    if arguments and arguments[0] == "doctor":
+        try:
+            doctor_selection, log_directory, probe_cuda_device = _parse_doctor_arguments(
+                arguments[1:]
+            )
+        except (ComputeProfileError, ValueError) as exc:
+            print(f"Argument error: {exc}", file=sys.stderr)
+            print(_USAGE, file=sys.stderr)
+            return 2
+        return _run_doctor(doctor_selection, log_directory, probe_cuda_device)
     if arguments and arguments[0] == "profile-info":
         try:
             selection = _parse_profile_info_arguments(arguments[1:])
@@ -1913,6 +1928,66 @@ def _parse_profile_info_arguments(arguments: Sequence[str]) -> _ProfileSelection
         unsupported_message="unsupported profile-info argument",
     )
     return replace(_profile_selection_from_options(options), use_environment_profile=True)
+
+
+def _parse_doctor_arguments(
+    arguments: Sequence[str],
+) -> tuple[_ProfileSelection, Path, int | None]:
+    """Parse offline readiness checks without accepting network operations."""
+
+    options = _parse_option_values(
+        arguments,
+        _PROFILE_OPTION_NAMES | {"--log-dir", "--probe-cuda-device"},
+        unsupported_message="unsupported doctor argument",
+    )
+    selection = replace(
+        _profile_selection_from_options(options),
+        use_environment_profile=True,
+    )
+    log_text = options.get("--log-dir", "logs")
+    if not log_text or not log_text.strip():
+        raise ValueError("--log-dir requires a nonblank path")
+    probe_cuda_device = (
+        _parse_unpadded_decimal_option(
+            "--probe-cuda-device",
+            options["--probe-cuda-device"],
+            minimum=0,
+            maximum=MAX_CUDA_DEVICE,
+        )
+        if "--probe-cuda-device" in options
+        else None
+    )
+    return selection, Path(log_text), probe_cuda_device
+
+
+def _run_doctor(
+    selection: _ProfileSelection,
+    log_directory: Path,
+    probe_cuda_device: int | None,
+) -> int:
+    """Run sanitized local readiness checks without Stratum or mining."""
+
+    load_dotenv()
+    profile_requested = (
+        selection.profile_name is not None or os.getenv("HASHPHERE_COMPUTE_PROFILE") is not None
+    )
+    profile_error = False
+    resolved_profile: ResolvedComputeProfile | None = None
+    try:
+        resolved_profile = _resolve_command_profile(selection, require_profile=False)
+    except (ComputeProfileError, ValueError):
+        profile_error = True
+    report = build_doctor_report(
+        log_directory=log_directory,
+        environment=os.environ,
+        environment_file_present=Path(".env").is_file(),
+        resolved_profile=resolved_profile,
+        profile_requested=profile_requested,
+        profile_error=profile_error,
+        probe_cuda_device=probe_cuda_device,
+    )
+    print(format_doctor_report(report))
+    return report.exit_code
 
 
 def _parse_profiled_compute_benchmark_arguments(

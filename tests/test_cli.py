@@ -214,7 +214,7 @@ def test_non_mining_log_file_argument_errors_are_rejected(
     assert capsys.readouterr().err == (
         "Usage: python -m hashphere "
         "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-        "stratum-mine,logs-summary,compute-benchmark,profile-info} [options]\n"
+        "stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} [options]\n"
     )
 
 
@@ -714,8 +714,20 @@ def test_unknown_command_prints_usage(
     assert captured.err.strip() == (
         "Usage: python -m hashphere "
         "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-        "stratum-mine,logs-summary,compute-benchmark,profile-info} [options]"
+        "stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} [options]"
     )
+
+
+@pytest.mark.parametrize("arguments", [["--help"], ["-h"]])
+def test_help_prints_usage(
+    arguments: list[str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli_module.main(arguments) == 0
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.endswith(",profile-info,doctor} [options]\n")
 
 
 @pytest.mark.parametrize(
