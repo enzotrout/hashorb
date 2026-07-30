@@ -109,8 +109,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("distributions", nargs="+", type=Path)
     arguments = parser.parse_args(argv)
+    distributions: list[Path] = []
+    for candidate in arguments.distributions:
+        if candidate.is_dir():
+            distributions.extend(sorted(candidate.glob("*.whl")))
+            distributions.extend(sorted(candidate.glob("*.tar.gz")))
+        else:
+            distributions.append(candidate)
     try:
-        for distribution in arguments.distributions:
+        if not distributions:
+            raise DistributionVerificationError("no distributions found")
+        for distribution in distributions:
             verify_distribution(distribution)
             print(f"verified {distribution.name}")
     except (DistributionVerificationError, OSError, tarfile.TarError, zipfile.BadZipFile) as exc:

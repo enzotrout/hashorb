@@ -1,0 +1,64 @@
+name: Packaging
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    name: CPU / ${{ matrix.os }} / Python 3.13
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Sync locked development environment
+        run: uv sync --locked --no-python-downloads
+      - name: Test shared CPU core
+        run: uv run pytest -q
+      - name: Check source quality
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src
+          uv lock --check
+      - name: Build CPU source and wheel distributions
+        run: uv build --out-dir dist
+        env:
+          HASHPHERE_BUILD_CUDA: "0"
+      - name: Inspect and smoke-test distributions
+        run: |
+          uv run python scripts/verify-distributions.py dist
+          uv run python scripts/smoke-installed-distribution.py dist
+
+  docker-cpu:
+    name: Docker CPU / Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CPU image
+        run: docker build --tag hashphere:ci .
+      - name: Run offline image smoke tests
+        run: |
+          docker run --rm hashphere:ci
+          docker run --rm hashphere:ci --help
+          docker run --rm hashphere:ci profile-info --profile custom --backend python --chunk-size 1000
+          docker run --rm hashphere:ci compute-benchmark --backend python --hash-count 16
+          test "$(docker run --rm --entrypoint id hashphere:ci -u)" = "10001"
+      - name: Check image history privacy
+        run: |
+          if docker history --no-trunc hashphere:ci | grep -E -i 'bitcoin_address|stratum_password|YOUR_BITCOIN_ADDRESS'; then
+            exit 1
+          fi
