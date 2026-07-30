@@ -124,7 +124,13 @@ def parse_block_template(value: object) -> BlockTemplate:
         height=height,
         current_time=current_time,
         transactions=transactions,
+        coinbase_value=coinbase_value,
+        coinbase_aux_flags=aux_flags,
+        rules=rules,
+        mutable=mutable,
         witness_commitment=witness_commitment,
+        size_limit=size_limit,
+        weight_limit=weight_limit,
     )
     return BlockTemplate(
         previous_block_hash=previous_block_hash,
@@ -253,7 +259,13 @@ def _template_fingerprint(
     height: int,
     current_time: int,
     transactions: tuple[TemplateTransaction, ...],
+    coinbase_value: int,
+    coinbase_aux_flags: bytes,
+    rules: tuple[str, ...],
+    mutable: tuple[str, ...],
     witness_commitment: bytes,
+    size_limit: int,
+    weight_limit: int,
 ) -> str:
     material = {
         "previous": previous_block_hash,
@@ -262,7 +274,13 @@ def _template_fingerprint(
         "height": height,
         "time": current_time,
         "txids": [item.transaction.txid.hex() for item in transactions],
+        "coinbase_value": coinbase_value,
+        "coinbase_aux": coinbase_aux_flags.hex(),
+        "rules": rules,
+        "mutable": mutable,
         "commitment": witness_commitment.hex(),
+        "size_limit": size_limit,
+        "weight_limit": weight_limit,
     }
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:16]

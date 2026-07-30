@@ -35,6 +35,16 @@ from hashphere.bitcoin.serialization import (
     ByteReader,
     encode_compact_size,
 )
+from hashphere.bitcoin.solo import (
+    NullSoloMiningObserver,
+    SoloMiningError,
+    SoloMiningObserver,
+    SoloMiningOutcome,
+    SoloMiningPlan,
+    SoloMiningResult,
+    SoloMiningValidationError,
+    run_solo_mining,
+)
 from hashphere.bitcoin.template import (
     BlockTemplate,
     BlockTemplateError,
@@ -63,12 +73,19 @@ __all__ = [
     "ByteReader",
     "CoinbaseConstructionError",
     "HttpResponse",
+    "NullSoloMiningObserver",
     "PayoutDestination",
     "ParsedTransaction",
     "ProposalOutcome",
     "SoloBlockCandidate",
     "SoloBlockError",
     "SoloCoinbase",
+    "SoloMiningError",
+    "SoloMiningObserver",
+    "SoloMiningOutcome",
+    "SoloMiningPlan",
+    "SoloMiningResult",
+    "SoloMiningValidationError",
     "SoloWorkVariant",
     "SubmissionOutcome",
     "TemplateTransaction",
@@ -83,5 +100,6 @@ __all__ = [
     "parse_block_template",
     "parse_transaction",
     "prepare_solo_work",
+    "run_solo_mining",
     "serialize_solo_header",
 ]
