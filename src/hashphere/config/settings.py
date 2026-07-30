@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import socket
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
+
+from hashphere.config.profile import (
+    DEFAULT_CUDA_THREADS_PER_BLOCK,
+    ComputeProfileOverrides,
+    parse_compute_profile,
+)
 
 DEFAULT_STRATUM_HOST = "stratum.ckpool.org"
 DEFAULT_STRATUM_PORT = 3333
@@ -55,11 +62,13 @@ class Settings:
     worker_name: str
     stratum_password: str
     compute_backend: str
-    compute_profile: str
+    compute_profile: str | None = None
     compute_workers: int = DEFAULT_COMPUTE_WORKERS
     search_strategy: str = DEFAULT_SEARCH_STRATEGY
     cuda_device: int = DEFAULT_CUDA_DEVICE
     cuda_devices: tuple[int, ...] = DEFAULT_CUDA_DEVICES
+    cuda_threads_per_block: int = DEFAULT_CUDA_THREADS_PER_BLOCK
+    profile_overrides: ComputeProfileOverrides = ComputeProfileOverrides()
 
     @property
     def stratum_username(self) -> str:
@@ -115,6 +124,23 @@ class Settings:
             if compute_backend == "cuda-multi"
             else DEFAULT_CUDA_DEVICES
         )
+        profile_text = os.getenv("HASHPHERE_COMPUTE_PROFILE")
+        compute_profile = parse_compute_profile(profile_text) if profile_text is not None else None
+        cuda_threads_per_block = (
+            _parse_cuda_threads_per_block(
+                os.getenv(
+                    "HASHPHERE_CUDA_THREADS_PER_BLOCK",
+                    str(DEFAULT_CUDA_THREADS_PER_BLOCK),
+                )
+            )
+            if compute_profile is not None or compute_backend in {"cuda", "cuda-multi"}
+            else DEFAULT_CUDA_THREADS_PER_BLOCK
+        )
+        profile_overrides = (
+            parse_compute_profile_overrides_from_env()
+            if compute_profile is not None
+            else ComputeProfileOverrides()
+        )
 
         return cls(
             stratum_host=os.getenv(
@@ -129,16 +155,13 @@ class Settings:
                 DEFAULT_STRATUM_PASSWORD,
             ),
             compute_backend=compute_backend,
-            compute_profile=os.getenv(
-                "HASHPHERE_COMPUTE_PROFILE",
-                "lite",
-            )
-            .strip()
-            .lower(),
+            compute_profile=compute_profile,
             compute_workers=compute_workers,
             search_strategy=search_strategy,
             cuda_device=cuda_device,
             cuda_devices=cuda_devices,
+            cuda_threads_per_block=cuda_threads_per_block,
+            profile_overrides=profile_overrides,
         )
 
 
@@ -180,6 +203,91 @@ def _parse_cuda_device(value: object) -> int:
     if not 0 <= device_ordinal <= MAX_CUDA_DEVICE:
         raise ValueError(f"HASHPHERE_CUDA_DEVICE must be between 0 and {MAX_CUDA_DEVICE}")
     return device_ordinal
+
+
+def _parse_cuda_threads_per_block(value: object) -> int:
+    parsed = _parse_unpadded_environment_integer(
+        value,
+        "HASHPHERE_CUDA_THREADS_PER_BLOCK",
+    )
+    if parsed not in {64, 128, 256, 512}:
+        raise ValueError("HASHPHERE_CUDA_THREADS_PER_BLOCK must be 64, 128, 256, or 512")
+    return parsed
+
+
+def _parse_profile_chunk_size(value: object) -> int:
+    parsed = _parse_unpadded_environment_integer(value, "HASHPHERE_CHUNK_SIZE")
+    if not 1 <= parsed <= 1 << 32:
+        raise ValueError("HASHPHERE_CHUNK_SIZE must be between 1 and 2**32")
+    return parsed
+
+
+def _parse_profile_delay(value: object) -> float:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("HASHPHERE_INTER_RANGE_DELAY_SECONDS must be an unpadded finite decimal")
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(
+            "HASHPHERE_INTER_RANGE_DELAY_SECONDS must be an unpadded finite decimal"
+        ) from exc
+    if not math.isfinite(parsed) or not 0 <= parsed <= 60:
+        raise ValueError("HASHPHERE_INTER_RANGE_DELAY_SECONDS must be finite and between 0 and 60")
+    return parsed
+
+
+def _parse_unpadded_environment_integer(value: object, name: str) -> int:
+    if (
+        not isinstance(value, str)
+        or not value
+        or not value.isascii()
+        or not value.isdecimal()
+        or (len(value) > 1 and value.startswith("0"))
+    ):
+        raise ValueError(f"{name} must be an unpadded ASCII decimal integer")
+    return int(value)
+
+
+def parse_compute_profile_overrides_from_env() -> ComputeProfileOverrides:
+    """Capture only explicitly configured compute controls for profile policy."""
+
+    return ComputeProfileOverrides(
+        backend_name=(
+            os.environ["HASHPHERE_COMPUTE_BACKEND"].strip().lower()
+            if "HASHPHERE_COMPUTE_BACKEND" in os.environ
+            else None
+        ),
+        worker_count=(
+            _parse_compute_workers(os.environ["HASHPHERE_COMPUTE_WORKERS"])
+            if "HASHPHERE_COMPUTE_WORKERS" in os.environ
+            else None
+        ),
+        cuda_device=(
+            _parse_cuda_device(os.environ["HASHPHERE_CUDA_DEVICE"])
+            if "HASHPHERE_CUDA_DEVICE" in os.environ
+            else None
+        ),
+        cuda_devices=(
+            parse_cuda_devices(os.environ["HASHPHERE_CUDA_DEVICES"])
+            if "HASHPHERE_CUDA_DEVICES" in os.environ
+            else None
+        ),
+        cuda_threads_per_block=(
+            _parse_cuda_threads_per_block(os.environ["HASHPHERE_CUDA_THREADS_PER_BLOCK"])
+            if "HASHPHERE_CUDA_THREADS_PER_BLOCK" in os.environ
+            else None
+        ),
+        chunk_size=(
+            _parse_profile_chunk_size(os.environ["HASHPHERE_CHUNK_SIZE"])
+            if "HASHPHERE_CHUNK_SIZE" in os.environ
+            else None
+        ),
+        inter_range_delay_seconds=(
+            _parse_profile_delay(os.environ["HASHPHERE_INTER_RANGE_DELAY_SECONDS"])
+            if "HASHPHERE_INTER_RANGE_DELAY_SECONDS" in os.environ
+            else None
+        ),
+    )
 
 
 def parse_cuda_devices(value: object) -> tuple[int, ...]:

@@ -1,5 +1,19 @@
 """Hashphere configuration."""
 
+from hashphere.config.profile import (
+    CUDA_THREADS_PER_BLOCK_CHOICES,
+    DEFAULT_CUDA_THREADS_PER_BLOCK,
+    MAX_INTER_RANGE_DELAY_SECONDS,
+    PROFILE_NAMES,
+    ComputeProfileCapabilityProvider,
+    ComputeProfileError,
+    ComputeProfileOverrides,
+    ComputeProfileResolutionError,
+    ComputeProfileValidationError,
+    ResolvedComputeProfile,
+    parse_compute_profile,
+    resolve_compute_profile,
+)
 from hashphere.config.settings import (
     DEFAULT_COMPUTE_WORKERS,
     DEFAULT_CUDA_DEVICE,
@@ -9,17 +23,31 @@ from hashphere.config.settings import (
     MAX_CUDA_DEVICE,
     MAX_CUDA_DEVICES,
     Settings,
+    parse_compute_profile_overrides_from_env,
     parse_cuda_devices,
 )
 
 __all__ = [
+    "CUDA_THREADS_PER_BLOCK_CHOICES",
+    "ComputeProfileCapabilityProvider",
+    "ComputeProfileError",
+    "ComputeProfileOverrides",
+    "ComputeProfileResolutionError",
+    "ComputeProfileValidationError",
     "DEFAULT_COMPUTE_WORKERS",
     "DEFAULT_CUDA_DEVICE",
     "DEFAULT_CUDA_DEVICES",
+    "DEFAULT_CUDA_THREADS_PER_BLOCK",
     "DEFAULT_SEARCH_STRATEGY",
     "MAX_COMPUTE_WORKERS",
     "MAX_CUDA_DEVICE",
     "MAX_CUDA_DEVICES",
+    "MAX_INTER_RANGE_DELAY_SECONDS",
+    "PROFILE_NAMES",
+    "ResolvedComputeProfile",
     "Settings",
     "parse_cuda_devices",
+    "parse_compute_profile",
+    "parse_compute_profile_overrides_from_env",
+    "resolve_compute_profile",
 ]

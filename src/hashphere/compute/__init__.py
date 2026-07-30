@@ -21,6 +21,7 @@ from hashphere.compute.parallel import (
     NonceRangeAssignment,
     partition_nonce_range,
 )
+from hashphere.compute.profile import LocalComputeProfileCapabilities
 from hashphere.compute.python import PythonSequentialBackend
 from hashphere.compute.registry import (
     ComputeBackendRegistry,
@@ -65,6 +66,7 @@ __all__ = [
     "cuda_grid_stride_offsets",
     "deterministic_benchmark_work",
     "list_compute_backends",
+    "LocalComputeProfileCapabilities",
     "partition_nonce_range",
     "select_compute_backend",
     "validate_cuda_device_ordinals",

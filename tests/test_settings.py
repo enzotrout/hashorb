@@ -21,6 +21,9 @@ _ENVIRONMENT_VARIABLES = (
     "HASHPHERE_SEARCH_STRATEGY",
     "HASHPHERE_CUDA_DEVICE",
     "HASHPHERE_CUDA_DEVICES",
+    "HASHPHERE_CUDA_THREADS_PER_BLOCK",
+    "HASHPHERE_CHUNK_SIZE",
+    "HASHPHERE_INTER_RANGE_DELAY_SECONDS",
 )
 
 
@@ -85,11 +88,47 @@ def test_settings_load_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.stratum_username == ("bc1qexampleaddress.hashphere-test")
     assert settings.stratum_password == "x"
     assert settings.compute_backend == "auto"
-    assert settings.compute_profile == "lite"
+    assert settings.compute_profile is None
     assert settings.compute_workers == 2
     assert settings.search_strategy == "sequential"
     assert settings.cuda_device == 0
     assert settings.cuda_devices == (0,)
+    assert settings.cuda_threads_per_block == 256
+    assert settings.profile_overrides.backend_name is None
+
+
+@pytest.mark.parametrize("profile", ["", " lite", "lite ", "unknown", "li.te"])
+def test_profile_environment_rejects_empty_padded_or_unknown_names(
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", profile)
+
+    with pytest.raises(ValueError, match="compute profile"):
+        Settings.from_env()
+
+
+def test_profile_environment_captures_only_explicit_compute_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", "custom")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda")
+    monkeypatch.setenv("HASHPHERE_CUDA_DEVICE", "0")
+    monkeypatch.setenv("HASHPHERE_CUDA_THREADS_PER_BLOCK", "128")
+    monkeypatch.setenv("HASHPHERE_CHUNK_SIZE", "123")
+    monkeypatch.setenv("HASHPHERE_INTER_RANGE_DELAY_SECONDS", "0.25")
+
+    settings = Settings.from_env()
+
+    assert settings.compute_profile == "custom"
+    assert settings.cuda_threads_per_block == 128
+    assert settings.profile_overrides.backend_name == "cuda"
+    assert settings.profile_overrides.cuda_device == 0
+    assert settings.profile_overrides.cuda_threads_per_block == 128
+    assert settings.profile_overrides.chunk_size == 123
+    assert settings.profile_overrides.inter_range_delay_seconds == 0.25
 
 
 def test_settings_load_explicit_values(
@@ -227,6 +266,16 @@ def test_cuda_devices_environment_does_not_affect_other_backends(
     monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", "not-a-device")
 
     assert Settings.from_env().cuda_devices == (0,)
+
+
+def test_cuda_threads_environment_does_not_affect_cpu_legacy_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "native")
+    monkeypatch.setenv("HASHPHERE_CUDA_THREADS_PER_BLOCK", "not-a-launch-size")
+
+    assert Settings.from_env().cuda_threads_per_block == 256
 
 
 def test_missing_bitcoin_address_is_rejected() -> None:
