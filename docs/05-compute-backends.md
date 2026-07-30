@@ -262,9 +262,11 @@ the controlled extension/runtime/device initialization. Configuration accepts:
   device initializes successfully.
 
 Unknown and unavailable selectors are controlled configuration errors detected
-before a mining command constructs a live client. `auto` does not currently
-benchmark or optimize for hardware. `HASHPHERE_COMPUTE_PROFILE` remains a
-separate deferred resource-policy setting.
+before a mining command constructs a live client. The legacy backend selector
+`auto` remains a static alias for Python. The separate optional compute profile
+`auto` performs narrow command-time capability resolution; the two settings do
+not share semantics. See
+[`12-performance-profiles.md`](12-performance-profiles.md).
 
 `HASHPHERE_COMPUTE_WORKERS` is a strict unpadded ASCII decimal value from 1
 through 256, defaults to 2, and configures only `native-parallel`. It does not
@@ -435,5 +437,5 @@ controlled CKPool, and endurance measurements are recorded in the CUDA
 documentation as local evidence only. Multi-GPU coordination architecture is
 implemented and deterministically tested; a two-device physical hardware gate
 remains pending. Metal, Vulkan, Windows CUDA builds, multiprocessing,
-SIMD, additional strategies, resource profiles, automatic selection, and
-portable CUDA wheel publishing remain deferred.
+SIMD, additional strategies, thermal-aware selection, and portable CUDA wheel
+publishing remain deferred.

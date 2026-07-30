@@ -43,9 +43,12 @@ There is no fallback after an explicit selection.
 `HASHPHERE_COMPUTE_WORKERS` configures only `native-parallel`. It is a strict
 unpadded ASCII decimal integer from `1` through `256` and defaults to `2`.
 Ranges shorter than the configured count create fewer nonempty assignments.
-`HASHPHERE_COMPUTE_PROFILE` remains separate; future Lite/Auto/Max/Custom
-profiles may choose worker counts and resource policy, but profile behavior is
-not implemented yet.
+`HASHPHERE_COMPUTE_PROFILE` optionally selects `lite`, `auto`, `max`, or
+`custom`. When omitted, legacy backend behavior is unchanged. A CLI `--profile`
+wins over the environment. Lite/Auto/Max reject ambiguous manual controls
+except that Auto and Max accept an explicit CUDA ordinal or exact ordinal list.
+Custom requires its critical controls explicitly. See
+[`docs/12-performance-profiles.md`](docs/12-performance-profiles.md).
 
 `HASHPHERE_CUDA_DEVICE` configures only an explicitly selected `cuda` backend.
 It defaults to ordinal `0` and must be an unpadded ASCII decimal integer from
@@ -82,8 +85,8 @@ nonce after all running workers finish. These worker assignments remain private
 to the backend and do not change the selected global strategy. CUDA follows
 the same parent-range boundary and uses deterministic smallest-candidate
 reduction. SIMD, multiprocessing, cooperative mid-range cancellation,
-automatic device selection, real multi-GPU hardware validation, and resource
-profiles remain deferred. The validated CUDA path specializes Bitcoin header hashing and reuses
+automatic all-device selection and real multi-GPU hardware validation remain
+deferred. The validated CUDA path specializes Bitcoin header hashing and reuses
 device-owned work/result buffers without changing the parent-range contract.
 
 ## Choose a search strategy
@@ -128,6 +131,42 @@ HASHPHERE_SEARCH_STRATEGY=orbiting-bit
 
 See [`docs/09-orbiting-bit.md`](docs/09-orbiting-bit.md) for the accessible
 algorithm and coverage proof.
+
+## Choose a performance profile
+
+**What:** Profiles translate Lite, Auto, Max, or Custom intent into existing
+validated compute controls before a backend is constructed.
+
+**Why:** Operators can choose resource intensity without changing search order,
+lifecycle limits, connection settings, Bitcoin work, or candidate correctness.
+
+**Plain talk:** Pick gentle, sensible, full power, or fully manual.
+
+Inspect a profile without Stratum configuration or mining:
+
+```bash
+uv run python -m hashphere profile-info --profile auto
+```
+
+Use a profile for continuous mining by omitting the legacy required chunk size;
+the profile owns chunk sizing and pacing:
+
+```bash
+uv run python -m hashphere stratum-mine \
+  --profile lite \
+  --max-runtime-seconds 60 \
+  --max-reconnect-attempts 5
+```
+
+Live opt-in environment switches and normal connection configuration are still
+required. Lite uses no more than one GPU and inserts an interruptible delay
+between completed parent ranges. Auto and Max never consume multiple visible
+GPUs without an explicit list. Custom exposes only the validated backend,
+worker, ordinal, launch-size, chunk, and pacing controls. Existing `.env` files
+with all legacy compute knobs must remove those lines before using a preset.
+Full contracts, measured Spark evidence, raw/effective rate semantics, and
+examples are in
+[`docs/12-performance-profiles.md`](docs/12-performance-profiles.md).
 
 ## Build the optional CUDA backend
 
@@ -234,8 +273,9 @@ details.
 
 ## Benchmark compute backends offline
 
-The benchmark command requires no `.env`, live opt-in, Stratum connection, or
-event log. It searches fixed public synthetic work that is not valid pool work:
+The explicit-backend benchmark form requires no `.env`, live opt-in, Stratum
+connection, or event log. It searches fixed public synthetic work that is not
+valid pool work:
 
 ```bash
 uv run python -m hashphere compute-benchmark \
@@ -273,6 +313,20 @@ uv run python -m hashphere compute-benchmark \
   --devices 0,1 \
   --hash-count 500000000
 ```
+
+Profiles can resolve that same offline benchmark before backend construction:
+
+```bash
+uv run python -m hashphere compute-benchmark \
+  --profile auto \
+  --hash-count 500000000 \
+  --warmup-runs 1 \
+  --repetitions 5
+```
+
+Profile benchmark output is explicitly labeled as raw compute rate; it does not
+apply inter-range pacing. Effective profile rate including pacing is reported
+by profiled continuous mining.
 
 `--backend` must be exactly `cuda`, `cuda-multi`, `python`, `native`, or
 `native-parallel`.

@@ -82,6 +82,15 @@ search still has exactly one ordered `nonce_range_started` and
 The analyzer therefore aggregates continuous hashes, elapsed nanoseconds, and
 weighted rate without a new range schema.
 
+Profiled continuous mining additionally emits `compute_profile_resolved` once
+after command-time resolution and before final backend construction. It contains
+only requested/effective profile, effective backend, optional safe worker or
+ordinal metadata, validated launch size, parent chunk, pacing, and a controlled
+resolution reason. These fields are not repeated per range. Profiled terminal
+completion may add `profile_wall_elapsed_ns` and
+`effective_hashes_per_second`; existing range elapsed and weighted rate retain
+their compute-only meaning.
+
 `compute_backend_selected` is shared by all three mining commands. Its fields
 are limited to `backend_name`, `backend_kind`, `implementation`,
 `supports_parallel_search`, `supports_cooperative_cancellation`,
@@ -303,8 +312,8 @@ outcomes remain visible only under their exact recorded value.
 ## Aggregation and Privacy
 
 The immutable summary reports record and run status counts, chronological
-first and last UTC timestamps, sorted command, compute-backend, search-strategy,
-and completion-outcome counts,
+first and last UTC timestamps, sorted command, compute-backend, requested and
+effective profile, search-strategy, and completion-outcome counts,
 known mining event counts, work variants searched, extra-nonce advances and
 cycles, network-time rolls, duplicate work ignored, connection losses,
 reconnect attempts, reconnect successes, reconnect failures, reconnect
@@ -321,6 +330,11 @@ stable name and are displayed only when present. Future backend names remain
 forward-compatible. The summary does not expose implementation errors or
 hardware identifiers, and backend counts do not affect nonce-range totals or
 weighted hash rate.
+
+Profile aggregates count validated `compute_profile_resolved` events by
+requested and effective name. Old logs without profile events remain readable,
+and unknown future nonblank profile names are counted conservatively rather
+than rejected.
 
 Strategy aggregates likewise count validated `search_strategy_selected` events
 by stable name and appear only when present. Future strategy names remain

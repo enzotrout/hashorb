@@ -1,0 +1,168 @@
+# Lite, Auto, Max, and Custom Performance Profiles
+
+## What, Why, and Plain Talk
+
+**What:** An optional compute profile resolves a user intent into the existing
+backend, CPU-worker, explicit CUDA-device, validated launch-size, parent-chunk,
+and inter-range pacing controls. The immutable resolution is fixed for one
+command invocation and is completed before backend construction.
+
+**Why:** Backend correctness controls and operating intent are different
+concerns. Most operators should not need to understand every technical knob,
+while advanced operators still need a fully explicit and reproducible mode.
+
+**Plain talk:** Lite is gentle, Auto is sensible, Max uses the highest capacity
+allowed by the safe device policy, and Custom exposes the approved controls.
+Profiles choose how intensely Hashsphere attempts hashes; they do not change
+which hashes are valid or the probability of success for a fixed number of
+unique hashes.
+
+## Selection, Precedence, and Legacy Compatibility
+
+The stable environment setting is:
+
+```bash
+HASHPHERE_COMPUTE_PROFILE=lite
+```
+
+The CLI form is:
+
+```bash
+uv run python -m hashphere profile-info --profile auto
+```
+
+An explicit CLI profile wins over the environment profile. An environment
+profile is used when a profile-aware command does not provide one. When neither
+is present, existing commands retain their legacy behavior. In particular, an
+explicit legacy `compute-benchmark --backend ...` and continuous mining with an
+explicit `--chunk-size` remain legacy requests unless `--profile` is also
+provided. Names are case-normalized; empty, padded, malformed, and unknown names
+fail.
+
+Older `.env` files may contain every low-level compute setting because the old
+example enabled those defaults. Remove or comment those lines before selecting
+Lite, Auto, or Max. This is deliberate: a preset never pretends to be Lite while
+hidden manual values make it Max-like.
+
+Profile-controlled values are limited to backend, worker count, explicit CUDA
+ordinal or list, CUDA threads per block, parent chunk size, and delay between
+complete parent ranges. Profiles never change credentials, endpoints, payout
+address, log path, search strategy, runtime or liveness limits, reconnect
+policy, Bitcoin work construction, candidate verification, or submission.
+
+## Exact Preset Contracts
+
+| Profile | Selection policy | Parent chunk | Pacing |
+| --- | --- | ---: | ---: |
+| Lite | Device 0 `cuda` if usable; otherwise sequential `native`; otherwise `python` | GPU 100,000,000; CPU 250,000 | 0.05 s |
+| Auto | Exact explicit CUDA ordinal/list; otherwise device 0 `cuda`; otherwise bounded `native-parallel`; then `native`; then `python` | GPU 500,000,000; native-parallel 5,000,000; native 1,000,000; Python 100,000 | 0 |
+| Max | Exact explicit CUDA ordinal/list; otherwise device 0 `cuda`; otherwise bounded `native-parallel`; then `native`; then `python` | GPU 500,000,000; native-parallel 10,000,000; native 2,000,000; Python 250,000 | 0 |
+| Custom | Exact explicit approved controls; no guessing or fallback | required | optional, default 0 |
+
+All CUDA presets use the established 256 threads per block. Custom accepts only
+the evaluated set `64`, `128`, `256`, or `512`.
+
+Lite rejects every manual compute override. Auto and Max accept only an
+explicit CUDA device or exact device list. Several devices always require an
+explicit list; neither profile inventories and consumes all visible GPUs.
+Auto uses at most `min(logical_cpus // 2, 8)` native workers. Max uses at most
+`min(logical_cpus, 32)`. A selected backend execution failure is terminal;
+fallback occurs only while resolving availability before mining starts.
+
+Custom requires an explicit backend and chunk size. `native-parallel` also
+requires workers. `cuda` requires exactly one ordinal and a validated launch
+size. `cuda-multi` requires an exact ordinal list and a validated launch size.
+CPU/CUDA mixtures, a single ordinal plus a list, CUDA workers, sequential CPU
+workers, missing critical settings, and unsupported launch sizes fail before
+backend construction. For an offline Custom benchmark, explicit `--hash-count`
+also supplies the required one-shot chunk when `--chunk-size` is omitted.
+
+## Capability Boundary
+
+`ComputeProfileCapabilityProvider` exposes only logical CPU count, native
+availability, one explicit CUDA-ordinal check, and one explicit CUDA-list check.
+Tests inject deterministic fakes. The local provider performs narrow probes
+only while a profile command executes, closes every probe backend, performs no
+network access, and records no device name, UUID, serial number, or PCI address.
+Ordinary imports, help, docs generation, CPU-only builds, and legacy commands do
+not probe CUDA.
+
+## Lite Pacing and Accounting
+
+Pacing is zero or a finite value from 0 through 60 seconds. A positive delay is
+applied only after one complete parent range and before the next. It blocks on
+the existing bounded notification receiver rather than busy-waiting, with a
+maximum 100 ms check quantum. Stop/runtime expiry, a replacement job, stale
+session, or connection recovery interrupts the delay. There is no delay after a
+candidate, terminal chunk limit, or observed stop, and no range mapping or hash
+accounting changes.
+
+`elapsed_ns` and weighted hashes per second remain compute-call measurements for
+backward compatibility. Profiled continuous mining additionally reports
+profile wall-clock elapsed time and effective hashes per wall-clock second,
+including pacing and lifecycle overhead. Runtime deadlines continue to count
+monotonic wall time, including pacing.
+
+## Inspection and Offline Benchmarking
+
+Inspect a decision without loading Stratum settings, opening a socket, or
+mining:
+
+```bash
+uv run python -m hashphere profile-info --profile lite
+uv run python -m hashphere profile-info --profile auto --device 0
+uv run python -m hashphere profile-info --profile max --devices 0,1
+uv run python -m hashphere profile-info \
+  --profile custom --backend cuda --device 0 \
+  --threads-per-block 256 --chunk-size 500000000
+```
+
+Benchmark the resolved backend on public synthetic work:
+
+```bash
+uv run python -m hashphere compute-benchmark \
+  --profile auto --hash-count 500000000 --warmup-runs 1 --repetitions 5
+```
+
+Benchmark output labels the profile but remains a raw backend compute rate;
+profile pacing is not applied. This prevents a paced Lite effective rate from
+being mislabeled as kernel throughput. Continuous mining is the source of the
+effective wall-clock rate.
+
+## Spark Evidence and Chosen Constants
+
+All measurements were offline; no pool command was executed. On the one-GPU
+Spark, paired runs used one warmup and five measured repetitions:
+
+| Parent range | `cuda` median | one-device `cuda-multi` median | Difference |
+| ---: | ---: | ---: | ---: |
+| 100,000,000 | 2.7542 GH/s | 2.6821 GH/s | `cuda-multi` 2.62% lower |
+| 500,000,000 | 2.7575 GH/s | 2.7522 GH/s | `cuda-multi` 0.19% lower |
+
+At 500 million hashes, all evaluated launch sizes were close: 64, 128, 256,
+and 512 threads per block measured medians of approximately 2.7452, 2.7454,
+2.7578, and 2.7628 GH/s. The presets retain 256 because it is the established
+validated default and the small difference does not justify overfitting to one
+thermal state.
+
+An approximately 11-second unpaced sample sustained about 2.7564 GH/s effective
+with active telemetry near 96% utilization and roughly 71–72 W. A matched Lite
+sample using 100-million-hash ranges plus 50 ms pacing measured about 1.1565
+GH/s effective, with sampled utilization mostly 35–47% and power mostly 35–37 W
+after initialization. These are local, approximate telemetry observations, not
+power guarantees. They demonstrate that Lite reduces average intensity rather
+than merely changing range size.
+
+Lite, Auto, and Max resolved to single-device `cuda` ordinal 0 on this Spark;
+Custom accepted the explicit device-0, 256-thread, 500-million-chunk policy.
+The CUDA extension rebuilt for `sm_121`; device parity passed for all four
+launch sizes, and one-device `cuda-multi` parity passed. Actual two-device
+profile execution and scaling remain unvalidated. The established live baseline
+remains approximately 2.46 GH/s; the offline paired results do not replace it.
+
+## Deferred Work
+
+Profiles are fixed for one invocation. Runtime profile switching, thermal
+feedback, fan or clock control, dashboard controls, saved profiles,
+distributed-worker profiles, automatic multi-GPU selection, actual two-device
+validation, Windows CUDA builds, and portable CUDA wheels remain deferred.

@@ -270,9 +270,9 @@ test suite uses an injected extension-shaped fake and never initializes CUDA.
 The gated real-device suite passes on a CUDA 13.0 NVIDIA GB10 build containing
 an `sm_121` cubin.
 Sequential and orbiting-bit remain backend-independent and compatible.
-Multi-GPU ownership and deterministic reduction are implemented, with physical
-two-device validation still pending. Windows CUDA builds, profiles, and
-portable published CUDA wheels remain future boundaries.
+Multi-GPU ownership, deterministic reduction, and external performance-profile
+policy are implemented, with physical two-device validation still pending.
+Windows CUDA builds and portable published CUDA wheels remain future boundaries.
 
 The native extension is optional at build and import time, preserving
 Python-only installs; both native modes then report controlled unavailability.
@@ -424,6 +424,33 @@ successes, failures, and exhaustion without owning retry decisions.
 JSONL is the first local persistence format. Rotation, retention,
 machine-readable summary output, and external telemetry exporters remain
 separate future components.
+
+---
+
+# Compute Profile Boundary
+
+`hashphere.config.profile` owns immutable policy inputs and deterministic
+resolution. It depends only on a narrow capability protocol and produces a
+sanitized `ResolvedComputeProfile`; it does not construct a selected backend,
+open a socket, read credentials, build Bitcoin work, or verify candidates.
+Tests supply fake capabilities. The command-time local provider in
+`hashphere.compute.profile` may check native availability and explicitly
+permitted CUDA ordinals, closing every probe before final backend construction.
+
+The CLI owns precedence, resolves the profile once, applies the effective
+backend/worker/device/launch/chunk/pacing values, emits one profile event, and
+then uses the existing backend registry and mining orchestration. Search
+strategies and Stratum do not branch on profile names. Lite pacing is part of
+the continuous parent-range boundary: bounded notification waits remain
+interruptible by stop, runtime, replacement, liveness, and recovery, and exact
+range/hash accounting stays unchanged. Raw compute elapsed remains backward
+compatible; profiled commands add effective wall-clock accounting.
+
+Profiles never inventory all devices implicitly. Auto and Max check device 0
+unless an exact ordinal or list was supplied; multiple devices require the
+list. A backend failure after resolution is terminal and cannot trigger an
+execution-time fallback. See
+[`docs/12-performance-profiles.md`](docs/12-performance-profiles.md).
 
 ---
 

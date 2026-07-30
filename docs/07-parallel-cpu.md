@@ -117,8 +117,9 @@ many assignments as nonces. The value does not alter `python` or sequential
 
 The backend is available only when the optional native extension imports.
 Unavailable selection or invalid worker configuration fails before networking.
-`auto` and legacy `cpu` continue to select Python. Lite/Auto/Max/Custom profiles
-remain separate and may choose worker policy in a future milestone.
+The backend selectors `auto` and legacy `cpu` continue to select Python. The
+separate Auto and Max profiles may choose bounded native-parallel worker counts
+when CUDA device 0 is unavailable.
 
 ## Offline Benchmark
 
@@ -152,6 +153,5 @@ The explicit sequential and orbiting-bit parent-range strategies are complete,
 and CUDA execution is independent of this CPU worker pool. `cuda-multi` reuses
 the exact proven partitioning primitive but owns separate device backends and
 an independent executor; it does not alter native-parallel behavior. Other
-global search orders, real multi-GPU hardware validation, resource profiles,
-wheel publishing, distributed workers, and automatic backend policy remain
-deferred.
+global search orders, real multi-GPU hardware validation, wheel publishing,
+distributed workers, and thermal-aware backend policy remain deferred.

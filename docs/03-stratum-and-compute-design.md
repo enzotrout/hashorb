@@ -742,9 +742,9 @@ bit-reversal algorithm and coverage proof in
 
 Compute backend and compute profile remain separate settings. The backend
 selects how one already-prepared half-open nonce range is executed. The profile
-will eventually control resource policy such as worker count, duty cycle, and
-scheduling priority; profile behavior is still deferred and is not silently
-interpreted as a backend selector.
+optionally resolves operating intent into the existing backend, worker,
+explicit-device, validated launch-size, chunk, and pacing controls before
+backend construction. Omission preserves legacy selection.
 
 `HASHPHERE_COMPUTE_WORKERS` currently provides one explicit strict worker count
 only to `native-parallel`; it does not implement a profile or alter either
@@ -793,12 +793,13 @@ safe worker count; CUDA reports GPU kind, parallel execution, explicit device
 selection, and a safe ordinal. All report deterministic result order and no
 cooperative mid-range cancellation or preferred batch size. SIMD, additional
 strategies, automatic device probing, physical multi-GPU validation, and
-Lite/Auto/Max/Custom resource profiles remain deferred. Detailed compute
+thermal-aware selection and implicit all-device discovery remain deferred. Detailed compute
 contracts are documented in
 [`05-compute-backends.md`](05-compute-backends.md) and
 [`06-native-cpu.md`](06-native-cpu.md), with parallel design in
 [`07-parallel-cpu.md`](07-parallel-cpu.md) and CUDA design in
-[`10-cuda-backend.md`](10-cuda-backend.md).
+[`10-cuda-backend.md`](10-cuda-backend.md). Profile policy is in
+[`12-performance-profiles.md`](12-performance-profiles.md).
 
 ## Mining and Compute Components
 

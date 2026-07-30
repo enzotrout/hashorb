@@ -165,6 +165,13 @@ Average median elapsed time increased from about 204.08 ms to 207.27 ms, about
 for `cuda` and 2.351–2.530 GH/s for one-device `cuda-multi`. These results show
 small one-device overhead only; they are not a multi-GPU scaling claim.
 
+A later post-profile paired check used one warmup and five measured repetitions
+per backend. At 100 million hashes, `cuda` measured 2.7542 GH/s and one-device
+`cuda-multi` 2.6821 GH/s (2.62% lower). At 500 million hashes, the medians were
+2.7575 and 2.7522 GH/s (0.19% lower). This supports the 500-million profile
+chunk without replacing the established approximately 2.46 GH/s live baseline
+or turning one-device integration into a scaling claim.
+
 The gated device-0 suite passes through the isolated native context API and
 includes one-device `cuda-multi` parity and cleanup. The extension rebuilds for
 `sm_121`, imports on the Spark, and retains an `sm_121` cubin. Actual execution
@@ -183,7 +190,7 @@ addresses, topology, raw CUDA errors, raw futures, thread identifiers, compiler
 paths, credentials, work bytes, targets, hashes, candidates, and session nonce
 material.
 
-## Packaging and Deferred Profiles
+## Packaging and Profile Boundary
 
 Orchestration is Python-level and uses the same optional `_cuda` extension for
 every device. Normal wheel and source builds remain CPU-capable without `nvcc`;
@@ -193,10 +200,11 @@ local CUDA development builds retain the existing runtime-path policy and
 private-prefix remapping. macOS and Windows remain CPU-only; Windows CUDA and
 portable CUDA wheel publication remain deferred.
 
-Lite / Auto / Max / Custom profiles are also deferred. A later profile policy
-can resolve to explicit device ordinals, threads per block, parent chunk size,
-and resource intensity before constructing a backend. Profile names do not
-enter the orchestrator or native extension in this milestone.
+Lite / Auto / Max / Custom now resolve outside this backend before construction.
+Auto and Max use `cuda-multi` only for an exact explicit device list; they never
+inventory all visible GPUs. Custom requires the list and validated threads per
+block explicitly. Profile names still do not enter the orchestrator or native
+extension. See [`12-performance-profiles.md`](12-performance-profiles.md).
 
 ## Future Two-Device Hardware Gate
 

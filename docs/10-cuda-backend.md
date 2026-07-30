@@ -124,6 +124,13 @@ explicit CUDA selection. Operational availability requires:
 Absence or initialization failure becomes controlled low-cardinality
 unavailability. There is no CUDA-to-CPU fallback.
 
+The established launch size remains 256 threads per block for legacy and preset
+operation. Custom profiles may explicitly select only the evaluated values 64,
+128, 256, or 512. The native boundary validates this exact set and accepts no
+raw CUDA or compiler flags. All four sizes pass the gated device-0 parity test;
+the profile measurements and rationale for retaining 256 as the preset are in
+[`12-performance-profiles.md`](12-performance-profiles.md).
+
 ## Backend Capabilities
 
 CUDA declares:
@@ -423,7 +430,7 @@ This slice does not implement:
 - pinned host memory or asynchronous pipelines;
 - automatic device discovery or proven scaling on real multi-GPU hardware;
 - CUDA wheel publication or automatic toolkit installation;
-- fallback, retry, reconnect, or compute profiles;
+- fallback, retry, reconnect, or profile branching inside CUDA;
 - mining lifecycle, Stratum, strategy, or submission behavior inside CUDA.
 
 Controlled CKPool validation later measured approximately 312.7 MH/s. The clean
@@ -440,7 +447,7 @@ The five-minute pre-tuning liveness gate completed cleanly at approximately
 checked 737,414,244,096 hashes across 1,547 ranges with no duplicate work,
 connection loss, reconnect, stale session, or command failure.
 
-Multi-GPU orchestration architecture is implemented, but physical two-device
-validation remains pending. Lite/Auto/Max/Custom profiles, Windows CUDA
-validation, and portable CUDA wheel packaging remain deferred. The recorded
+Multi-GPU orchestration architecture and external Lite/Auto/Max/Custom profile
+policy are implemented, but physical two-device validation remains pending.
+Windows CUDA validation and portable CUDA wheel packaging remain deferred. The recorded
 rates are local evidence only and do not claim a general or pool speedup.
