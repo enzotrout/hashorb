@@ -8,7 +8,7 @@
 
 #define HEADER_PREFIX_LENGTH 76
 #define TARGET_LENGTH 32
-#define THREADS_PER_BLOCK 256
+#define DEFAULT_THREADS_PER_BLOCK 256U
 #define MAX_BLOCKS 65535
 #define NONCE_LIMIT 0x100000000ULL
 
@@ -475,6 +475,7 @@ static bool search_context(CudaContext *context,
                            const uint8_t *network_target,
                            unsigned long long start_nonce,
                            unsigned long long stop_nonce,
+                           unsigned int threads_per_block,
                            unsigned long long *candidate,
                            unsigned char flags[2]) {
     if (!context->initialized || cudaSetDevice(context->device_ordinal) != cudaSuccess ||
@@ -488,13 +489,13 @@ static bool search_context(CudaContext *context,
     }
     unsigned long long range_size = stop_nonce - start_nonce;
     unsigned long long required_blocks =
-        (range_size + THREADS_PER_BLOCK - 1ULL) / THREADS_PER_BLOCK;
+        (range_size + threads_per_block - 1ULL) / threads_per_block;
     int block_count =
         (int)(required_blocks < MAX_BLOCKS ? required_blocks : MAX_BLOCKS);
-    search_kernel<<<block_count, THREADS_PER_BLOCK>>>(context->resources.work,
-                                                      start_nonce,
-                                                      range_size,
-                                                      context->resources.candidate);
+    search_kernel<<<block_count, threads_per_block>>>(context->resources.work,
+                                                       start_nonce,
+                                                       range_size,
+                                                       context->resources.candidate);
     if (cudaGetLastError() != cudaSuccess ||
         cudaMemcpy(candidate,
                    context->resources.candidate,
@@ -524,24 +525,28 @@ static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
     Py_buffer network_target = {0};
     unsigned long long start_nonce;
     unsigned long long stop_nonce;
+    unsigned int threads_per_block = DEFAULT_THREADS_PER_BLOCK;
     unsigned long long candidate = ULLONG_MAX;
     unsigned char flags[2] = {0U, 0U};
     bool succeeded;
     (void)self;
 
     if (!PyArg_ParseTuple(args,
-                          "y*y*y*KK",
+                          "y*y*y*KK|I",
                           &header_prefix,
                           &share_target,
                           &network_target,
                           &start_nonce,
-                          &stop_nonce)) {
+                          &stop_nonce,
+                          &threads_per_block)) {
         return NULL;
     }
     if (!legacy_context.initialized ||
         header_prefix.len != HEADER_PREFIX_LENGTH ||
         share_target.len != TARGET_LENGTH || network_target.len != TARGET_LENGTH ||
-        start_nonce >= stop_nonce || stop_nonce > NONCE_LIMIT) {
+        start_nonce >= stop_nonce || stop_nonce > NONCE_LIMIT ||
+        (threads_per_block != 64U && threads_per_block != 128U &&
+         threads_per_block != 256U && threads_per_block != 512U)) {
         PyErr_SetString(PyExc_ValueError, "CUDA search arguments are invalid");
         goto cleanup;
     }
@@ -552,6 +557,7 @@ static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
                                (const uint8_t *)network_target.buf,
                                start_nonce,
                                stop_nonce,
+                               threads_per_block,
                                &candidate,
                                flags);
     Py_END_ALLOW_THREADS
@@ -648,25 +654,29 @@ static PyObject *cuda_search_device_context(PyObject *self, PyObject *args) {
     Py_buffer network_target = {0};
     unsigned long long start_nonce;
     unsigned long long stop_nonce;
+    unsigned int threads_per_block = DEFAULT_THREADS_PER_BLOCK;
     unsigned long long candidate = ULLONG_MAX;
     unsigned char flags[2] = {0U, 0U};
     bool succeeded;
     (void)self;
     if (!PyArg_ParseTuple(args,
-                          "Oy*y*y*KK",
+                          "Oy*y*y*KK|I",
                           &capsule,
                           &header_prefix,
                           &share_target,
                           &network_target,
                           &start_nonce,
-                          &stop_nonce)) {
+                          &stop_nonce,
+                          &threads_per_block)) {
         return NULL;
     }
     CudaContext *context = context_from_capsule(capsule);
     if (context == NULL || !context->initialized ||
         header_prefix.len != HEADER_PREFIX_LENGTH ||
         share_target.len != TARGET_LENGTH || network_target.len != TARGET_LENGTH ||
-        start_nonce >= stop_nonce || stop_nonce > NONCE_LIMIT) {
+        start_nonce >= stop_nonce || stop_nonce > NONCE_LIMIT ||
+        (threads_per_block != 64U && threads_per_block != 128U &&
+         threads_per_block != 256U && threads_per_block != 512U)) {
         if (context != NULL) {
             PyErr_SetString(PyExc_ValueError, "CUDA context search arguments are invalid");
         }
@@ -679,6 +689,7 @@ static PyObject *cuda_search_device_context(PyObject *self, PyObject *args) {
                                (const uint8_t *)network_target.buf,
                                start_nonce,
                                stop_nonce,
+                               threads_per_block,
                                &candidate,
                                flags);
     Py_END_ALLOW_THREADS

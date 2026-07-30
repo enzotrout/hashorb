@@ -17,6 +17,10 @@ from hashphere.compute.backend import (
 from hashphere.compute.cuda import CudaBackend
 from hashphere.compute.parallel import NonceRangeAssignment, partition_nonce_range
 from hashphere.config import MAX_CUDA_DEVICE, MAX_CUDA_DEVICES
+from hashphere.config.profile import (
+    CUDA_THREADS_PER_BLOCK_CHOICES,
+    DEFAULT_CUDA_THREADS_PER_BLOCK,
+)
 from hashphere.mining.search import NonceSearchResult, PreparedMiningWork
 
 type DeviceBackendFactory = Callable[[int], MiningComputeBackend]
@@ -36,6 +40,7 @@ class CudaMultiBackend:
         "_executor",
         "_executor_factory",
         "_operation_lock",
+        "_threads_per_block",
         "capabilities",
     )
 
@@ -43,23 +48,27 @@ class CudaMultiBackend:
         self,
         device_ordinals: tuple[int, ...],
         *,
-        backend_factory: DeviceBackendFactory = CudaBackend,
+        backend_factory: DeviceBackendFactory | None = None,
         executor_factory: ExecutorFactory | None = None,
         initialize: bool = True,
+        threads_per_block: int = DEFAULT_CUDA_THREADS_PER_BLOCK,
         clock: MonotonicClock = perf_counter_ns,
     ) -> None:
         """Create isolated device backends without performing device discovery."""
 
         self._device_ordinals = validate_cuda_device_ordinals(device_ordinals)
-        if not callable(backend_factory):
-            raise ComputeBackendValidationError("backend_factory must be callable")
+        if backend_factory is not None and not callable(backend_factory):
+            raise ComputeBackendValidationError("backend_factory must be callable or None")
         if executor_factory is not None and not callable(executor_factory):
             raise ComputeBackendValidationError("executor_factory must be callable or None")
         if not isinstance(initialize, bool):
             raise ComputeBackendValidationError("initialize must be a Boolean")
         if not callable(clock):
             raise ComputeBackendValidationError("clock must be callable")
+        if threads_per_block not in CUDA_THREADS_PER_BLOCK_CHOICES:
+            raise ComputeBackendValidationError("threads_per_block is unsupported")
 
+        self._threads_per_block = threads_per_block
         self._executor_factory = executor_factory or _create_executor
         self._clock = clock
         self._executor: Executor | None = None
@@ -96,6 +105,12 @@ class CudaMultiBackend:
         """Return the configured number of independently owned CUDA contexts."""
 
         return len(self._device_ordinals)
+
+    @property
+    def threads_per_block(self) -> int:
+        """Return the shared validated launch size for every selected device."""
+
+        return self._threads_per_block
 
     def search_nonce_range(
         self,
@@ -158,11 +173,15 @@ class CudaMultiBackend:
             if cleanup_failed:
                 raise ComputeBackendExecutionError("multi-CUDA compute backend cleanup failed")
 
-    def _initialize_backends(self, factory: DeviceBackendFactory) -> str | None:
+    def _initialize_backends(self, factory: DeviceBackendFactory | None) -> str | None:
         initialized: list[MiningComputeBackend] = []
         try:
             for ordinal in self.device_ordinals:
-                backend = factory(ordinal)
+                backend = (
+                    CudaBackend(ordinal, threads_per_block=self.threads_per_block)
+                    if factory is None
+                    else factory(ordinal)
+                )
                 if not isinstance(backend, MiningComputeBackend):
                     raise TypeError("device backend does not implement the compute contract")
                 if getattr(backend, "device_ordinal", None) != ordinal:

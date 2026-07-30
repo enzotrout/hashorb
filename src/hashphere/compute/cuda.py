@@ -26,7 +26,7 @@ type CudaInitializer = Callable[[int], object]
 type CudaSearcher = Callable[[bytes, bytes, bytes, int, int], object]
 type CudaCloser = Callable[[], object]
 type CudaContextCreator = Callable[[int], object]
-type CudaContextSearcher = Callable[[object, bytes, bytes, bytes, int, int], object]
+type CudaContextSearcher = Callable[[object, bytes, bytes, bytes, int, int, int], object]
 type CudaContextCloser = Callable[[object], object]
 type MonotonicClock = Callable[[], int]
 
@@ -84,6 +84,7 @@ class CudaBackend:
         "_closer",
         "_device_ordinal",
         "_searcher",
+        "_threads_per_block",
         "capabilities",
     )
 
@@ -93,11 +94,13 @@ class CudaBackend:
         runtime: object = _AUTO_LOAD,
         *,
         initialize: bool = True,
+        threads_per_block: int = _CUDA_THREADS_PER_BLOCK,
         clock: MonotonicClock = perf_counter_ns,
     ) -> None:
         """Load and initialize one device, or create a controlled unavailable backend."""
 
         self._device_ordinal = _validate_cuda_device(device_ordinal)
+        self._threads_per_block = _cuda_launch_geometry(1, threads_per_block)[1]
         if not isinstance(initialize, bool):
             raise ComputeBackendValidationError("initialize must be a Boolean")
         if not callable(clock):
@@ -119,6 +122,12 @@ class CudaBackend:
         """Return the configured nonnegative CUDA device ordinal."""
 
         return self._device_ordinal
+
+    @property
+    def threads_per_block(self) -> int:
+        """Return the validated deterministic CUDA launch size."""
+
+        return self._threads_per_block
 
     def search_nonce_range(
         self,
@@ -216,6 +225,8 @@ class CudaBackend:
         closer = getattr(selected_runtime, "close_device", None)
         if not callable(initializer) or not callable(searcher) or not callable(closer):
             return "ExtensionInvalid"
+        if self.threads_per_block != _CUDA_THREADS_PER_BLOCK:
+            return "ExtensionInvalid"
         selected_closer = cast(CudaCloser, closer)
         try:
             initialized = cast(CudaInitializer, initializer)(self.device_ordinal)
@@ -264,6 +275,7 @@ class CudaBackend:
                 network_target,
                 start_nonce,
                 stop_nonce,
+                self.threads_per_block,
             )
 
         def close_bound_context() -> object:

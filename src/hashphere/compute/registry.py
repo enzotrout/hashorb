@@ -20,6 +20,7 @@ from hashphere.config import (
     DEFAULT_COMPUTE_WORKERS,
     DEFAULT_CUDA_DEVICE,
     DEFAULT_CUDA_DEVICES,
+    DEFAULT_CUDA_THREADS_PER_BLOCK,
 )
 
 _AUTO_SELECTOR = "auto"
@@ -92,6 +93,7 @@ def builtin_compute_backend_registry(
     worker_count: int = DEFAULT_COMPUTE_WORKERS,
     cuda_device: int = DEFAULT_CUDA_DEVICE,
     cuda_devices: tuple[int, ...] = DEFAULT_CUDA_DEVICES,
+    cuda_threads_per_block: int = DEFAULT_CUDA_THREADS_PER_BLOCK,
     initialize_cuda: bool = False,
     initialize_cuda_multi: bool = False,
 ) -> ComputeBackendRegistry:
@@ -113,14 +115,22 @@ def builtin_compute_backend_registry(
     if not isinstance(selected_parallel, NativeParallelBackend):
         raise ComputeBackendValidationError("native_parallel_backend must be NativeParallelBackend")
     selected_cuda = (
-        CudaBackend(cuda_device, initialize=initialize_cuda)
+        CudaBackend(
+            cuda_device,
+            initialize=initialize_cuda,
+            threads_per_block=cuda_threads_per_block,
+        )
         if cuda_backend is None
         else cuda_backend
     )
     if not isinstance(selected_cuda, CudaBackend):
         raise ComputeBackendValidationError("cuda_backend must be CudaBackend")
     selected_cuda_multi = (
-        CudaMultiBackend(cuda_devices, initialize=initialize_cuda_multi)
+        CudaMultiBackend(
+            cuda_devices,
+            initialize=initialize_cuda_multi,
+            threads_per_block=cuda_threads_per_block,
+        )
         if cuda_multi_backend is None
         else cuda_multi_backend
     )
@@ -143,6 +153,7 @@ def select_compute_backend(
     *,
     cuda_device: int = DEFAULT_CUDA_DEVICE,
     cuda_devices: tuple[int, ...] = DEFAULT_CUDA_DEVICES,
+    cuda_threads_per_block: int = DEFAULT_CUDA_THREADS_PER_BLOCK,
 ) -> MiningComputeBackend:
     """Select an operational backend from a caller registry or fresh built-ins."""
 
@@ -150,6 +161,7 @@ def select_compute_backend(
         builtin_compute_backend_registry(
             cuda_device=cuda_device,
             cuda_devices=cuda_devices,
+            cuda_threads_per_block=cuda_threads_per_block,
             initialize_cuda=backend_name == "cuda",
             initialize_cuda_multi=backend_name == "cuda-multi",
         )

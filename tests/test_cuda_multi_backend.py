@@ -512,3 +512,21 @@ def test_executor_is_persistent_then_closed_once_with_all_devices() -> None:
     assert executors[0].shutdown_calls == 1
     assert all(device.close_calls == 1 for device in devices)
     assert all(not thread.is_alive() for thread in executors[0].delegate._threads)
+
+
+@pytest.mark.parametrize("threads", [64, 128, 256, 512])
+def test_multi_cuda_accepts_only_evaluated_shared_launch_sizes(threads: int) -> None:
+    backend = CudaMultiBackend(
+        (0,),
+        backend_factory=lambda ordinal: FakeDeviceBackend(ordinal),
+        threads_per_block=threads,
+    )
+
+    assert backend.threads_per_block == threads
+    backend.close()
+
+
+@pytest.mark.parametrize("threads", [0, 32, 1024, True])
+def test_multi_cuda_rejects_unevaluated_launch_sizes(threads: int) -> None:
+    with pytest.raises(ComputeBackendValidationError):
+        CudaMultiBackend((0,), threads_per_block=threads)

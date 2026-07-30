@@ -138,11 +138,21 @@ class FakeContextCudaRuntime:
         network_target: bytes,
         start_nonce: int,
         stop_nonce: int,
+        threads_per_block: int,
     ) -> object:
         assert isinstance(context, dict)
         calls = context["calls"]
         assert isinstance(calls, list)
-        calls.append((header_prefix, share_target, network_target, start_nonce, stop_nonce))
+        calls.append(
+            (
+                header_prefix,
+                share_target,
+                network_target,
+                start_nonce,
+                stop_nonce,
+                threads_per_block,
+            )
+        )
         return None, False, False, stop_nonce - start_nonce
 
     def close_device_context(self, context: object) -> None:
@@ -161,6 +171,7 @@ def test_cuda_capabilities_are_exact_immutable_and_device_is_safe() -> None:
     backend = CudaBackend(3, runtime)
 
     assert backend.device_ordinal == 3
+    assert backend.threads_per_block == 256
     assert backend.capabilities == ComputeBackendCapabilities(
         backend_name="cuda",
         display_name="Optional CUDA correctness backend",
@@ -176,6 +187,20 @@ def test_cuda_capabilities_are_exact_immutable_and_device_is_safe() -> None:
     assert runtime.initialize_calls == [3]
     with pytest.raises(FrozenInstanceError):
         backend.capabilities.available = False  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("threads", [64, 128, 256, 512])
+def test_cuda_backend_accepts_only_evaluated_launch_sizes(threads: int) -> None:
+    backend = CudaBackend(0, FakeContextCudaRuntime(), threads_per_block=threads)
+
+    assert backend.threads_per_block == threads
+    backend.search_nonce_range(prepared_work(), 0, 1)
+
+
+@pytest.mark.parametrize("threads", [0, 32, 1024, True])
+def test_cuda_backend_rejects_unevaluated_launch_sizes(threads: int) -> None:
+    with pytest.raises(ComputeBackendValidationError):
+        CudaBackend(0, FakeContextCudaRuntime(), threads_per_block=threads)
 
 
 def test_uninitialized_cuda_backend_never_imports_or_initializes(

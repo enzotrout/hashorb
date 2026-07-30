@@ -198,3 +198,16 @@ def test_one_device_cuda_multi_has_real_hardware_parity() -> None:
     assert cuda_result.stop_nonce == 47
     assert cuda_result.hashes_checked == 16
     assert cuda_result.match == python_result.match
+
+
+@pytest.mark.parametrize("threads_per_block", [64, 128, 256, 512])
+def test_evaluated_cuda_launch_sizes_have_real_parity(threads_per_block: int) -> None:
+    device_ordinal = int(os.getenv("HASHPHERE_CUDA_DEVICE", "0"))
+    backend = CudaBackend(device_ordinal, threads_per_block=threads_per_block)
+    if not backend.capabilities.available:
+        pytest.skip("CUDA extension or requested CUDA device is unavailable")
+    work = prepared_work(share_target=_MAX_TARGET, network_target=1)
+    try:
+        assert_cuda_python_match_parity(backend, work, 41, 73)
+    finally:
+        backend.close()
