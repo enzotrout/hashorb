@@ -23,7 +23,7 @@ def _reproducible_compile_flags() -> list[str]:
         (Path.cwd().resolve(), "/source"),
         (Path(sys.base_prefix).resolve(), "/python"),
     )
-    return [
+    return ["-g0"] + [
         f"{option}={source}={destination}"
         for source, destination in mappings
         for option in ("-ffile-prefix-map", "-fdebug-prefix-map")
@@ -84,6 +84,7 @@ class CudaBuildExt(build_ext):
     """Compile CUDA sources with nvcc only during an explicit CUDA build."""
 
     def build_extensions(self) -> None:
+        self.force = True
         cuda_extensions = [
             extension
             for extension in self.extensions

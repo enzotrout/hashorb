@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 import setuptools
+from setuptools import Distribution
 
 
 def load_setup_module():
@@ -59,6 +60,39 @@ def test_cpu_only_setup_ignores_cuda_architecture(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("HASHPHERE_CUDA_ARCH", "not-a-compiler-flag")
 
     load_setup_module()
+
+
+def test_native_compile_flags_remove_debug_and_local_prefixes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_setup_module()
+    source_root = tmp_path / "private-source"
+    source_root.mkdir()
+    python_prefix = tmp_path / "private-python"
+    monkeypatch.chdir(source_root)
+    monkeypatch.setattr(module.sys, "base_prefix", str(python_prefix))
+    monkeypatch.setattr(module.sys, "platform", "linux")
+
+    assert module._reproducible_compile_flags() == [
+        "-g0",
+        f"-ffile-prefix-map={source_root}=/source",
+        f"-fdebug-prefix-map={source_root}=/source",
+        f"-ffile-prefix-map={python_prefix}=/python",
+        f"-fdebug-prefix-map={python_prefix}=/python",
+    ]
+
+
+def test_extension_build_forces_recompilation_of_ignored_build_state() -> None:
+    module = load_setup_module()
+    command = module.CudaBuildExt(Distribution())
+    command.extensions = []
+
+    with patch.object(module.build_ext, "build_extensions") as parent_build:
+        command.build_extensions()
+
+    assert command.force is True
+    parent_build.assert_called_once_with()
 
 
 def test_cuda_host_compiler_flags_remap_the_python_install(
