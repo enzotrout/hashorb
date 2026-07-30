@@ -87,6 +87,8 @@ def test_empty_file_returns_immutable_zero_summary(tmp_path: Path) -> None:
         last_timestamp=None,
         command_counts=(),
         compute_backend_counts=(),
+        requested_profile_counts=(),
+        effective_profile_counts=(),
         search_strategy_counts=(),
         completion_outcome_counts=(),
         difficulty_event_count=0,
@@ -141,6 +143,40 @@ def test_two_runs_restart_sequences_and_count_commands_and_outcomes(tmp_path: Pa
     assert summary.incomplete_run_count == 0
     assert summary.command_counts == (("stratum-handshake", 2),)
     assert summary.completion_outcome_counts == (("handshake_succeeded", 2),)
+
+
+def test_profile_events_are_summarized_and_future_names_remain_readable(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.jsonl"
+    write_records(
+        path,
+        [
+            event_record("run", 1, "command_started", command="stratum-mine"),
+            event_record(
+                "run",
+                2,
+                "compute_profile_resolved",
+                command="stratum-mine",
+                requested_profile="future-gentle",
+                effective_profile="future-gentle",
+                effective_backend="python",
+                chunk_size=100,
+                inter_range_delay_seconds=0.5,
+                resolution_reason="FuturePolicy",
+            ),
+            event_record(
+                "run",
+                3,
+                "command_completed",
+                command="stratum-mine",
+                outcome="stopped_by_user",
+            ),
+        ],
+    )
+
+    summary = summarize_jsonl(path)
+
+    assert summary.requested_profile_counts == (("future-gentle", 1),)
+    assert summary.effective_profile_counts == (("future-gentle", 1),)
 
 
 def test_final_newline_is_optional_and_relative_paths_are_supported(

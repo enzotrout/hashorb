@@ -7,16 +7,19 @@ import secrets
 import signal
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from statistics import median
 from time import perf_counter_ns
 from types import FrameType
 
+from dotenv import load_dotenv
+
 from hashphere.compute import (
     ComputeBackendError,
     ComputeBackendSelectionError,
     ComputeBackendValidationError,
+    LocalComputeProfileCapabilities,
     MiningComputeBackend,
     builtin_compute_backend_registry,
     close_compute_backend,
@@ -28,9 +31,16 @@ from hashphere.compute import (
 )
 from hashphere.config import (
     DEFAULT_CUDA_DEVICE,
+    DEFAULT_CUDA_THREADS_PER_BLOCK,
     MAX_CUDA_DEVICE,
+    ComputeProfileError,
+    ComputeProfileOverrides,
+    ResolvedComputeProfile,
     Settings,
+    parse_compute_profile,
+    parse_compute_profile_overrides_from_env,
     parse_cuda_devices,
+    resolve_compute_profile,
 )
 from hashphere.mining import (
     MAX_LIVENESS_SECONDS,
@@ -114,7 +124,7 @@ _KNOWN_LOG_COMMANDS = (
 _USAGE = (
     "Usage: python -m hashphere "
     "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-    "stratum-mine,logs-summary,compute-benchmark} [options]"
+    "stratum-mine,logs-summary,compute-benchmark,profile-info} [options]"
 )
 
 type _PythonSignalHandler = Callable[[int, FrameType | None], object]
@@ -135,6 +145,15 @@ class _ComputeBenchmarkSeries:
     cleanup_ns: int
     total_backend_call_ns: int
     warmup_runs: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ProfileSelection:
+    """Optional CLI profile and explicit CLI compute controls."""
+
+    profile_name: str | None = None
+    overrides: ComputeProfileOverrides = ComputeProfileOverrides()
+    use_environment_profile: bool = False
 
 
 class _StopSignalScope:
@@ -547,7 +566,50 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected Hashphere command and return its process status."""
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "profile-info":
+        try:
+            selection = _parse_profile_info_arguments(arguments[1:])
+            resolved = _resolve_command_profile(selection, require_profile=True)
+        except (ComputeProfileError, ValueError) as exc:
+            print(f"Argument error: {exc}", file=sys.stderr)
+            print(_USAGE, file=sys.stderr)
+            return 2
+        if resolved is None:
+            raise RuntimeError("required profile resolution returned no profile")
+        _print_resolved_compute_profile(resolved)
+        return 0
     if arguments and arguments[0] == "compute-benchmark":
+        load_dotenv()
+        profile_requested = "--profile" in arguments[1:] or (
+            "--backend" not in arguments[1:] and os.getenv("HASHPHERE_COMPUTE_PROFILE") is not None
+        )
+        if profile_requested:
+            try:
+                (
+                    selection,
+                    start_nonce,
+                    stop_nonce,
+                    warmup_runs,
+                    repetitions,
+                ) = _parse_profiled_compute_benchmark_arguments(arguments[1:])
+                resolved = _resolve_command_profile(selection, require_profile=True)
+            except (ComputeProfileError, ValueError) as exc:
+                print(f"Argument error: {exc}", file=sys.stderr)
+                print(_USAGE, file=sys.stderr)
+                return 2
+            if resolved is None:
+                raise RuntimeError("required profile resolution returned no profile")
+            return _run_compute_benchmark(
+                resolved.backend_name,
+                resolved.worker_count,
+                resolved.cuda_device,
+                resolved.cuda_devices,
+                start_nonce,
+                stop_nonce,
+                warmup_runs,
+                repetitions,
+                resolved,
+            )
         try:
             (
                 backend_name,
@@ -633,9 +695,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if arguments and arguments[0] == "stratum-mine":
         try:
-            continuous_plan, reconnect_policy, log_file = _parse_continuous_mining_arguments(
-                arguments[1:]
-            )
+            (
+                continuous_plan,
+                reconnect_policy,
+                log_file,
+                profile_selection,
+            ) = _parse_profiled_continuous_mining_arguments(arguments[1:])
         except ValueError as exc:
             print(f"Argument error: {exc}", file=sys.stderr)
             print(_USAGE, file=sys.stderr)
@@ -647,6 +712,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 continuous_plan,
                 reconnect_policy,
                 events,
+                profile_selection,
             ),
             started_fields={
                 **(
@@ -675,16 +741,35 @@ def _run_compute_benchmark(
     stop_nonce: int,
     warmup_runs: int,
     repetitions: int,
+    profile: ResolvedComputeProfile | None = None,
 ) -> int:
     """Run one-shot or explicitly repeated offline synthetic benchmark ranges."""
 
     initialization_started_ns = perf_counter_ns()
     try:
-        if device_ordinals is None:
+        if profile is None and device_ordinals is None:
             backend = _select_benchmark_compute_backend(
                 backend_name,
                 worker_count,
                 device_ordinal,
+            )
+        elif profile is None:
+            backend = _select_benchmark_compute_backend(
+                backend_name,
+                worker_count,
+                device_ordinal,
+                device_ordinals,
+            )
+        elif device_ordinals is None:
+            backend = _select_benchmark_compute_backend(
+                backend_name,
+                worker_count,
+                device_ordinal,
+                threads_per_block=(
+                    profile.cuda_threads_per_block
+                    if profile is not None and profile.cuda_threads_per_block is not None
+                    else DEFAULT_CUDA_THREADS_PER_BLOCK
+                ),
             )
         else:
             backend = _select_benchmark_compute_backend(
@@ -692,6 +777,11 @@ def _run_compute_benchmark(
                 worker_count,
                 device_ordinal,
                 device_ordinals,
+                threads_per_block=(
+                    profile.cuda_threads_per_block
+                    if profile is not None and profile.cuda_threads_per_block is not None
+                    else DEFAULT_CUDA_THREADS_PER_BLOCK
+                ),
             )
     except (ComputeBackendSelectionError, ComputeBackendValidationError):
         print("Compute benchmark backend is unavailable or invalid.", file=sys.stderr)
@@ -743,6 +833,8 @@ def _run_compute_benchmark(
     if result is None:
         raise RuntimeError("compute benchmark completed without a result")
     if series is not None:
+        if profile is not None:
+            _print_benchmark_profile(profile)
         _print_compute_benchmark_series(
             backend,
             _ComputeBenchmarkSeries(
@@ -755,6 +847,8 @@ def _run_compute_benchmark(
             ),
         )
         return 0
+    if profile is not None:
+        _print_benchmark_profile(profile)
     _print_compute_benchmark(backend, result)
     return 0
 
@@ -764,6 +858,8 @@ def _select_benchmark_compute_backend(
     worker_count: int | None,
     device_ordinal: int | None,
     device_ordinals: tuple[int, ...] | None = None,
+    *,
+    threads_per_block: int = DEFAULT_CUDA_THREADS_PER_BLOCK,
 ) -> MiningComputeBackend:
     """Select one offline backend without loading runtime configuration."""
 
@@ -772,10 +868,30 @@ def _select_benchmark_compute_backend(
         worker_count=worker_count if worker_count is not None else 2,
         cuda_device=(device_ordinal if device_ordinal is not None else DEFAULT_CUDA_DEVICE),
         cuda_devices=device_ordinals if device_ordinals is not None else (DEFAULT_CUDA_DEVICE,),
+        cuda_threads_per_block=threads_per_block,
         initialize_cuda=backend_name == "cuda",
         initialize_cuda_multi=backend_name == "cuda-multi",
     )
     return select_compute_backend(backend_name, registry)
+
+
+def _print_benchmark_profile(profile: ResolvedComputeProfile) -> None:
+    """Label raw benchmark output with its fixed sanitized profile policy."""
+
+    print(f"Requested profile: {profile.requested_profile}")
+    print(f"Effective profile: {profile.effective_profile}")
+    print(f"Profile chunk size: {profile.chunk_size}")
+    print(
+        "CUDA threads per block: "
+        + (
+            str(profile.cuda_threads_per_block)
+            if profile.cuda_threads_per_block is not None
+            else "n/a"
+        )
+    )
+    print(f"Inter-range delay: {profile.inter_range_delay_seconds:g} seconds")
+    print(f"Resolution reason: {profile.resolution_reason}")
+    print("Rate semantics: raw compute rate; profile pacing is not applied")
 
 
 def _print_compute_benchmark(
@@ -898,6 +1014,13 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
         print("\nCompute backends:")
         for backend_name, count in summary.compute_backend_counts:
             print(f"  {backend_name}: {count}")
+
+    if summary.requested_profile_counts or summary.effective_profile_counts:
+        print("\nCompute profiles:")
+        for profile_name, count in summary.requested_profile_counts:
+            print(f"  requested {profile_name}: {count}")
+        for profile_name, count in summary.effective_profile_counts:
+            print(f"  effective {profile_name}: {count}")
 
     if summary.search_strategy_counts:
         print("\nSearch strategies:")
@@ -1327,6 +1450,7 @@ def _run_stratum_mine(
     plan: ContinuousMiningPlan,
     reconnect_policy: ReconnectPolicy,
     events: EventSink,
+    profile_selection: _ProfileSelection | None = None,
 ) -> int:
     """Run one explicitly enabled continuous Stratum mining session."""
 
@@ -1334,6 +1458,45 @@ def _run_stratum_mine(
     if settings is None:
         _emit_command_failed(events, "configuration", "ConfigurationOrOptInError")
         return 2
+    try:
+        resolved_profile = _resolve_command_profile(
+            profile_selection or _ProfileSelection(),
+            require_profile=False,
+        )
+    except (ComputeProfileError, ValueError) as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        _emit_command_failed(events, "configuration", _error_category(exc))
+        return 2
+    if resolved_profile is not None:
+        settings = replace(
+            settings,
+            compute_backend=resolved_profile.backend_name,
+            compute_profile=resolved_profile.effective_profile,
+            compute_workers=(resolved_profile.worker_count or settings.compute_workers),
+            cuda_device=(
+                resolved_profile.cuda_device
+                if resolved_profile.cuda_device is not None
+                else DEFAULT_CUDA_DEVICE
+            ),
+            cuda_devices=(
+                resolved_profile.cuda_devices
+                if resolved_profile.cuda_devices is not None
+                else (
+                    (resolved_profile.cuda_device,)
+                    if resolved_profile.cuda_device is not None
+                    else (DEFAULT_CUDA_DEVICE,)
+                )
+            ),
+            cuda_threads_per_block=(
+                resolved_profile.cuda_threads_per_block or DEFAULT_CUDA_THREADS_PER_BLOCK
+            ),
+        )
+        plan = replace(
+            plan,
+            chunk_size=resolved_profile.chunk_size,
+            inter_range_delay_seconds=resolved_profile.inter_range_delay_seconds,
+        )
+        _emit_compute_profile_resolved(events, resolved_profile)
     selection = _select_live_mining_components(settings, events)
     if selection is None:
         return 2
@@ -1349,6 +1512,7 @@ def _run_stratum_mine(
     status = 0
     pending_failure: BaseException | None = None
     cleanup_failure_reported = False
+    profile_wall_started_ns = perf_counter_ns()
     try:
         signal_scope.install()
         recovery = StratumSessionRecovery(
@@ -1488,6 +1652,14 @@ def _run_stratum_mine(
 
     completion_level = "WARNING" if outcome is ContinuousMiningOutcome.SHARE_REJECTED else "INFO"
     completion_fields: dict[str, EventValue] = {"outcome": outcome.value}
+    profile_wall_elapsed_ns: int | None = None
+    if resolved_profile is not None:
+        profile_wall_elapsed_ns = max(0, perf_counter_ns() - profile_wall_started_ns)
+        completion_fields["profile_wall_elapsed_ns"] = profile_wall_elapsed_ns
+        if result is not None and profile_wall_elapsed_ns > 0:
+            completion_fields["effective_hashes_per_second"] = (
+                result.total_hashes_checked * 1_000_000_000 / profile_wall_elapsed_ns
+            )
     if plan.max_server_silence_seconds is not None:
         completion_fields["max_server_silence_seconds"] = plan.max_server_silence_seconds
     if plan.max_job_age_seconds is not None:
@@ -1508,6 +1680,8 @@ def _run_stratum_mine(
         recovery.statistics if recovery is not None else StratumRecoveryStatistics(0, 0, 0, 0),
         outcome,
         result,
+        resolved_profile,
+        profile_wall_elapsed_ns,
     )
     return 0
 
@@ -1554,6 +1728,7 @@ def _select_configured_compute_backend(settings: Settings) -> MiningComputeBacke
         worker_count=settings.compute_workers,
         cuda_device=settings.cuda_device,
         cuda_devices=settings.cuda_devices,
+        cuda_threads_per_block=settings.cuda_threads_per_block,
         initialize_cuda=settings.compute_backend == "cuda",
         initialize_cuda_multi=settings.compute_backend == "cuda-multi",
     )
@@ -1729,6 +1904,196 @@ def _parse_compute_benchmark_arguments(
     )
 
 
+def _parse_profile_info_arguments(arguments: Sequence[str]) -> _ProfileSelection:
+    """Parse a side-effect-free profile inspection request."""
+
+    options = _parse_option_values(
+        arguments,
+        _PROFILE_OPTION_NAMES,
+        unsupported_message="unsupported profile-info argument",
+    )
+    return replace(_profile_selection_from_options(options), use_environment_profile=True)
+
+
+def _parse_profiled_compute_benchmark_arguments(
+    arguments: Sequence[str],
+) -> tuple[_ProfileSelection, int, int, int, int]:
+    """Parse an offline benchmark driven by one resolved profile."""
+
+    options = _parse_option_values(
+        arguments,
+        _PROFILE_OPTION_NAMES | {"--start-nonce", "--hash-count", "--warmup-runs", "--repetitions"},
+        unsupported_message="unsupported compute-benchmark argument",
+    )
+    if "--hash-count" not in options:
+        raise ValueError("--hash-count is required")
+    start_nonce = _parse_unpadded_decimal_option(
+        "--start-nonce",
+        options.get("--start-nonce", "0"),
+        minimum=0,
+        maximum=_MAX_NONCE,
+    )
+    hash_count = _parse_unpadded_decimal_option(
+        "--hash-count",
+        options["--hash-count"],
+        minimum=1,
+        maximum=_NONCE_LIMIT,
+    )
+    if start_nonce + hash_count > _NONCE_LIMIT:
+        raise ValueError("the requested benchmark range exceeds 2**32")
+    selection = _profile_selection_from_options(options)
+    if selection.profile_name is None:
+        selection = replace(selection, use_environment_profile=True)
+    if selection.profile_name == "custom" and selection.overrides.chunk_size is None:
+        selection = replace(
+            selection,
+            overrides=replace(selection.overrides, chunk_size=hash_count),
+        )
+    warmup_runs = _parse_unpadded_decimal_option(
+        "--warmup-runs",
+        options.get("--warmup-runs", "0"),
+        minimum=0,
+        maximum=100,
+    )
+    repetitions = _parse_unpadded_decimal_option(
+        "--repetitions",
+        options.get("--repetitions", "1"),
+        minimum=1,
+        maximum=100,
+    )
+    return selection, start_nonce, start_nonce + hash_count, warmup_runs, repetitions
+
+
+_PROFILE_OPTION_NAMES = {
+    "--profile",
+    "--backend",
+    "--workers",
+    "--device",
+    "--devices",
+    "--threads-per-block",
+    "--chunk-size",
+    "--inter-range-delay-seconds",
+}
+
+
+def _profile_selection_from_options(options: Mapping[str, str]) -> _ProfileSelection:
+    profile_text = options.get("--profile")
+    profile_name = parse_compute_profile(profile_text) if profile_text is not None else None
+    devices: tuple[int, ...] | None = None
+    if "--devices" in options:
+        try:
+            devices = parse_cuda_devices(options["--devices"])
+        except ValueError as exc:
+            raise ValueError("--devices must be a valid explicit CUDA device list") from exc
+    return _ProfileSelection(
+        profile_name=profile_name,
+        overrides=ComputeProfileOverrides(
+            backend_name=options.get("--backend"),
+            worker_count=(
+                _parse_unpadded_decimal_option(
+                    "--workers", options["--workers"], minimum=1, maximum=256
+                )
+                if "--workers" in options
+                else None
+            ),
+            cuda_device=(
+                _parse_unpadded_decimal_option(
+                    "--device", options["--device"], minimum=0, maximum=MAX_CUDA_DEVICE
+                )
+                if "--device" in options
+                else None
+            ),
+            cuda_devices=devices,
+            cuda_threads_per_block=(
+                _parse_unpadded_decimal_option(
+                    "--threads-per-block",
+                    options["--threads-per-block"],
+                    minimum=1,
+                    maximum=1024,
+                )
+                if "--threads-per-block" in options
+                else None
+            ),
+            chunk_size=(
+                _parse_unpadded_decimal_option(
+                    "--chunk-size", options["--chunk-size"], minimum=1, maximum=_NONCE_LIMIT
+                )
+                if "--chunk-size" in options
+                else None
+            ),
+            inter_range_delay_seconds=(
+                _parse_nonnegative_seconds_option(
+                    "--inter-range-delay-seconds",
+                    options["--inter-range-delay-seconds"],
+                    60.0,
+                )
+                if "--inter-range-delay-seconds" in options
+                else None
+            ),
+        ),
+    )
+
+
+def _resolve_command_profile(
+    selection: _ProfileSelection,
+    *,
+    require_profile: bool,
+) -> ResolvedComputeProfile | None:
+    """Apply CLI-over-environment precedence and resolve at command execution."""
+
+    load_dotenv()
+    environment_profile = (
+        os.getenv("HASHPHERE_COMPUTE_PROFILE") if selection.use_environment_profile else None
+    )
+    requested = selection.profile_name
+    if requested is None and environment_profile is not None:
+        requested = parse_compute_profile(environment_profile)
+    if requested is None:
+        if require_profile:
+            raise ValueError("--profile or HASHPHERE_COMPUTE_PROFILE is required")
+        if selection.overrides != ComputeProfileOverrides():
+            raise ValueError("profile compute controls require a selected profile")
+        return None
+    environment_overrides = parse_compute_profile_overrides_from_env()
+    effective_overrides = selection.overrides.merged_over(environment_overrides)
+    return resolve_compute_profile(
+        requested,
+        effective_overrides,
+        LocalComputeProfileCapabilities(),
+    )
+
+
+def _print_resolved_compute_profile(profile: ResolvedComputeProfile) -> None:
+    """Print only the sanitized, immutable result of local profile resolution."""
+
+    print("Hashphere compute profile resolved.")
+    print(f"Requested profile: {profile.requested_profile}")
+    print(f"Effective profile: {profile.effective_profile}")
+    print(f"Backend: {profile.backend_name}")
+    print(f"CPU workers: {profile.worker_count if profile.worker_count is not None else 'n/a'}")
+    print(f"CUDA device: {profile.cuda_device if profile.cuda_device is not None else 'n/a'}")
+    print(f"CUDA device count: {profile.device_count if profile.device_count is not None else 0}")
+    print(
+        "CUDA devices: "
+        + (
+            ",".join(str(ordinal) for ordinal in profile.cuda_devices)
+            if profile.cuda_devices is not None
+            else "n/a"
+        )
+    )
+    print(
+        "CUDA threads per block: "
+        + (
+            str(profile.cuda_threads_per_block)
+            if profile.cuda_threads_per_block is not None
+            else "n/a"
+        )
+    )
+    print(f"Chunk size: {profile.chunk_size}")
+    print(f"Inter-range delay: {profile.inter_range_delay_seconds:g} seconds")
+    print(f"Resolution reason: {profile.resolution_reason}")
+
+
 def _parse_mining_command_arguments(
     arguments: Sequence[str],
 ) -> tuple[int, int, str | None]:
@@ -1806,6 +2171,48 @@ def _parse_continuous_mining_arguments(
         _reconnect_policy_from_options(option_values),
         log_file,
     )
+
+
+def _parse_profiled_continuous_mining_arguments(
+    arguments: Sequence[str],
+) -> tuple[ContinuousMiningPlan, ReconnectPolicy, str | None, _ProfileSelection]:
+    """Parse legacy lifecycle controls plus optional profile compute policy."""
+
+    option_values = _parse_option_values(
+        arguments,
+        _PROFILE_OPTION_NAMES
+        | {
+            "--start-nonce",
+            "--max-chunks",
+            "--max-reconnect-attempts",
+            "--max-runtime-seconds",
+            "--max-server-silence-seconds",
+            "--max-job-age-seconds",
+            "--log-file",
+        },
+        unsupported_message="unsupported stratum-mine argument",
+    )
+    load_dotenv()
+    selection = _profile_selection_from_options(option_values)
+    has_environment_profile = (
+        "--chunk-size" not in option_values and os.getenv("HASHPHERE_COMPUTE_PROFILE") is not None
+    )
+    has_profile = selection.profile_name is not None or has_environment_profile
+    if not has_profile:
+        plan = _continuous_plan_from_options(option_values)
+        selection = _ProfileSelection()
+    else:
+        if selection.profile_name is None:
+            selection = replace(selection, use_environment_profile=True)
+        plan_options = dict(option_values)
+        plan_options.setdefault("--chunk-size", "1")
+        plan = _continuous_plan_from_options(plan_options)
+    log_file = (
+        _validate_log_file_path(option_values["--log-file"])
+        if "--log-file" in option_values
+        else None
+    )
+    return plan, _reconnect_policy_from_options(option_values), log_file, selection
 
 
 def _parse_continuous_mining_plan(arguments: Sequence[str]) -> ContinuousMiningPlan:
@@ -1922,6 +2329,27 @@ def _parse_positive_seconds_option(
         raise ValueError(f"{option_name} must be finite and between 0 and {int(maximum)}")
     converted = float(parsed)
     if converted == 0.0:
+        raise ValueError(f"{option_name} is too small")
+    return converted
+
+
+def _parse_nonnegative_seconds_option(
+    option_name: str,
+    value: str,
+    maximum: float,
+) -> float:
+    """Parse a finite decimal duration where exact zero disables pacing."""
+
+    if not value or value != value.strip():
+        raise ValueError(f"{option_name} must be a nonnegative decimal number")
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{option_name} must be a nonnegative decimal number") from exc
+    if not parsed.is_finite() or parsed < 0 or parsed > Decimal(str(maximum)):
+        raise ValueError(f"{option_name} must be finite and between 0 and {int(maximum)}")
+    converted = float(parsed)
+    if parsed > 0 and converted == 0.0:
         raise ValueError(f"{option_name} is too small")
     return converted
 
@@ -2242,6 +2670,33 @@ def _emit_compute_backend_selected(
     )
 
 
+def _emit_compute_profile_resolved(
+    events: EventSink,
+    profile: ResolvedComputeProfile,
+) -> None:
+    """Emit one sanitized policy decision before backend construction."""
+
+    fields: dict[str, EventValue] = {
+        "requested_profile": profile.requested_profile,
+        "effective_profile": profile.effective_profile,
+        "effective_backend": profile.backend_name,
+        "chunk_size": profile.chunk_size,
+        "inter_range_delay_seconds": profile.inter_range_delay_seconds,
+        "resolution_reason": profile.resolution_reason,
+    }
+    if profile.worker_count is not None:
+        fields["worker_count"] = profile.worker_count
+    if profile.cuda_device is not None:
+        fields["device_count"] = 1
+        fields["device_ordinal"] = profile.cuda_device
+    if profile.cuda_devices is not None:
+        fields["device_count"] = len(profile.cuda_devices)
+        fields["device_ordinals"] = list(profile.cuda_devices)
+    if profile.cuda_threads_per_block is not None:
+        fields["threads_per_block"] = profile.cuda_threads_per_block
+    events.emit("compute_profile_resolved", fields=fields)
+
+
 def _emit_search_strategy_selected(
     events: EventSink,
     strategy: MiningSearchStrategy,
@@ -2506,6 +2961,8 @@ def _print_continuous_mining_outcome(
     recovery_statistics: StratumRecoveryStatistics,
     outcome: ContinuousMiningOutcome,
     result: ContinuousMiningResult | None,
+    profile: ResolvedComputeProfile | None = None,
+    profile_wall_elapsed_ns: int | None = None,
 ) -> None:
     """Print a sanitized aggregate summary of one continuous session."""
 
@@ -2513,6 +2970,9 @@ def _print_continuous_mining_outcome(
     print(f"Endpoint: {settings.stratum_host}:{settings.stratum_port}")
     print(f"Username: {_mask_username(settings.stratum_username)}")
     print(f"Compute backend: {backend_name}")
+    if profile is not None:
+        print(f"Compute profile: {profile.effective_profile}")
+        print(f"Profile resolution: {profile.resolution_reason}")
     if worker_count is not None:
         print(f"Compute workers: {worker_count}")
     print(f"Search strategy: {strategy_name}")
@@ -2528,6 +2988,8 @@ def _print_continuous_mining_outcome(
     )
     print(f"Start nonce: {plan.start_nonce}")
     print(f"Chunk size: {plan.chunk_size}")
+    if profile is not None:
+        print(f"Inter-range delay seconds: {plan.inter_range_delay_seconds:g}")
     print(f"Maximum chunks: {plan.max_chunks if plan.max_chunks is not None else 'unlimited'}")
     print(
         "Maximum runtime seconds: "
@@ -2568,6 +3030,22 @@ def _print_continuous_mining_outcome(
         print("Hashes per second: unavailable")
     else:
         print(f"Hashes per second: {rate:.2f}")
+    if profile is not None:
+        print(
+            "Profile wall-clock elapsed: "
+            f"{profile_wall_elapsed_ns if profile_wall_elapsed_ns is not None else 0} ns"
+        )
+        effective_rate = (
+            result.total_hashes_checked * 1_000_000_000 / profile_wall_elapsed_ns
+            if result is not None
+            and profile_wall_elapsed_ns is not None
+            and profile_wall_elapsed_ns > 0
+            else None
+        )
+        print(
+            "Effective hashes per wall-clock second: "
+            + ("unavailable" if effective_rate is None else f"{effective_rate:.2f}")
+        )
 
     if result is not None and result.match is not None:
         match = result.match

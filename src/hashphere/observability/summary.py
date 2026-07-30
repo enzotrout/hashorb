@@ -43,6 +43,8 @@ class LogSummary:
     last_timestamp: str | None
     command_counts: tuple[tuple[str, int], ...]
     compute_backend_counts: tuple[tuple[str, int], ...]
+    requested_profile_counts: tuple[tuple[str, int], ...]
+    effective_profile_counts: tuple[tuple[str, int], ...]
     search_strategy_counts: tuple[tuple[str, int], ...]
     completion_outcome_counts: tuple[tuple[str, int], ...]
     difficulty_event_count: int
@@ -92,6 +94,8 @@ class _Accumulator:
     latest: datetime | None = None
     outcome_counts: Counter[str] = field(default_factory=Counter)
     compute_backend_counts: Counter[str] = field(default_factory=Counter)
+    requested_profile_counts: Counter[str] = field(default_factory=Counter)
+    effective_profile_counts: Counter[str] = field(default_factory=Counter)
     search_strategy_counts: Counter[str] = field(default_factory=Counter)
     failure_counts: Counter[tuple[str, str]] = field(default_factory=Counter)
     difficulty_event_count: int = 0
@@ -346,6 +350,24 @@ def _aggregate_known_event(
             if tuple(sorted(set(parsed_ordinals))) != parsed_ordinals:
                 raise _RecordValidationError("device_ordinals must be unique and ascending")
         accumulator.compute_backend_counts[backend_name] += 1
+    elif event == "compute_profile_resolved":
+        requested_profile = _nonblank_string(
+            _required(record, "requested_profile"), "requested_profile"
+        )
+        effective_profile = _nonblank_string(
+            _required(record, "effective_profile"), "effective_profile"
+        )
+        _nonblank_string(_required(record, "effective_backend"), "effective_backend")
+        _positive_int(_required(record, "chunk_size"), "chunk_size")
+        delay = _nonnegative_number(
+            _required(record, "inter_range_delay_seconds"),
+            "inter_range_delay_seconds",
+        )
+        if float(delay) > 60:
+            raise _RecordValidationError("inter_range_delay_seconds must not exceed 60")
+        _nonblank_string(_required(record, "resolution_reason"), "resolution_reason")
+        accumulator.requested_profile_counts[requested_profile] += 1
+        accumulator.effective_profile_counts[effective_profile] += 1
     elif event == "search_strategy_selected":
         strategy_name = _nonblank_string(
             _required(record, "strategy_name"),
@@ -570,6 +592,8 @@ def _build_summary(accumulator: _Accumulator) -> LogSummary:
         last_timestamp=_format_timestamp(accumulator.latest),
         command_counts=tuple(sorted(command_counts.items())),
         compute_backend_counts=tuple(sorted(accumulator.compute_backend_counts.items())),
+        requested_profile_counts=tuple(sorted(accumulator.requested_profile_counts.items())),
+        effective_profile_counts=tuple(sorted(accumulator.effective_profile_counts.items())),
         search_strategy_counts=tuple(sorted(accumulator.search_strategy_counts.items())),
         completion_outcome_counts=tuple(sorted(accumulator.outcome_counts.items())),
         difficulty_event_count=accumulator.difficulty_event_count,
