@@ -3,6 +3,8 @@
 Hashphere is an experimental Python Bitcoin mining project. Live operations are
 explicitly opt-in and include Stratum inspection, bounded mining, and a
 synchronous continuous lifecycle that searches one nonce chunk at a time.
+It also has a separate Bitcoin Core true-solo path that builds, independently
+checks, proposes, and submits a complete block through a user-operated node.
 Continuous mining now expands deterministic Bitcoin work space after a
 nonce boundary and recovers fresh authorized work after single-endpoint
 Stratum connection loss. Mining commands select one compute backend per
@@ -178,6 +180,78 @@ HASHPHERE_SEARCH_STRATEGY=orbiting-bit
 
 See [`docs/09-orbiting-bit.md`](docs/09-orbiting-bit.md) for the accessible
 algorithm and coverage proof.
+
+## Bitcoin Core true solo
+
+**What:** `bitcoin-core-check` is a read-only readiness boundary and
+`solo-mine` is a separate, bounded complete-block mining boundary. Neither
+command loads Stratum settings or opens a Stratum socket.
+
+**Why:** Pool jobs own coinbase and submission policy. True solo must instead
+obtain one strict `getblocktemplate` from the operator's node, construct the
+BIP34/SegWit coinbase and merkle tree, search only the network target, validate
+the complete block in proposal mode, and call `submitblock` once.
+
+**Plain talk:** Your node supplies the current puzzle. Hashphere builds the
+whole block, searches it, and returns a winner to that same node without a
+pool in the middle.
+
+Sensitive RPC and payout settings are environment-only. The endpoint defaults
+to loopback (`127.0.0.1:8332`); there are no default credentials or payout
+destination. Configure either the explicit user/password pair or one explicit
+cookie path, never both. Cookie contents, credentials, addresses, scripts,
+templates, headers, targets, nonce material, transactions, and serialized
+blocks are excluded from console and JSONL output. Ordinary Bitcoin Core RPC
+here is HTTP, not TLS, and should remain on a trusted local networking boundary;
+a remote host is possible only through explicit operator configuration.
+
+```dotenv
+HASHPHERE_BITCOIN_RPC_HOST=127.0.0.1
+HASHPHERE_BITCOIN_RPC_PORT=8332
+HASHPHERE_BITCOIN_RPC_USER=YOUR_RPC_USER
+HASHPHERE_BITCOIN_RPC_PASSWORD=YOUR_RPC_PASSWORD
+HASHPHERE_SOLO_PAYOUT_ADDRESS=YOUR_ADDRESS_FOR_THE_CONNECTED_CHAIN
+```
+
+Cookie authentication replaces both user/password lines:
+
+```dotenv
+HASHPHERE_BITCOIN_RPC_COOKIE_FILE=EXPLICIT_COOKIE_PATH
+```
+
+The general, non-wallet `validateaddress` RPC supplies the exact payout
+`scriptPubKey` and enforces the connected chain's address rules. Hashphere does
+not create, load, modify, or import into a wallet. The readiness command has a
+dedicated opt-in and never mines, proposes, or submits:
+
+```bash
+HASHPHERE_ENABLE_BITCOIN_RPC_CHECK=1 \
+uv run hashphere bitcoin-core-check
+```
+
+Mining requires two distinct opt-ins and at least one finite chunk or runtime
+limit. Proposal validation is mandatory and fail-closed; an unavailable or
+rejected proposal prevents submission. The example below is intentionally
+short but can submit a valid block, so review the connected chain first:
+
+```bash
+HASHPHERE_ENABLE_TRUE_SOLO=1 \
+HASHPHERE_ENABLE_BLOCK_SUBMISSION=1 \
+uv run hashphere solo-mine \
+  --profile auto \
+  --max-chunks 1 \
+  --max-runtime-seconds 30 \
+  --event-log logs/solo.jsonl
+```
+
+Lite, Auto, Max, Custom, Python, native, native-parallel, CUDA, cuda-multi,
+sequential, orbiting-bit, chunk limits, runtime limits, SIGINT, and SIGTERM all
+retain their existing boundaries. Template polling is bounded and defaults to
+30 seconds; candidates force a freshness check before proposal and another
+after an accepted proposal. Long polling is deferred. No mainnet submission
+was executed during this milestone. The deterministic isolated regtest gate is
+implemented but skipped when a compatible existing `bitcoind` is unavailable.
+See [`docs/14-bitcoin-core-true-solo.md`](docs/14-bitcoin-core-true-solo.md).
 
 ## Choose a performance profile
 

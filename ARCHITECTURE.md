@@ -119,6 +119,66 @@ small injectable boundaries for deterministic tests.
 
 ---
 
+# Bitcoin Core True-Solo Boundary
+
+True solo is not a Stratum mode. `hashphere.bitcoin.rpc` owns one allowlisted,
+synchronous JSON-RPC-over-HTTP client for `getblockchaininfo`,
+`validateaddress`, `getblocktemplate` proposal/template modes, and
+`submitblock`. It has deterministic request identifiers, one-shot bounded HTTP
+requests, injected transport tests, exact authentication-method exclusivity,
+strict response envelopes, and sanitized error categories. No generic RPC CLI,
+connection pool, retry loop, package-import connection, or TLS claim exists.
+
+`hashphere.bitcoin.template` and `transaction` strictly parse the exact modern
+template subset. They independently derive txid, wtxid, stripped size, and
+weight from preserved transaction bytes; verify compact bits against the
+optional numeric target; preserve ordering and dependencies; reject duplicates
+and unsupported rules; and verify Core's default SegWit commitment from the
+witness merkle tree and zero coinbase reserved value. A short digest over all
+effective template fields is the only template identity exposed.
+
+`hashphere.bitcoin.coinbase` owns the version-2, one-input, two-output SegWit
+coinbase. It encodes BIP34 height minimally, appends Core's auxiliary flags, a
+fixed neutral Hashsphere marker, and an internal bounded 64-bit extra nonce.
+The exact template coinbase value goes to the Core-validated payout script;
+the only other output is the zero-valued witness commitment. No wallet, fee
+selection, alternate spendable output, or configurable arbitrary message is
+involved.
+
+`hashphere.bitcoin.block` computes the ordinary txid merkle tree with coinbase
+first and odd-node duplication, serializes the exact Core-display header into
+Bitcoin internal byte order, and adapts its 76-byte prefix to the existing
+`PreparedMiningWork` backend contract with network target equal to the backend's
+legacy secondary target slot. This compatibility detail is private; the solo
+model has no pool share, difficulty, or public Stratum extra-nonce concept.
+Complete-block assembly reparses every transaction, recomputes the header
+merkle root, and checks template size and weight limits before RPC use.
+
+`hashphere.bitcoin.solo` owns one finite synchronous lifecycle. A selected
+existing strategy schedules parent ranges and one selected existing backend
+hashes them. Exhausting the nonce domain advances the coinbase extra nonce;
+exact wrap may roll time only when the template permits it, only up to local
+wall time, and only within a configured 7,200-second bound. Safe progression
+exhaustion requires a fresh template and otherwise terminates. Replacement
+resets progression and invalidates old work without storing nonce history.
+
+Normal polling is configurable, bounded, and never busy; long polling is
+deferred. A reported backend match is reconstructed and double-hashed in
+Python. The lifecycle then forces template freshness, constructs and checks the
+complete block, emits one candidate, requires Core proposal acceptance, forces
+freshness again, and calls `submitblock` once. Stop, runtime expiry, replacement,
+or RPC invalidation suppresses a candidate before submission. RPC and compute
+cleanup remain command-owned, while one result owns the terminal outcome.
+
+`bitcoin-core-check` and `solo-mine` are separate CLI branches. The former has
+its own read-only opt-in. The latter requires independent exact mining and
+submission opt-ins plus an explicit finite chunk or runtime boundary. RPC
+secrets and payout addresses are environment-only; compute/profile controls
+remain CLI-capable. Neither branch imports, configures, connects, reconnects,
+or submits to Stratum.
+
+---
+
 # Search Strategy Boundary
 
 `hashphere.mining.strategy` owns the deterministic policy for selecting the
@@ -498,7 +558,7 @@ The long-term objective is to build a professional, well-engineered Bitcoin mini
 
 The architecture should support future capabilities including:
 
-- Solo mining
+- Additional Bitcoin Core solo policies such as bounded long polling
 - Stratum pool mining
 - Multiple Bitcoin RPC providers
 - GPU acceleration

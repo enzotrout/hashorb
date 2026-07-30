@@ -66,6 +66,9 @@ Progress:
 - ✅ User-local Linux/macOS and Windows installation boundaries
 - ✅ Non-root Docker CPU image
 - ✅ Linux/macOS/Windows CPU packaging CI architecture
+- ✅ Strict Bitcoin Core RPC, template, coinbase, SegWit, and complete-block construction
+- ✅ Bounded Bitcoin Core true-solo lifecycle, readiness command, proposal, and submission
+- ✅ Deterministic fake-RPC suite and opt-in isolated regtest gate
 - ⬜ Pool failover
 
 ---
@@ -87,7 +90,7 @@ Planned:
 
 Progress:
 
-- ⬜ Bitcoin Core block-template retrieval
+- ✅ Bitcoin Core block-template retrieval
 - ✅ Stratum mining-job ingestion
 - ✅ Coinbase creation
 - ✅ Merkle root calculation
@@ -112,7 +115,7 @@ Progress:
 - ✅ DGX Spark CUDA SHA-256 performance tuning and repeated offline benchmark
 - ✅ Deterministic explicit multi-CUDA orchestration architecture
 - ⬜ Pool failover
-- ⬜ Direct block submission
+- ✅ Direct block submission through the separate Bitcoin Core true-solo boundary
 - ⬜ Persistent best hash
 
 ---
@@ -152,11 +155,11 @@ Over 80% of the codebase should be shared across all platforms.
 
 Planned:
 
-- Stratum pool mining
-- Solo mining
-- GPU acceleration
-- NVIDIA DGX Spark support
-- Benchmark mode
+- ✅ Stratum pool mining
+- ✅ Bitcoin Core true-solo mining
+- ✅ GPU acceleration
+- ✅ NVIDIA DGX Spark support
+- ✅ Benchmark mode
 - REST API
 - Web dashboard
 - Remote monitoring
@@ -178,7 +181,7 @@ Planned:
 
 # Current Milestone
 
-**Cross-Platform Packaging Architecture — Implemented on Linux ARM64**
+**Bitcoin Core True-Solo Architecture — Implemented, Regtest Gate Pending Locally**
 
 Objective:
 
@@ -212,7 +215,7 @@ orbiting-bit orders remain complete. Conservative suspend-gap inference remains
 deferred because platform clocks differ and scheduler delay is not proof of
 suspend. Real two-device validation remains pending, followed by executed
 macOS and Windows packaging runners,
-broader pool support and Bitcoin Core true solo mining, distributed workers and
+broader pool support, distributed workers and
 adaptive tuning, then Prometheus/Grafana-compatible metrics. Pool failover
 remains a separate recovery milestone. Fibonacci-bounce, random, strided,
 partitioned-global, and probabilistic search orders remain a later experimental
@@ -226,6 +229,8 @@ Continue with:
 
 **Run the new CPU packaging workflow on macOS and Windows runners, select a
 project license before publication, and run the explicit two-device hardware
-gate only on a host with at least two real CUDA devices. Keep Windows CUDA,
-portable CUDA wheels, Docker NVIDIA, thermal feedback, and runtime profile
-switching deferred until their prerequisites are cleanly validated.**
+gate only on a host with at least two real CUDA devices. Run the isolated
+true-solo regtest gate when a compatible existing `bitcoind` is available.
+Keep Windows CUDA, portable CUDA wheels, Docker NVIDIA, long polling, thermal
+feedback, and runtime profile switching deferred until their prerequisites are
+cleanly validated.**
