@@ -40,8 +40,8 @@ def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize(
     ("raw_name", "expected"),
     [
-        ("MacBook-Air", "macbook-air"),
-        ("Spark 2B09.local", "spark-2b09-local"),
+        ("Example-Laptop", "example-laptop"),
+        ("Example Node.local", "example-node-local"),
         ("  worker_01  ", "worker_01"),
         ("worker@home!", "worker-home"),
         ("---", "hashphere"),
