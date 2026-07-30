@@ -25,6 +25,9 @@ def test_cpu_ci_covers_three_os_families_and_release_gates() -> None:
     ):
         assert command in text
     assert "contents: read" in text
+    assert "if: runner.os == 'Windows'" in text
+    assert "shell: pwsh" in text
+    assert ".\\scripts\\install-windows.ps1 -Action install -DryRun" in text
 
 
 def test_ci_is_cpu_only_private_and_never_runs_live_commands() -> None:

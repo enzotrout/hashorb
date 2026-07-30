@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -15,6 +16,7 @@ import pytest
 from hashphere import __main__ as cli_module
 
 _ROOT = Path(__file__).resolve().parents[1]
+_UNIX_INSTALLER_SUPPORTED = sys.platform.startswith("linux") or sys.platform == "darwin"
 
 
 def test_release_metadata_has_one_console_entry_and_honest_python_range() -> None:
@@ -33,16 +35,27 @@ def test_console_entry_forwards_arguments(monkeypatch: pytest.MonkeyPatch) -> No
     assert cli_module.main() == 0
 
 
-def test_unix_installer_is_cpu_only_strict_and_has_a_dry_run() -> None:
+def test_unix_installer_is_cpu_only_strict_and_platform_guarded() -> None:
     script = _ROOT / "scripts" / "install-unix.sh"
     text = script.read_text(encoding="utf-8")
 
     assert "set -euo pipefail" in text
+    assert 'case "$(uname -s)"' in text
+    assert "Linux|Darwin" in text
+    assert "This installer supports Linux and macOS only." in text
     assert "--no-python-downloads" in text
     assert "uv tool install" in text
     assert "sudo" not in text
     assert "curl" not in text
     assert "HASHPHERE_BUILD_CUDA" not in text
+
+
+@pytest.mark.skipif(
+    not _UNIX_INSTALLER_SUPPORTED,
+    reason="the Unix installer is supported only on Linux and macOS",
+)
+def test_unix_installer_dry_run_passes_on_supported_platform() -> None:
+    script = _ROOT / "scripts" / "install-unix.sh"
     result = subprocess.run(
         ["bash", str(script), "install", "--dry-run"],
         cwd=_ROOT,
@@ -54,6 +67,7 @@ def test_unix_installer_is_cpu_only_strict_and_has_a_dry_run() -> None:
     assert result.returncode == 0
     assert "uv tool install" in result.stdout
     assert "hashsphere doctor" in result.stdout
+    assert "HASHPHERE_" not in result.stdout
     assert result.stderr == ""
 
 
@@ -67,6 +81,101 @@ def test_windows_installer_is_user_local_utf8_and_cpu_only() -> None:
     assert "Set-ExecutionPolicy" not in text
     assert "sudo" not in text
     assert "HASHPHERE_BUILD_CUDA" not in text
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="the PowerShell installer executes only on Windows",
+)
+def test_windows_powershell_installer_dry_run_passes_on_windows() -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.fail("Windows packaging CI requires PowerShell")
+    script = _ROOT / "scripts" / "install-windows.ps1"
+
+    result = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-File",
+            str(script),
+            "-Action",
+            "install",
+            "-DryRun",
+        ],
+        cwd=_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 0
+    assert "uv tool install" in result.stdout
+    assert "hashsphere doctor" in result.stdout
+    assert "HASHPHERE_" not in result.stdout
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize("reported_platform", ["MINGW64_NT", "MSYS_NT", "CYGWIN_NT"])
+@pytest.mark.skipif(
+    not _UNIX_INSTALLER_SUPPORTED,
+    reason="the Unix guard harness requires a supported POSIX host",
+)
+def test_unix_installer_rejects_windows_compatibility_shells_even_for_dry_run(
+    reported_platform: str,
+    tmp_path: Path,
+) -> None:
+    fake_uname = tmp_path / "uname"
+    fake_uname.write_text(
+        f"#!/usr/bin/env sh\nprintf '%s\\n' '{reported_platform}'\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    fake_uname.chmod(0o755)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{tmp_path}{os.pathsep}{environment['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(_ROOT / "scripts" / "install-unix.sh"), "install", "--dry-run"],
+        cwd=_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "This installer supports Linux and macOS only.\n"
+
+
+def test_installer_documentation_matches_platform_boundaries() -> None:
+    linux = (_ROOT / "platform" / "linux" / "README.md").read_text(encoding="utf-8")
+    macos = (_ROOT / "platform" / "macos" / "README.md").read_text(encoding="utf-8")
+    windows = (_ROOT / "platform" / "windows" / "README.md").read_text(encoding="utf-8")
+    installation = (_ROOT / "docs" / "13-installation-and-packaging.md").read_text(encoding="utf-8")
+
+    assert "scripts/install-unix.sh" in linux
+    assert "scripts/install-unix.sh" in macos
+    assert "scripts/install-windows.ps1" in windows
+    assert "scripts/install-unix.sh" not in windows
+    assert "The same Unix script handles Darwin." in installation
+    assert "Use a normal, non-administrator PowerShell session" in installation
+
+
+def test_installers_never_start_mining_or_reference_configuration_values() -> None:
+    installers = (
+        _ROOT / "scripts" / "install-unix.sh",
+        _ROOT / "scripts" / "install-windows.ps1",
+    )
+
+    for installer in installers:
+        text = installer.read_text(encoding="utf-8")
+        assert "stratum-" not in text
+        assert "HASHPHERE_" not in text
+        assert ".env" not in text
 
 
 def test_windows_style_log_path_remains_a_single_cli_value() -> None:

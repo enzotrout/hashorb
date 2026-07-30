@@ -28,6 +28,10 @@ jobs:
         run: uv sync --locked --no-python-downloads
       - name: Test shared CPU core
         run: uv run pytest -q
+      - name: Smoke Windows installer dry-run
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\install-windows.ps1 -Action install -DryRun
       - name: Check source quality
         run: |
           uv run ruff check .
