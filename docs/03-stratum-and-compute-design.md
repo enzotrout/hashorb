@@ -39,9 +39,8 @@ hostname after sanitizing it.
 
 Examples:
 
-    bc1q...example.macbook-air
-    bc1q...example.spark-2b09
-    bc1q...example.windows-pc
+    <bitcoin-address>.worker-example-01
+    <bitcoin-address>.worker-example-02
 
 A worker name may also be explicitly configured. This is useful for
 Docker containers whose generated hostnames may not be stable.

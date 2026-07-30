@@ -27,14 +27,14 @@ The following commands should succeed on every developer workstation:
 
 ```bash
 uv run ruff check .
-uv run mypy tests
-uv run pytest
+uv run ruff format --check .
+uv run mypy src
+uv run pytest -q
 uv lock --check
 ```
 
 ### Resource Strategy
 
-The MacBook serves as the primary development workstation.
-
-Large AI models, CUDA development, GPU benchmarking, and future model-assisted
-tasks should execute on the DGX Spark.
+CPU development and packaging should remain reproducible on Linux, macOS, and
+Windows CI runners. CUDA development and GPU benchmarking require an explicitly
+configured NVIDIA Linux host; they are not part of the portable CPU gate.

@@ -4,7 +4,7 @@
 
 Hashphere uses an isolated and reproducible Python environment.
 
-The project does **not** install dependencies into the macOS system Python or into the older miner virtual environment.
+The project does **not** install dependencies into a platform system Python.
 
 ---
 
@@ -20,7 +20,8 @@ The project does **not** install dependencies into the macOS system Python or in
 
 ## Installation
 
-Install uv (macOS):
+Install uv separately using a method you have reviewed. For example, on macOS
+with an existing Homebrew installation:
 
 ```bash
 brew install uv
@@ -69,7 +70,7 @@ uv run ruff check .
 Run mypy:
 
 ```bash
-uv run mypy tests
+uv run mypy src
 ```
 
 Run pytest:
@@ -99,16 +100,10 @@ uv lock --check
 
 ## Environment Separation
 
-Legacy experimental miner:
-
-```text
-~/venvs/miner
-```
-
 Hashphere environment:
 
 ```text
-~/Development/Hashphere/.venv
+<repository>/.venv
 ```
 
 The virtual environment is **never committed to Git**.
@@ -124,8 +119,9 @@ These files allow any machine to recreate the exact development environment.
 
 ## Current Validation
 
-- Python 3.13.7
-- Ruff ✔
-- mypy ✔
-- pytest ✔ (3 tests passed)
-- uv lock ✔
+- Python 3.13 is the only declared interpreter line.
+- Linux ARM64 Spark development and clean-install gates are current.
+- Apple Silicon native builds were exercised previously, but the packaging
+  changes on the current HEAD still require the macOS CI runner.
+- Windows remains CI-configured and statically reviewed until its runner gate
+  executes.

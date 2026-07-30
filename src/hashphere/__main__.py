@@ -124,7 +124,7 @@ _KNOWN_LOG_COMMANDS = (
     "stratum-mine",
 )
 _USAGE = (
-    "Usage: python -m hashphere "
+    "Usage: hashphere "
     "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
     "stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} [options]"
 )

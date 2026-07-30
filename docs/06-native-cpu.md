@@ -129,12 +129,13 @@ The current source build and strict warning check have been validated on Apple
 Silicon with Apple Clang. Intel macOS follows the same CPython extension model
 but requires its own CI build and wheel validation.
 
-### Linux and Docker Direction
+### Linux and Docker
 
 Linux source builds use GCC or Clang plus the matching Python development
-headers. Docker images should build in a compiler stage and copy the installed
-wheel or environment into the runtime stage. Linux x86-64 and ARM64 wheels are
-planned; manylinux policy and CI runners remain deferred.
+headers. The CPU Dockerfile builds in a compiler stage and installs the wheel
+into a non-root, compiler-free runtime stage. The Linux CI job builds and
+clean-smokes a runner-local wheel; release tags, manylinux policy, and broader
+architecture wheels remain deferred.
 
 ### Windows Direction
 
@@ -206,10 +207,11 @@ range accounting, or failure isolation.
 
 ## Wheel Strategy
 
-Publishing wheels is deferred. The future CI matrix should build and test each
-wheel on macOS ARM64 and x86-64, Windows x86-64, and Linux x86-64 and ARM64,
-then run parity tests against the installed artifact. Python-only artifacts or
-source installation must also be tested with the extension unavailable.
+Publishing wheels is deferred. The current CI matrix builds and clean-smokes
+one native wheel on each hosted Linux, macOS, and Windows runner. Compiler
+availability is optional, so Python operation must still pass when the native
+extension is absent. Architecture-specific release-wheel breadth and signing
+remain future release work.
 
 The sequential and orbiting-bit strategies remain independent of this native
 implementation. The optional CUDA backend and its explicit device selection

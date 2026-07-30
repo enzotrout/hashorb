@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -114,3 +115,43 @@ def test_distribution_verifier_help_is_utf8_and_offline() -> None:
     assert result.returncode == 0
     assert "Inspect CPU distribution archives" in result.stdout
     assert result.stderr == ""
+
+
+def test_environment_template_uses_one_nonconflicting_configuration_vocabulary() -> None:
+    text = (_ROOT / ".env.example").read_text(encoding="utf-8")
+    active_names = {
+        line.partition("=")[0]
+        for line in text.splitlines()
+        if line and not line.startswith("#") and "=" in line
+    }
+
+    assert active_names == {
+        "HASHPHERE_BITCOIN_ADDRESS",
+        "HASHPHERE_SEARCH_STRATEGY",
+        "HASHPHERE_STRATUM_HOST",
+        "HASHPHERE_STRATUM_PASSWORD",
+        "HASHPHERE_STRATUM_PORT",
+        "HASHPHERE_WORKER_NAME",
+    }
+    assert "HASHPHERE_COMPUTE_PROFILE=custom" in text
+    assert "Lifecycle limits, liveness thresholds, reconnect policy" in text
+    assert "YOUR_BITCOIN_ADDRESS" in text
+    assert len(re.findall(r"^HASHPHERE_COMPUTE_PROFILE=", text, flags=re.MULTILINE)) == 0
+
+
+def test_platform_directories_contain_no_miner_copy() -> None:
+    files = [path for path in (_ROOT / "platform").rglob("*") if path.is_file()]
+
+    assert files
+    assert {path.suffix for path in files} == {".md"}
+
+
+def test_distribution_guidance_and_scripts_contain_no_personal_paths() -> None:
+    roots = (_ROOT / "docs", _ROOT / "platform", _ROOT / "scripts")
+    markers = ("/" + "home" + "/", "\\" + "Users" + "\\", "C:/" + "Users" + "/")
+
+    for root in roots:
+        for path in root.rglob("*"):
+            if path.is_file() and path.suffix in {".md", ".ps1", ".py", ".sh"}:
+                text = path.read_text(encoding="utf-8")
+                assert not any(marker in text for marker in markers), path.name

@@ -17,6 +17,53 @@ and selected `cuda` correctness backend can search either strategy's ordinary
 parent ranges on one NVIDIA device, with every reported candidate verified
 again by the Python correctness primitives.
 
+## Install and diagnose
+
+Hashphere currently requires CPython 3.13. Normal installation is CPU-only and
+never invokes `nvcc`. From a reviewed checkout, Linux and macOS can use the
+shared user-local installer:
+
+```bash
+scripts/install-unix.sh install
+hashsphere doctor
+```
+
+Windows uses the PowerShell boundary without administrator access, PATH edits,
+or execution-policy changes:
+
+```powershell
+& .\scripts\install-windows.ps1 install
+hashsphere doctor
+```
+
+Both scripts require uv and an existing Python 3.13 installation; automatic
+Python downloads are disabled. Use `upgrade` in place of `install`, or
+`uninstall` to remove the uv tool. Run Hashsphere from the directory containing
+your `.env`; relative log paths are resolved from that working directory.
+
+`hashsphere doctor` is offline by default. It reports sanitized package,
+platform, backend, profile, configuration-presence, and log-directory readiness
+without loading Stratum settings, connecting to a pool, showing paths, or
+probing CUDA hardware unless explicitly requested.
+
+Build and inspect the CPU container with:
+
+```bash
+docker build -t hashphere:cpu .
+docker run --rm hashphere:cpu
+docker run --rm hashphere:cpu profile-info --profile auto
+docker run --rm hashphere:cpu compute-benchmark --backend python --hash-count 100000
+```
+
+The image starts with doctor rather than mining, runs as a non-root user, and
+expects JSONL logs under `/app/logs`. NVIDIA-container packaging is deferred;
+the host-local Linux CUDA build remains the validated CUDA tier. macOS and
+Windows CPU gates are defined in CI, but this Linux ARM64 milestone did not
+execute those remote runners. See
+[`docs/13-installation-and-packaging.md`](docs/13-installation-and-packaging.md)
+for exact platform boundaries, Docker live-operation examples, upgrades,
+uninstall, signals, privacy, and validation status.
+
 ## Configure the environment
 
 Copy the example configuration and edit the new `.env` file:

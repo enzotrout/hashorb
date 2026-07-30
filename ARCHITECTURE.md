@@ -2,12 +2,15 @@
 
 # Overview
 
-Hashphere is an open source Bitcoin mining project designed to run across multiple platforms.
+Hashphere is an experimental Bitcoin mining project designed around one shared,
+cross-platform core. A license has not yet been selected, so release publication
+and claims of open-source licensing remain blocked.
 
 The goal is for nearly all mining logic to be shared across:
 
 - macOS
 - Windows
+- Linux
 - Docker
 - Future platforms such as NVIDIA DGX Spark
 
@@ -23,19 +26,14 @@ Contains the reusable Hashphere Python package.
 
 The project follows the Python `src` layout to clearly separate the reusable package from repository tooling and to prevent accidental imports from the project root.
 
-Major packages:
+Current packages:
 
 - `compute`
 - `config`
-- `core`
 - `crypto`
 - `mining`
 - `network`
 - `observability`
-- `protocol`
-- `rpc`
-- `telemetry`
-- `utils`
 
 Each package has a single, well-defined responsibility and should remain as independent as practical.
 
@@ -46,11 +44,31 @@ Contains platform-specific launchers, packaging, installers, and operating syste
 Examples include:
 
 - Docker
+- Linux
 - macOS
 - Windows
 - NVIDIA DGX Spark
 
 The platform layer should remain thin. It should launch and configure the application without containing mining logic.
+
+## Distribution Boundary
+
+`pyproject.toml`, `setup.py`, and `MANIFEST.in` define one versioned package.
+Normal builds are CPU-only: Python is always present, the native C extension is
+optional, and CUDA is neither compiled nor linked. Linux CUDA builds are a
+local, explicit derivative of the same source package, gated by
+`HASHPHERE_BUILD_CUDA=1` and an explicit supported architecture.
+
+The CPU Dockerfile builds a wheel in a compiler stage and installs it into a
+non-root, compiler-free runtime. Its exec-form `hashsphere` entry point makes
+the Python CLI PID 1, so the continuous miner's signal handlers receive stop
+signals directly. Platform install scripts only call user-local `uv tool`
+operations; they contain no mining implementation or privileged setup.
+
+Future thin platform repositories may depend on a tagged core package or
+release artifact. They must not copy `src/hashphere`, native sources, Stratum,
+mining, lifecycle, profile, or observability code. Separate repositories remain
+optional organizational wrappers, not a technical requirement.
 
 ## `docs/`
 

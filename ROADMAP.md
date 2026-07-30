@@ -62,6 +62,10 @@ Progress:
 - ✅ DGX Spark CUDA SHA-256 performance tuning and repeated offline benchmark
 - ✅ Deterministic explicit multi-CUDA orchestration architecture
 - ✅ Lite / Auto / Max / Custom performance profiles
+- ✅ Portable CPU package, console command, and offline doctor
+- ✅ User-local Linux/macOS and Windows installation boundaries
+- ✅ Non-root Docker CPU image
+- ✅ Linux/macOS/Windows CPU packaging CI architecture
 - ⬜ Pool failover
 
 ---
@@ -127,14 +131,16 @@ Planned:
 
 ---
 
-# Phase 4 — Cross Platform
+# Phase 4 — Cross Platform Packaging
 
-Targets:
+Current status:
 
-- macOS
-- Windows
-- Linux
-- Docker
+- ✅ One shared CPU package and console entry point
+- ✅ Linux ARM64 package and Docker CPU validation on the Spark
+- ✅ macOS CPU CI job and user-local guidance; current HEAD not yet runner-validated
+- ✅ Windows CPU CI job and PowerShell guidance; current HEAD not yet runner-validated
+- ⬜ Published platform wheels and releases, blocked on license selection
+- ⬜ Docker NVIDIA image with a maintainable Python 3.13/CUDA base pairing
 
 Goal:
 
@@ -172,15 +178,15 @@ Planned:
 
 # Current Milestone
 
-**Lite / Auto / Max / Custom Performance Profiles — Implemented**
+**Cross-Platform Packaging Architecture — Implemented on Linux ARM64**
 
 Objective:
 
-An optional invocation-fixed profile now resolves user intent into the existing
-backend, bounded worker, explicit-device, validated launch-size, parent-chunk,
-and interruptible pacing controls. Omission preserves legacy behavior. Presets
-reject ambiguous overrides, and actual multiple-GPU use still requires an
-explicit list.
+One versioned shared package now supplies the `hashsphere` console command,
+offline doctor, CPU source and wheel builds, user-local installers, a non-root
+Docker CPU image, archive privacy checks, clean-installed smokes, and a
+Linux/macOS/Windows CPU CI matrix. The Linux CUDA build stays explicit and
+local; no mining core was copied into platform directories.
 
 The post-tuning human gates sustained approximately 2.462 GH/s for 60 seconds
 and 2.461 GH/s for five minutes. The longer run checked 737,414,244,096 hashes
@@ -191,9 +197,12 @@ The Spark's one physical GPU passes the expanded real parity suite, including
 all four validated launch sizes and one-device `cuda-multi`. New paired
 500-million-hash measurements put normal `cuda` and one-device `cuda-multi`
 within about 0.19%. Lite pacing reduced sampled utilization and approximate
-power while lowering effective wall-clock throughput as intended. This does not
-validate physical multi-GPU execution or scaling. No live pool command was run
-during this milestone.
+power while lowering effective wall-clock throughput as intended. The
+four-profile live human gate then measured about 1.145 GH/s effective for Lite
+and 2.754–2.756 GH/s for Auto, Max, and Custom; all four ended at the runtime
+limit with no failure, duplicate work, reconnect, or stale session. This does
+not validate physical multi-GPU execution or scaling. No live pool command was
+run during packaging validation.
 
 Bounded chunking, continuous lifecycle management, JSONL writing, native
 analysis, search-space expansion, single-endpoint session recovery, the
@@ -201,8 +210,8 @@ compute-backend boundary, portable native sequential execution, and portable
 parallel execution, the strategy abstraction, and both sequential and
 orbiting-bit orders remain complete. Conservative suspend-gap inference remains
 deferred because platform clocks differ and scheduler delay is not proof of
-suspend. Real two-device validation remains next, followed by
-macOS/Windows/Linux/Docker packaging,
+suspend. Real two-device validation remains pending, followed by executed
+macOS and Windows packaging runners,
 broader pool support and Bitcoin Core true solo mining, distributed workers and
 adaptive tuning, then Prometheus/Grafana-compatible metrics. Pool failover
 remains a separate recovery milestone. Fibonacci-bounce, random, strided,
@@ -215,7 +224,8 @@ strategy-expansion point.
 
 Continue with:
 
-**Run the explicit two-device offline and hardware gates on a host with at least
-two real CUDA devices. Do not claim scaling until that gate passes. Keep
-Windows CUDA builds, portable CUDA wheels, thermal feedback, and runtime profile
-switching deferred.**
+**Run the new CPU packaging workflow on macOS and Windows runners, select a
+project license before publication, and run the explicit two-device hardware
+gate only on a host with at least two real CUDA devices. Keep Windows CUDA,
+portable CUDA wheels, Docker NVIDIA, thermal feedback, and runtime profile
+switching deferred until their prerequisites are cleanly validated.**

@@ -160,6 +160,22 @@ launch sizes, and one-device `cuda-multi` parity passed. Actual two-device
 profile execution and scaling remain unvalidated. The established live baseline
 remains approximately 2.46 GH/s; the offline paired results do not replace it.
 
+The later four-profile live human gate passed with the same one-device Spark
+policy:
+
+| Profile | Raw compute rate | Effective wall-clock rate | Outcome |
+| --- | ---: | ---: | --- |
+| Lite | 2.750 GH/s | 1.145 GH/s | `runtime_limit_reached` |
+| Auto | 2.761 GH/s | 2.756 GH/s | `runtime_limit_reached` |
+| Max | 2.760 GH/s | 2.755 GH/s | `runtime_limit_reached` |
+| Custom | 2.760 GH/s | 2.754 GH/s | `runtime_limit_reached` |
+
+Every run completed once with no incomplete run, duplicate work, connection
+loss, reconnect, stale session, or command failure. Lite spent roughly 42% of
+wall time hashing and reduced its effective rate about 58.5% versus Auto.
+Auto, Max, and Custom were expectedly close because all three resolved to the
+same device, launch size, and chunk size on this one-GPU host.
+
 ## Deferred Work
 
 Profiles are fixed for one invocation. Runtime profile switching, thermal
