@@ -1,5 +1,11 @@
 """Hashphere configuration."""
 
+from hashphere.config.bitcoin_rpc import (
+    DEFAULT_BITCOIN_RPC_HOST,
+    DEFAULT_BITCOIN_RPC_PORT,
+    DEFAULT_BITCOIN_RPC_TIMEOUT_SECONDS,
+    BitcoinRpcSettings,
+)
 from hashphere.config.profile import (
     CUDA_THREADS_PER_BLOCK_CHOICES,
     DEFAULT_CUDA_THREADS_PER_BLOCK,
@@ -29,12 +35,16 @@ from hashphere.config.settings import (
 
 __all__ = [
     "CUDA_THREADS_PER_BLOCK_CHOICES",
+    "BitcoinRpcSettings",
     "ComputeProfileCapabilityProvider",
     "ComputeProfileError",
     "ComputeProfileOverrides",
     "ComputeProfileResolutionError",
     "ComputeProfileValidationError",
     "DEFAULT_COMPUTE_WORKERS",
+    "DEFAULT_BITCOIN_RPC_HOST",
+    "DEFAULT_BITCOIN_RPC_PORT",
+    "DEFAULT_BITCOIN_RPC_TIMEOUT_SECONDS",
     "DEFAULT_CUDA_DEVICE",
     "DEFAULT_CUDA_DEVICES",
     "DEFAULT_CUDA_THREADS_PER_BLOCK",
