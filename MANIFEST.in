@@ -1,5 +1,7 @@
 include .env.example
+include .dockerignore
 include ARCHITECTURE.md
+include Dockerfile
 include README.md
 include ROADMAP.md
 include src/hashphere/compute/_native.c
