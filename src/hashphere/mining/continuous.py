@@ -64,8 +64,10 @@ _NONCE_LIMIT = 1 << 32
 _MAX_NONCE = _NONCE_LIMIT - 1
 _MAX_CHUNKS = _NONCE_LIMIT
 MAX_RUNTIME_SECONDS = 31_536_000.0
+MAX_INTER_RANGE_DELAY_SECONDS = 60.0
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 _NOTIFICATION_WAIT_SECONDS = 0.25
+_PACING_WAIT_SECONDS = 0.1
 
 
 class ContinuousMiningError(Exception):
@@ -96,6 +98,7 @@ class ContinuousMiningPlan:
     max_runtime_seconds: float | None = None
     max_server_silence_seconds: float | None = None
     max_job_age_seconds: float | None = None
+    inter_range_delay_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         """Validate the plan without inventing a hidden session limit."""
@@ -128,6 +131,17 @@ class ContinuousMiningPlan:
             )
         except ValueError as exc:
             raise ContinuousMiningValidationError(str(exc)) from exc
+        if isinstance(self.inter_range_delay_seconds, bool) or not isinstance(
+            self.inter_range_delay_seconds, (int, float)
+        ):
+            raise ContinuousMiningValidationError("inter_range_delay_seconds must be a number")
+        if (
+            not math.isfinite(self.inter_range_delay_seconds)
+            or not 0 <= self.inter_range_delay_seconds <= MAX_INTER_RANGE_DELAY_SECONDS
+        ):
+            raise ContinuousMiningValidationError(
+                "inter_range_delay_seconds must be finite and between 0 and 60"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,6 +510,7 @@ def run_continuous_mining(
     recover_stale_session: StaleSessionRecoverer | None = None,
     recovery_statistics: RecoveryStatisticsProvider | None = None,
     liveness_clock: Callable[[], float] = time.monotonic,
+    pacing_clock: Callable[[], float] = time.monotonic,
 ) -> ContinuousMiningResult:
     """Mine strategy-scheduled chunks until a controlled terminal outcome occurs."""
 
@@ -518,6 +533,7 @@ def run_continuous_mining(
         recover_stale_session,
         recovery_statistics,
         liveness_clock,
+        pacing_clock,
     )
     event_observer: ContinuousMiningObserver = (
         NullContinuousMiningObserver() if observer is None else observer
@@ -875,6 +891,58 @@ def run_continuous_mining(
             if select_pool_job(selected_job):
                 continue
 
+        if plan.inter_range_delay_seconds > 0:
+            pacing_deadline = pacing_clock() + plan.inter_range_delay_seconds
+            pacing_interrupted = False
+            while True:
+                if stop_token.stop_requested:
+                    return finish_stopped()
+                stale = liveness.violation()
+                if stale is not None:
+                    if not recover_stale(stale):
+                        return finish_stopped()
+                    pacing_interrupted = True
+                    break
+                remaining = pacing_deadline - pacing_clock()
+                if remaining <= 0:
+                    break
+                try:
+                    notification = current_receive_notification(
+                        min(_PACING_WAIT_SECONDS, remaining)
+                    )
+                except StratumConnectionError as error:
+                    if not recover_connection(error, StratumRecoveryStage.NOTIFICATION_POLL):
+                        return finish_stopped()
+                    pacing_interrupted = True
+                    break
+                if notification is None:
+                    continue
+                pacing_job = _apply_notification(
+                    current_assembler,
+                    notification,
+                    event_observer,
+                )
+                liveness.notification_received(notification)
+                try:
+                    drained_job = _drain_notifications(
+                        current_assembler,
+                        stop_token,
+                        current_receive_notification,
+                        event_observer,
+                        notification_observer=liveness.notification_received,
+                    )
+                except StratumConnectionError as error:
+                    if not recover_connection(error, StratumRecoveryStage.NOTIFICATION_POLL):
+                        return finish_stopped()
+                    pacing_interrupted = True
+                    break
+                selected_pacing_job = drained_job if drained_job is not None else pacing_job
+                if selected_pacing_job is not None and select_pool_job(selected_pacing_job):
+                    pacing_interrupted = True
+                    break
+            if pacing_interrupted:
+                continue
+
         if not strategy_cursor.exhausted:
             continue
 
@@ -1005,6 +1073,7 @@ def _validate_run_inputs(
     recover_stale_session: object,
     recovery_statistics: object,
     liveness_clock: object,
+    pacing_clock: object,
 ) -> None:
     if not isinstance(plan, ContinuousMiningPlan):
         raise ContinuousMiningValidationError("plan must be a ContinuousMiningPlan")
@@ -1024,6 +1093,7 @@ def _validate_run_inputs(
         (prepare_work, "prepare_work"),
         (search_range, "search_range"),
         (liveness_clock, "liveness_clock"),
+        (pacing_clock, "pacing_clock"),
     ):
         if not callable(callback):
             raise ContinuousMiningValidationError(f"{name} must be callable")

@@ -383,6 +383,7 @@ def run_with_harness(
     strategy: MiningSearchStrategy | None = None,
     recover_stale_session: Callable[[], StratumMiningSession | None] | None = None,
     liveness_clock: Callable[[], float] | None = None,
+    pacing_clock: Callable[[], float] | None = None,
 ) -> tuple[MiningJobAssembler, MiningJob, ContinuousMiningResult]:
     """Run continuous orchestration against one synthetic initial job."""
 
@@ -405,6 +406,7 @@ def run_with_harness(
         search_range=harness.search,
         recover_stale_session=recover_stale_session,
         liveness_clock=(lambda: 0.0) if liveness_clock is None else liveness_clock,
+        pacing_clock=(lambda: 0.0) if pacing_clock is None else pacing_clock,
     )
     return assembler, initial_job, result
 
@@ -601,6 +603,130 @@ def test_stop_during_exhausted_chunk_takes_effect_before_poll_or_next_search() -
     assert harness.receive_timeouts == []
     assert harness.submit_calls == []
     assert harness.observations[-1] == ("stopped",)
+
+
+def test_profile_pacing_waits_only_between_complete_ranges_without_busy_sleep() -> None:
+    now = [0.0]
+    harness = Harness()
+
+    def receive(timeout: float) -> MiningNotification | None:
+        harness.receive_timeouts.append(timeout)
+        now[0] += timeout
+        return None
+
+    harness.receive = receive  # type: ignore[method-assign]
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0, 1, max_chunks=2, inter_range_delay_seconds=0.25),
+        harness,
+        pacing_clock=lambda: now[0],
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.CHUNK_LIMIT_REACHED
+    assert len(harness.search_calls) == 2
+    assert sum(timeout for timeout in harness.receive_timeouts if timeout > 0) == pytest.approx(
+        0.25
+    )
+    assert all(0 < timeout <= 0.1 for timeout in harness.receive_timeouts if timeout > 0)
+
+
+def test_stop_during_profile_pacing_prevents_a_new_range() -> None:
+    now = [0.0]
+    harness = Harness()
+
+    def receive(timeout: float) -> MiningNotification | None:
+        harness.receive_timeouts.append(timeout)
+        if timeout > 0:
+            now[0] += timeout
+            harness.controller.request_stop()
+        return None
+
+    harness.receive = receive  # type: ignore[method-assign]
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0, 1, inter_range_delay_seconds=1.0),
+        harness,
+        pacing_clock=lambda: now[0],
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.STOPPED_BY_USER
+    assert len(harness.search_calls) == 1
+
+
+def test_runtime_expiration_during_profile_pacing_prevents_a_new_range() -> None:
+    now = [0.0]
+    controller = StopController(0.05, clock=lambda: now[0])
+    harness = Harness(controller=controller)
+
+    def receive(timeout: float) -> MiningNotification | None:
+        harness.receive_timeouts.append(timeout)
+        now[0] += timeout
+        return None
+
+    harness.receive = receive  # type: ignore[method-assign]
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(
+            0,
+            1,
+            max_runtime_seconds=0.05,
+            inter_range_delay_seconds=1.0,
+        ),
+        harness,
+        pacing_clock=lambda: now[0],
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.RUNTIME_LIMIT_REACHED
+    assert len(harness.search_calls) == 1
+
+
+def test_job_replacement_interrupts_profile_pacing_before_old_work_repeats() -> None:
+    now = [0.0]
+    harness = Harness(timed_notifications=deque([notification("replacement")]))
+
+    def receive(timeout: float) -> MiningNotification | None:
+        result = Harness.receive(harness, timeout)
+        if timeout > 0:
+            now[0] += timeout
+        return result
+
+    harness.receive = receive  # type: ignore[method-assign]
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(0, 1, max_chunks=2, inter_range_delay_seconds=1.0),
+        harness,
+        pacing_clock=lambda: now[0],
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.CHUNK_LIMIT_REACHED
+    assert [work.job_id for work, _, _ in harness.search_calls] == [
+        "initial-job",
+        "replacement",
+    ]
+
+
+def test_stale_session_interrupts_profile_pacing_before_a_new_range() -> None:
+    now = [0.0]
+    harness = Harness()
+
+    def receive(timeout: float) -> MiningNotification | None:
+        harness.receive_timeouts.append(timeout)
+        now[0] += timeout
+        return None
+
+    harness.receive = receive  # type: ignore[method-assign]
+    _, _, result = run_with_harness(
+        ContinuousMiningPlan(
+            0,
+            1,
+            max_server_silence_seconds=0.05,
+            inter_range_delay_seconds=1.0,
+        ),
+        harness,
+        recover_stale_session=lambda: None,
+        liveness_clock=lambda: now[0],
+        pacing_clock=lambda: now[0],
+    )
+
+    assert result.outcome is ContinuousMiningOutcome.STOPPED_BY_USER
+    assert len(harness.search_calls) == 1
+    assert any(item[0] == "stale" for item in harness.observations)
 
 
 def test_repeated_stop_requests_are_safe() -> None:
