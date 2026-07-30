@@ -61,6 +61,14 @@ class BitcoinRpcRemoteError(BitcoinRpcError):
         self.code_category = code_category
 
 
+class _DuplicateJsonKeyError(ValueError):
+    """Internal marker for a non-strict JSON object."""
+
+
+class _NonFiniteJsonNumberError(ValueError):
+    """Internal marker for a non-standard JSON number."""
+
+
 @dataclass(frozen=True, slots=True)
 class HttpResponse:
     """Bounded HTTP response returned by an injected transport."""
@@ -303,16 +311,30 @@ class BitcoinCoreRpcClient:
         if len(response.body) > self._maximum_response_bytes:
             raise BitcoinRpcTransportError("Bitcoin RPC response exceeded the size limit")
         try:
-            decoded = json.loads(response.body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            decoded = json.loads(
+                response.body,
+                object_pairs_hook=_object_without_duplicate_keys,
+                parse_constant=_reject_nonfinite_json_number,
+            )
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            _DuplicateJsonKeyError,
+            _NonFiniteJsonNumberError,
+        ) as exc:
             raise BitcoinRpcProtocolError("Bitcoin Core returned malformed JSON") from exc
         envelope = _require_object(decoded, "JSON-RPC response")
-        if envelope.get("id") != request_id:
+        response_id = envelope.get("id")
+        if type(response_id) is not int or response_id != request_id:
             raise BitcoinRpcProtocolError("Bitcoin Core returned a mismatched request ID")
         if "result" not in envelope or "error" not in envelope:
             raise BitcoinRpcProtocolError("Bitcoin Core returned an incomplete JSON-RPC response")
         error = envelope["error"]
         if error is not None:
+            if envelope["result"] is not None:
+                raise BitcoinRpcProtocolError(
+                    "Bitcoin Core returned contradictory result and error fields"
+                )
             error_object = _require_object(error, "JSON-RPC error")
             code = error_object.get("code")
             if not isinstance(code, int) or isinstance(code, bool):
@@ -367,6 +389,19 @@ def _require_object(value: object, name: str) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise BitcoinRpcProtocolError(f"{name} must be an object")
     return value
+
+
+def _object_without_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJsonKeyError
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json_number(value: str) -> None:
+    raise _NonFiniteJsonNumberError(value)
 
 
 def _required_string(value: dict[str, object], key: str) -> str:

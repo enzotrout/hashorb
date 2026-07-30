@@ -100,14 +100,21 @@ def parse_block_template(value: object) -> BlockTemplate:
     size_limit = _integer(template, "sizelimit", minimum=81, maximum=MAX_BLOCK_BYTES)
     weight_limit = _integer(template, "weightlimit", minimum=324, maximum=MAX_BLOCK_WEIGHT)
     rules = _string_tuple(template, "rules", required=True)
-    if "segwit" not in rules:
+    normalized_rules = tuple(rule.removeprefix("!") for rule in rules)
+    if any(rule in {"", "!"} or rule.startswith("!!") for rule in rules):
+        raise BlockTemplateError("block template rule syntax is invalid")
+    if len(set(normalized_rules)) != len(normalized_rules):
+        raise BlockTemplateError("block template rules are contradictory")
+    if "segwit" not in normalized_rules:
         raise BlockTemplateError("block template does not declare SegWit support")
-    unsupported_rules = set(rules) - _SUPPORTED_RULES
+    unsupported_rules = set(normalized_rules) - _SUPPORTED_RULES
     if unsupported_rules:
         raise BlockTemplateError("block template requires an unsupported rule")
     mutable = _string_tuple(template, "mutable", required=False)
     if set(mutable) - _SUPPORTED_MUTATIONS:
         raise BlockTemplateError("block template declares an unsupported mutation")
+    if "signet_challenge" in template:
+        raise BlockTemplateError("signet block construction is not supported")
 
     aux_flags = _parse_coinbase_aux(template.get("coinbaseaux"))
     transactions = _parse_template_transactions(template.get("transactions"))

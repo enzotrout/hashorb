@@ -16,6 +16,7 @@ from types import FrameType
 
 from dotenv import load_dotenv
 
+from hashphere.bitcoin.command import BITCOIN_COMMANDS, run_bitcoin_command
 from hashphere.compute import (
     ComputeBackendError,
     ComputeBackendSelectionError,
@@ -117,6 +118,8 @@ _STRATUM_USER_AGENT = "Hashphere/0.1"
 _NONCE_LIMIT = 1 << 32
 _MAX_NONCE = _NONCE_LIMIT - 1
 _KNOWN_LOG_COMMANDS = (
+    "bitcoin-core-check",
+    "solo-mine",
     "stratum-handshake",
     "stratum-observe",
     "stratum-mine-once",
@@ -125,8 +128,9 @@ _KNOWN_LOG_COMMANDS = (
 )
 _USAGE = (
     "Usage: hashphere "
-    "{stratum-handshake,stratum-observe,stratum-mine-once,stratum-mine-chunks,"
-    "stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} [options]"
+    "{bitcoin-core-check,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
+    "stratum-mine-chunks,stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} "
+    "[options]"
 )
 
 type _PythonSignalHandler = Callable[[int, FrameType | None], object]
@@ -571,6 +575,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments in (["--help"], ["-h"]):
         print(_USAGE)
         return 0
+    if arguments and arguments[0] in BITCOIN_COMMANDS:
+        return run_bitcoin_command(arguments)
     if arguments and arguments[0] == "doctor":
         try:
             doctor_selection, log_directory, probe_cuda_device = _parse_doctor_arguments(
@@ -1084,6 +1090,33 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
     print(f"  Shares submitted: {summary.share_submission_count}")
     print(f"  Shares accepted: {summary.accepted_share_count}")
     print(f"  Shares rejected: {summary.rejected_share_count}")
+
+    solo_rate = (
+        "unavailable"
+        if summary.solo_weighted_hashes_per_second is None
+        else f"{summary.solo_weighted_hashes_per_second:.2f}"
+    )
+    print("\nBitcoin Core true solo:")
+    for chain, count in summary.solo_chain_counts:
+        print(f"  Chain {chain}: {count}")
+    print(f"  Templates received: {summary.solo_template_count}")
+    print(f"  Template replacements: {summary.solo_template_replacement_count}")
+    print(f"  Work variants: {summary.solo_work_variant_count}")
+    print(f"  Coinbase extra-nonce advances: {summary.solo_coinbase_extra_nonce_advance_count}")
+    print(f"  Timestamp rolls: {summary.solo_timestamp_roll_count}")
+    print(f"  Nonce ranges: {summary.solo_completed_nonce_range_count}")
+    print(f"  Hashes: {summary.solo_total_hashes_checked}")
+    print(f"  Mining elapsed: {summary.solo_total_elapsed_ns} ns")
+    print(f"  Weighted hashes per second: {solo_rate}")
+    print(f"  Candidates: {summary.solo_candidate_count}")
+    print(f"  Candidate suppressions: {summary.solo_candidate_suppressed_count}")
+    for category, count in summary.solo_proposal_outcome_counts:
+        print(f"  Proposal {category}: {count}")
+    for category, count in summary.solo_submission_outcome_counts:
+        print(f"  Submission {category}: {count}")
+    print(f"  Accepted blocks: {summary.solo_accepted_block_count}")
+    print(f"  Rejected blocks: {summary.solo_rejected_block_count}")
+    print(f"  RPC failures: {summary.solo_rpc_failure_count}")
 
     print("\nFailures:")
     print(f"  command_failed events: {summary.command_failure_count}")

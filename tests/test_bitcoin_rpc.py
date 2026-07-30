@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import hashphere.config.bitcoin_rpc as rpc_settings_module
 from hashphere.bitcoin.rpc import (
     BitcoinCoreRpcClient,
     BitcoinRpcAuthenticationError,
@@ -18,6 +19,7 @@ from hashphere.bitcoin.rpc import (
     HttpResponse,
 )
 from hashphere.config.bitcoin_rpc import BitcoinRpcSettings
+from hashphere.config.solo import SoloCommandSettings
 
 
 class FakeTransport:
@@ -202,7 +204,16 @@ def test_template_proposal_and_submission_have_strict_semantics() -> None:
         (b"not-json", BitcoinRpcProtocolError),
         (json.dumps([]).encode(), BitcoinRpcProtocolError),
         (json.dumps({"id": 99, "result": None, "error": None}).encode(), BitcoinRpcProtocolError),
+        (json.dumps({"id": True, "result": None, "error": None}).encode(), BitcoinRpcProtocolError),
         (json.dumps({"id": 1, "error": None}).encode(), BitcoinRpcProtocolError),
+        (b'{"id":1,"id":1,"result":null,"error":null}', BitcoinRpcProtocolError),
+        (b'{"id":1,"result":NaN,"error":null}', BitcoinRpcProtocolError),
+        (
+            json.dumps(
+                {"id": 1, "result": {"unexpected": True}, "error": {"code": -32601}}
+            ).encode(),
+            BitcoinRpcProtocolError,
+        ),
         (
             json.dumps({"id": 1, "result": None, "error": {"code": -32601}}).encode(),
             BitcoinRpcRemoteError,
@@ -262,3 +273,35 @@ def test_rpc_objects_hide_credentials_paths_and_payloads(tmp_path: Path) -> None
 
     assert "private.cookie" not in repr(settings)
     assert "rpc-password" not in repr(client)
+
+
+def test_rpc_environment_defaults_only_to_loopback_and_requires_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(rpc_settings_module, "load_dotenv", lambda: False)
+    for name in (
+        "HASHPHERE_BITCOIN_RPC_HOST",
+        "HASHPHERE_BITCOIN_RPC_PORT",
+        "HASHPHERE_BITCOIN_RPC_USER",
+        "HASHPHERE_BITCOIN_RPC_PASSWORD",
+        "HASHPHERE_BITCOIN_RPC_COOKIE_FILE",
+        "HASHPHERE_BITCOIN_RPC_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(ValueError, match="authentication"):
+        BitcoinRpcSettings.from_env()
+
+    monkeypatch.setenv("HASHPHERE_BITCOIN_RPC_USER", "synthetic-user")
+    monkeypatch.setenv("HASHPHERE_BITCOIN_RPC_PASSWORD", "synthetic-password")
+    settings = BitcoinRpcSettings.from_env()
+    assert settings.host == "127.0.0.1"
+    assert settings.port == 8332
+
+
+def test_solo_destination_is_required_strict_and_hidden_from_repr() -> None:
+    destination = "bcrt1qsyntheticdestination"
+    settings = SoloCommandSettings(destination)
+    assert settings.payout_address == destination
+    assert destination not in repr(settings)
+    with pytest.raises(ValueError, match="invalid"):
+        SoloCommandSettings(f"{destination}\n")

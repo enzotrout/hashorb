@@ -188,6 +188,18 @@ def test_minimal_segwit_template_is_strict_immutable_and_sanitized() -> None:
         parsed.height = 102  # type: ignore[misc]
 
 
+def test_template_accepts_core_required_segwit_marker_but_rejects_signet() -> None:
+    required_segwit = _valid_template()
+    required_segwit["rules"] = ["csv", "!segwit", "taproot"]
+    assert "!segwit" in parse_block_template(required_segwit).rules
+
+    signet = _valid_template()
+    signet["rules"] = ["csv", "!segwit", "taproot", "!signet"]
+    signet["signet_challenge"] = "51"
+    with pytest.raises(BlockTemplateError, match="unsupported rule|signet"):
+        parse_block_template(signet)
+
+
 def test_template_preserves_transaction_order_and_validates_witness_commitment() -> None:
     first = _legacy_transaction(marker=0x31)
     second = _witness_transaction()

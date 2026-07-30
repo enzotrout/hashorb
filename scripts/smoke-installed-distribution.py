@@ -71,6 +71,8 @@ def smoke_distribution(distribution_directory: Path) -> None:
         environment["PYTHON_DOTENV_DISABLED"] = "1"
         commands = [
             [str(command), "--help"],
+            [str(command), "bitcoin-core-check", "--help"],
+            [str(command), "solo-mine", "--help"],
             [str(command), "doctor", "--log-dir", "logs"],
             *[
                 [str(command), "profile-info", "--profile", profile]

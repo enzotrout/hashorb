@@ -32,10 +32,20 @@ from hashphere.config.settings import (
     parse_compute_profile_overrides_from_env,
     parse_cuda_devices,
 )
+from hashphere.config.solo import (
+    BITCOIN_RPC_CHECK_FLAG,
+    BLOCK_SUBMISSION_FLAG,
+    SOLO_PAYOUT_ADDRESS,
+    TRUE_SOLO_FLAG,
+    SoloCommandSettings,
+    require_exact_opt_in,
+)
 
 __all__ = [
     "CUDA_THREADS_PER_BLOCK_CHOICES",
     "BitcoinRpcSettings",
+    "BITCOIN_RPC_CHECK_FLAG",
+    "BLOCK_SUBMISSION_FLAG",
     "ComputeProfileCapabilityProvider",
     "ComputeProfileError",
     "ComputeProfileOverrides",
@@ -55,9 +65,13 @@ __all__ = [
     "MAX_INTER_RANGE_DELAY_SECONDS",
     "PROFILE_NAMES",
     "ResolvedComputeProfile",
+    "SOLO_PAYOUT_ADDRESS",
     "Settings",
+    "SoloCommandSettings",
+    "TRUE_SOLO_FLAG",
     "parse_cuda_devices",
     "parse_compute_profile",
     "parse_compute_profile_overrides_from_env",
     "resolve_compute_profile",
+    "require_exact_opt_in",
 ]

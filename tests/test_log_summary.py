@@ -121,6 +121,23 @@ def test_empty_file_returns_immutable_zero_summary(tmp_path: Path) -> None:
         rejected_share_count=0,
         command_failure_count=0,
         failure_stage_category_counts=(),
+        solo_chain_counts=(),
+        solo_template_count=0,
+        solo_template_replacement_count=0,
+        solo_work_variant_count=0,
+        solo_coinbase_extra_nonce_advance_count=0,
+        solo_timestamp_roll_count=0,
+        solo_completed_nonce_range_count=0,
+        solo_total_hashes_checked=0,
+        solo_total_elapsed_ns=0,
+        solo_weighted_hashes_per_second=None,
+        solo_candidate_count=0,
+        solo_candidate_suppressed_count=0,
+        solo_proposal_outcome_counts=(),
+        solo_submission_outcome_counts=(),
+        solo_accepted_block_count=0,
+        solo_rejected_block_count=0,
+        solo_rpc_failure_count=0,
     )
     with pytest.raises(FrozenInstanceError):
         summary.record_count = 1  # type: ignore[misc]

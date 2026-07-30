@@ -77,6 +77,23 @@ class LogSummary:
     rejected_share_count: int
     command_failure_count: int
     failure_stage_category_counts: tuple[tuple[str, str, int], ...]
+    solo_chain_counts: tuple[tuple[str, int], ...]
+    solo_template_count: int
+    solo_template_replacement_count: int
+    solo_work_variant_count: int
+    solo_coinbase_extra_nonce_advance_count: int
+    solo_timestamp_roll_count: int
+    solo_completed_nonce_range_count: int
+    solo_total_hashes_checked: int
+    solo_total_elapsed_ns: int
+    solo_weighted_hashes_per_second: float | None
+    solo_candidate_count: int
+    solo_candidate_suppressed_count: int
+    solo_proposal_outcome_counts: tuple[tuple[str, int], ...]
+    solo_submission_outcome_counts: tuple[tuple[str, int], ...]
+    solo_accepted_block_count: int
+    solo_rejected_block_count: int
+    solo_rpc_failure_count: int
 
 
 @dataclass(slots=True)
@@ -126,6 +143,22 @@ class _Accumulator:
     accepted_share_count: int = 0
     rejected_share_count: int = 0
     command_failure_count: int = 0
+    solo_chain_counts: Counter[str] = field(default_factory=Counter)
+    solo_template_count: int = 0
+    solo_template_replacement_count: int = 0
+    solo_work_variant_count: int = 0
+    solo_coinbase_extra_nonce_advance_count: int = 0
+    solo_timestamp_roll_count: int = 0
+    solo_completed_nonce_range_count: int = 0
+    solo_total_hashes_checked: int = 0
+    solo_total_elapsed_ns: int = 0
+    solo_candidate_count: int = 0
+    solo_candidate_suppressed_count: int = 0
+    solo_proposal_outcome_counts: Counter[str] = field(default_factory=Counter)
+    solo_submission_outcome_counts: Counter[str] = field(default_factory=Counter)
+    solo_accepted_block_count: int = 0
+    solo_rejected_block_count: int = 0
+    solo_rpc_failure_count: int = 0
 
 
 class _RecordValidationError(ValueError):
@@ -318,6 +351,77 @@ def _aggregate_known_event(
         category = _nonblank_string(_required(record, "error_category"), "error_category")
         accumulator.command_failure_count += 1
         accumulator.failure_counts[(stage, category)] += 1
+        if record["command"] in {"solo-mine", "bitcoin-core-check"} and category in {
+            "authentication_failure",
+            "protocol_failure",
+            "remote_failure",
+            "rpc_failure",
+            "transport_failure",
+        }:
+            accumulator.solo_rpc_failure_count += 1
+    elif event == "bitcoin_rpc_connected":
+        chain = _nonblank_string(_required(record, "chain"), "chain")
+        if chain not in {"main", "test", "testnet4", "signet", "regtest"}:
+            raise _RecordValidationError("chain is unsupported")
+        _actual_bool(_required(record, "initial_block_download"), "initial_block_download")
+        accumulator.solo_chain_counts[chain] += 1
+    elif event == "solo_template_received":
+        _safe_identity(_required(record, "template_identity"), "template_identity")
+        _actual_bool(_required(record, "replacement"), "replacement")
+        accumulator.solo_template_count += 1
+    elif event == "solo_template_replaced":
+        _safe_identity(
+            _required(record, "previous_template_identity"),
+            "previous_template_identity",
+        )
+        _safe_identity(_required(record, "template_identity"), "template_identity")
+        _nonblank_string(_required(record, "reason"), "reason")
+        accumulator.solo_template_replacement_count += 1
+    elif event == "solo_work_variant_started":
+        _safe_identity(_required(record, "work_identity"), "work_identity")
+        _positive_int(_required(record, "work_variant_index"), "work_variant_index")
+        _nonnegative_int(
+            _required(record, "coinbase_extra_nonce_advance_count"),
+            "coinbase_extra_nonce_advance_count",
+        )
+        _nonnegative_int(_required(record, "timestamp_roll_count"), "timestamp_roll_count")
+        accumulator.solo_work_variant_count += 1
+    elif event == "solo_coinbase_extra_nonce_advanced":
+        _positive_int(_required(record, "advance_count"), "advance_count")
+        accumulator.solo_coinbase_extra_nonce_advance_count += 1
+    elif event == "solo_timestamp_rolled":
+        _positive_int(_required(record, "roll_count"), "roll_count")
+        accumulator.solo_timestamp_roll_count += 1
+    elif event == "solo_nonce_range_completed":
+        hashes = _nonnegative_int(_required(record, "hashes_checked"), "hashes_checked")
+        elapsed = _nonnegative_int(_required(record, "elapsed_ns"), "elapsed_ns")
+        _optional_nonnegative_number(_required(record, "hashes_per_second"), "hashes_per_second")
+        _actual_bool(_required(record, "candidate_found"), "candidate_found")
+        accumulator.solo_completed_nonce_range_count += 1
+        accumulator.solo_total_hashes_checked += hashes
+        accumulator.solo_total_elapsed_ns += elapsed
+    elif event == "solo_candidate_found":
+        accumulator.solo_candidate_count += 1
+    elif event == "solo_candidate_suppressed":
+        _nonblank_string(_required(record, "reason"), "reason")
+        _positive_int(_required(record, "suppression_count"), "suppression_count")
+        accumulator.solo_candidate_suppressed_count += 1
+    elif event == "solo_block_proposal_completed":
+        accepted = _actual_bool(_required(record, "accepted"), "accepted")
+        category = _nonblank_string(_required(record, "status_category"), "status_category")
+        if accepted != (category == "accepted"):
+            raise _RecordValidationError("proposal category contradicts acceptance")
+        accumulator.solo_proposal_outcome_counts[category] += 1
+    elif event == "solo_block_submission_completed":
+        accepted = _actual_bool(_required(record, "accepted"), "accepted")
+        category = _nonblank_string(_required(record, "status_category"), "status_category")
+        if accepted != (category == "accepted"):
+            raise _RecordValidationError("submission category contradicts acceptance")
+        accumulator.solo_submission_outcome_counts[category] += 1
+        if accepted:
+            accumulator.solo_accepted_block_count += 1
+        else:
+            accumulator.solo_rejected_block_count += 1
     elif event == "compute_backend_selected":
         backend_name = _nonblank_string(
             _required(record, "backend_name"),
@@ -529,6 +633,13 @@ def _nonblank_string(value: object, name: str) -> str:
     return value
 
 
+def _safe_identity(value: object, name: str) -> str:
+    parsed = _nonblank_string(value, name)
+    if re.fullmatch(r"[0-9a-f]{16}", parsed) is None:
+        raise _RecordValidationError(f"{name} must be a sanitized 16-character identity")
+    return parsed
+
+
 def _positive_number(value: object, name: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise _RecordValidationError(f"{name} must be an integer or float")
@@ -582,6 +693,12 @@ def _build_summary(accumulator: _Accumulator) -> LogSummary:
         if accumulator.completed_nonce_range_count > 0 and accumulator.total_mining_elapsed_ns > 0
         else None
     )
+    solo_weighted_rate = (
+        accumulator.solo_total_hashes_checked * 1_000_000_000 / accumulator.solo_total_elapsed_ns
+        if accumulator.solo_completed_nonce_range_count > 0
+        and accumulator.solo_total_elapsed_ns > 0
+        else None
+    )
     return LogSummary(
         record_count=accumulator.record_count,
         run_count=run_count,
@@ -631,4 +748,27 @@ def _build_summary(accumulator: _Accumulator) -> LogSummary:
             (stage, category, count)
             for (stage, category), count in sorted(accumulator.failure_counts.items())
         ),
+        solo_chain_counts=tuple(sorted(accumulator.solo_chain_counts.items())),
+        solo_template_count=accumulator.solo_template_count,
+        solo_template_replacement_count=accumulator.solo_template_replacement_count,
+        solo_work_variant_count=accumulator.solo_work_variant_count,
+        solo_coinbase_extra_nonce_advance_count=(
+            accumulator.solo_coinbase_extra_nonce_advance_count
+        ),
+        solo_timestamp_roll_count=accumulator.solo_timestamp_roll_count,
+        solo_completed_nonce_range_count=accumulator.solo_completed_nonce_range_count,
+        solo_total_hashes_checked=accumulator.solo_total_hashes_checked,
+        solo_total_elapsed_ns=accumulator.solo_total_elapsed_ns,
+        solo_weighted_hashes_per_second=solo_weighted_rate,
+        solo_candidate_count=accumulator.solo_candidate_count,
+        solo_candidate_suppressed_count=accumulator.solo_candidate_suppressed_count,
+        solo_proposal_outcome_counts=tuple(
+            sorted(accumulator.solo_proposal_outcome_counts.items())
+        ),
+        solo_submission_outcome_counts=tuple(
+            sorted(accumulator.solo_submission_outcome_counts.items())
+        ),
+        solo_accepted_block_count=accumulator.solo_accepted_block_count,
+        solo_rejected_block_count=accumulator.solo_rejected_block_count,
+        solo_rpc_failure_count=accumulator.solo_rpc_failure_count,
     )
