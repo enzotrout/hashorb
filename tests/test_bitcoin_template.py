@@ -196,7 +196,7 @@ def test_template_accepts_core_required_segwit_marker_but_rejects_signet() -> No
     signet = _valid_template()
     signet["rules"] = ["csv", "!segwit", "taproot", "!signet"]
     signet["signet_challenge"] = "51"
-    with pytest.raises(BlockTemplateError, match="unsupported rule|signet"):
+    with pytest.raises(BlockTemplateError, match="unsupported_rule"):
         parse_block_template(signet)
 
 
@@ -208,6 +208,45 @@ def test_template_preserves_transaction_order_and_validates_witness_commitment()
 
     assert [item.transaction.raw for item in parsed.transactions] == [first, second]
     assert parsed.transactions[0].transaction.txid != parsed.transactions[1].transaction.txid
+
+
+def test_template_accepts_repeated_dependency_indices_from_multiple_inputs() -> None:
+    first = _legacy_transaction(marker=0x31)
+    second = _legacy_transaction(marker=0x32)
+    template = _valid_template([first, second])
+    transactions = template["transactions"]
+    assert isinstance(transactions, list)
+    assert isinstance(transactions[1], dict)
+    transactions[1]["depends"] = [1, 1]
+
+    parsed = parse_block_template(template)
+
+    assert parsed.transactions[1].depends == (1, 1)
+
+
+def test_template_accepts_absent_optional_transaction_cost_metadata() -> None:
+    template = _valid_template([_legacy_transaction()])
+    transactions = template["transactions"]
+    assert isinstance(transactions, list)
+    assert isinstance(transactions[0], dict)
+    del transactions[0]["fee"]
+    del transactions[0]["sigops"]
+
+    parsed = parse_block_template(template)
+
+    assert parsed.transactions[0].fee_satoshis is None
+    assert parsed.transactions[0].sigops is None
+
+    malformed = _valid_template([_legacy_transaction()])
+    malformed_transactions = malformed["transactions"]
+    assert isinstance(malformed_transactions, list)
+    assert isinstance(malformed_transactions[0], dict)
+    malformed_transactions[0]["fee"] = "private-template-value"
+    with pytest.raises(BlockTemplateError) as caught:
+        parse_block_template(malformed)
+    assert caught.value.category == "invalid_type"
+    assert caught.value.field_path == "transactions[].fee"
+    assert "private-template-value" not in repr(caught.value)
 
 
 def test_template_fingerprint_is_stable_and_changes_with_transaction_set() -> None:
@@ -225,16 +264,16 @@ def test_template_fingerprint_is_stable_and_changes_with_transaction_set() -> No
     [
         ("previousblockhash", "11", "previousblockhash"),
         ("bits", "zzzzzzzz", "bits"),
-        ("target", "00" * 32, "contradicts"),
+        ("target", "00" * 32, "inconsistent_fields"),
         ("height", -1, "height"),
         ("coinbasevalue", -1, "coinbasevalue"),
         ("coinbasevalue", 21_000_000 * 100_000_000 + 1, "coinbasevalue"),
-        ("rules", ["segwit", "unknown-active-rule"], "unsupported rule"),
-        ("rules", ["csv"], "SegWit"),
-        ("mutable", ["coinbase"], "unsupported mutation"),
+        ("rules", ["segwit", "unknown-active-rule"], "unsupported_rule"),
+        ("rules", ["csv"], "unsupported_rule"),
+        ("mutable", ["coinbase"], "unsupported_mutation"),
         ("sizelimit", 4_000_001, "sizelimit"),
         ("weightlimit", 4_000_001, "weightlimit"),
-        ("noncerange", "01000000ffffffff", "nonce range"),
+        ("noncerange", "01000000ffffffff", "invalid_optional_field"),
     ],
 )
 def test_template_rejects_malformed_unsupported_or_excessive_fields(
@@ -277,7 +316,7 @@ def test_template_rejects_duplicate_malformed_or_inconsistent_transactions() -> 
             "weight": 4,
         }
     ]
-    with pytest.raises(BlockTemplateError, match="malformed"):
+    with pytest.raises(BlockTemplateError, match="invalid_transaction_data"):
         parse_block_template(malformed)
 
     wrong_txid = _valid_template([raw])
@@ -286,6 +325,100 @@ def test_template_rejects_duplicate_malformed_or_inconsistent_transactions() -> 
     transactions[0]["txid"] = "00" * 32
     with pytest.raises(BlockTemplateError, match="txid"):
         parse_block_template(wrong_txid)
+
+
+def test_template_diagnostics_identify_only_allowlisted_fields_and_conditions() -> None:
+    missing = _valid_template()
+    del missing["previousblockhash"]
+    with pytest.raises(BlockTemplateError) as caught:
+        parse_block_template(missing)
+    error = caught.value
+    assert error.category == "missing_required_field"
+    assert error.field_path == "previousblockhash"
+    assert error.expected_kind == "required field"
+    assert error.observed_condition == "missing"
+
+    wrong_type = _valid_template()
+    wrong_type["version"] = "private-template-value"
+    with pytest.raises(BlockTemplateError) as caught:
+        parse_block_template(wrong_type)
+    assert caught.value.category == "invalid_type"
+    assert caught.value.field_path == "version"
+    assert "private-template-value" not in str(caught.value)
+    assert "private-template-value" not in repr(caught.value)
+
+    invalid_length = _valid_template()
+    invalid_length["previousblockhash"] = "private-short-value"
+    with pytest.raises(BlockTemplateError) as caught:
+        parse_block_template(invalid_length)
+    assert caught.value.category == "invalid_length"
+    assert caught.value.field_path == "previousblockhash"
+    assert "private-short-value" not in str(caught.value)
+
+    inconsistent = _valid_template()
+    inconsistent["target"] = "00" * 32
+    with pytest.raises(BlockTemplateError) as caught:
+        parse_block_template(inconsistent)
+    assert caught.value.category == "inconsistent_fields"
+    assert caught.value.field_path == "bits_target"
+
+
+def test_template_known_optional_and_unknown_top_level_metadata_policy() -> None:
+    absent_optional = _valid_template()
+    for field in ("target", "coinbaseaux", "mutable", "noncerange", "longpollid"):
+        absent_optional.pop(field, None)
+    assert parse_block_template(absent_optional).transaction_count == 0
+
+    present_optional = _valid_template()
+    present_optional["workid"] = "synthetic-work-identity"
+    assert parse_block_template(present_optional).work_id == "synthetic-work-identity"
+
+    unknown_metadata = _valid_template()
+    unknown_metadata["private-arbitrary-key"] = {"private": "template-value"}
+    parsed = parse_block_template(unknown_metadata)
+    assert "private-arbitrary-key" not in repr(parsed)
+    assert "template-value" not in repr(parsed)
+
+
+def test_template_malformed_optional_and_arbitrary_keys_never_escape() -> None:
+    malformed_optional = _valid_template()
+    malformed_optional["longpollid"] = {"private": "template-value"}
+    with pytest.raises(BlockTemplateError) as caught:
+        parse_block_template(malformed_optional)
+    assert caught.value.category == "invalid_type"
+    assert caught.value.field_path == "longpollid"
+    assert "template-value" not in str(caught.value)
+
+    arbitrary_nested_key = _valid_template()
+    arbitrary_nested_key["coinbaseaux"] = {
+        "flags": "",
+        "private-cookie-contents": "private-rpc-credentials",
+    }
+    with pytest.raises(BlockTemplateError) as caught:
+        parse_block_template(arbitrary_nested_key)
+    assert caught.value.category == "invalid_optional_field"
+    assert caught.value.field_path == "coinbaseaux"
+    representation = repr(caught.value)
+    assert "private-cookie-contents" not in representation
+    assert "private-rpc-credentials" not in representation
+
+
+def test_transaction_identity_diagnostic_contains_no_transaction_value() -> None:
+    raw = _legacy_transaction()
+    template = _valid_template([raw])
+    transactions = template["transactions"]
+    assert isinstance(transactions, list)
+    assert isinstance(transactions[0], dict)
+    private_identifier = "00" * 32
+    transactions[0]["txid"] = private_identifier
+
+    with pytest.raises(BlockTemplateError) as caught:
+        parse_block_template(template)
+
+    assert caught.value.category == "invalid_transaction_identity"
+    assert caught.value.field_path == "transactions[].txid"
+    assert private_identifier not in str(caught.value)
+    assert private_identifier not in repr(caught.value)
 
 
 def test_merkle_root_vectors_cover_odd_duplication_and_byte_order() -> None:

@@ -203,12 +203,77 @@ def test_readiness_is_read_only_sanitized_and_closes_rpc(
     assert "Chain: regtest" in output
     assert "Template RPC: available" in output
     contents = log.read_text(encoding="utf-8")
+    records = [json.loads(line) for line in contents.splitlines()]
+    assert [record["event"] for record in records] == [
+        "command_started",
+        "bitcoin_rpc_connected",
+        "bitcoin_readiness_stage",
+        "bitcoin_readiness_stage",
+        "bitcoin_readiness_stage",
+        "bitcoin_readiness_stage",
+        "solo_template_received",
+        "command_completed",
+    ]
+    assert [
+        record["stage"] for record in records if record["event"] == "bitcoin_readiness_stage"
+    ] == [
+        "rpc_authenticated",
+        "chain_verified",
+        "synchronization_verified",
+        "template_rpc_reachable",
+    ]
     for secret in (_PAYOUT, _PASSWORD, _SCRIPT.hex(), "21" * 32, "207fffff"):
         assert secret not in output
         assert secret not in contents
     summary = summarize_jsonl(log)
     assert summary.completed_run_count == 1
     assert dict(summary.completion_outcome_counts) == {"ready": 1}
+
+
+def test_readiness_template_failure_emits_only_sanitized_diagnostic_stages(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _rpc_environment(monkeypatch)
+    monkeypatch.setenv("HASHPHERE_ENABLE_BITCOIN_RPC_CHECK", "1")
+    template = _raw_template()
+    private_value = "private-template-value"
+    template["version"] = private_value
+    client = FakeClient(template)
+    log = tmp_path / "readiness-failure.jsonl"
+
+    status = run_bitcoin_command(
+        ["bitcoin-core-check", "--event-log", str(log)],
+        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+    )
+
+    assert status == 1
+    assert client.template_calls == 1
+    assert client.proposals == client.submissions == []
+    assert client.closed
+    output = capsys.readouterr()
+    contents = log.read_text(encoding="utf-8")
+    records = [json.loads(line) for line in contents.splitlines()]
+    assert [record["event"] for record in records] == [
+        "command_started",
+        "bitcoin_rpc_connected",
+        "bitcoin_readiness_stage",
+        "bitcoin_readiness_stage",
+        "bitcoin_readiness_stage",
+        "bitcoin_readiness_stage",
+        "command_failed",
+    ]
+    failure = records[-1]
+    assert failure["error_category"] == "template_parse_failure"
+    assert failure["template_error_category"] == "invalid_type"
+    assert failure["template_field_path"] == "version"
+    assert failure["template_expected_kind"] == "bounded integer"
+    assert failure["template_observed_condition"] == "wrong_type"
+    for private_material in (private_value, _PAYOUT, _PASSWORD, _SCRIPT.hex()):
+        assert private_material not in output.out
+        assert private_material not in output.err
+        assert private_material not in contents
 
 
 def test_solo_requires_both_distinct_opt_ins_before_rpc(

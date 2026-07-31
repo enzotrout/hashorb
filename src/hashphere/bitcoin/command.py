@@ -21,7 +21,7 @@ from hashphere.bitcoin.solo import (
     SoloMiningResult,
     run_solo_mining,
 )
-from hashphere.bitcoin.template import BlockTemplate, parse_block_template
+from hashphere.bitcoin.template import BlockTemplate, BlockTemplateError, parse_block_template
 from hashphere.compute import (
     LocalComputeProfileCapabilities,
     MiningComputeBackend,
@@ -321,10 +321,6 @@ def _run_readiness_check(events: EventSink, client_factory: RpcClientFactory) ->
         command_settings = SoloCommandSettings.from_env()
         client = client_factory(BitcoinRpcSettings.from_env())
         chain_info = client.get_blockchain_info()
-        if chain_info.initial_block_download:
-            raise ValueError("Bitcoin Core initial block download is active")
-        client.validate_address(command_settings.payout_address)
-        template = parse_block_template(client.get_block_template())
         events.emit(
             "bitcoin_rpc_connected",
             fields={
@@ -332,6 +328,15 @@ def _run_readiness_check(events: EventSink, client_factory: RpcClientFactory) ->
                 "initial_block_download": chain_info.initial_block_download,
             },
         )
+        _emit_readiness_stage(events, "rpc_authenticated")
+        _emit_readiness_stage(events, "chain_verified")
+        if chain_info.initial_block_download:
+            raise ValueError("Bitcoin Core initial block download is active")
+        _emit_readiness_stage(events, "synchronization_verified")
+        client.validate_address(command_settings.payout_address)
+        raw_template = client.get_block_template()
+        _emit_readiness_stage(events, "template_rpc_reachable")
+        template = parse_block_template(raw_template)
         events.emit(
             "solo_template_received",
             fields={"template_identity": template.fingerprint, "replacement": False},
@@ -341,7 +346,7 @@ def _run_readiness_check(events: EventSink, client_factory: RpcClientFactory) ->
         events.emit("command_completed", fields={"outcome": "ready"})
     except (BitcoinRpcError, ValueError) as exc:
         category = _error_category(exc)
-        _emit_command_failed(events, "readiness", category)
+        _emit_command_failed(events, "readiness", category, error=exc)
         print(f"Bitcoin Core readiness check failed ({category}).", file=sys.stderr)
         return 1
     finally:
@@ -434,7 +439,7 @@ def _run_solo_command(
         )
     except (BitcoinRpcError, RuntimeError, ValueError) as exc:
         category = _error_category(exc)
-        _emit_command_failed(events, "solo_mining", category)
+        _emit_command_failed(events, "solo_mining", category, error=exc)
         print(f"Solo mining failed ({category}).", file=sys.stderr)
         return 1
     finally:
@@ -582,12 +587,39 @@ def _emit_strategy(events: EventSink, strategy: MiningSearchStrategy) -> None:
     )
 
 
-def _emit_command_failed(events: EventSink, stage: str, category: str) -> None:
+def _emit_readiness_stage(events: EventSink, stage: str) -> None:
+    if stage not in {
+        "rpc_authenticated",
+        "chain_verified",
+        "synchronization_verified",
+        "template_rpc_reachable",
+    }:
+        raise ValueError("readiness stage is invalid")
+    events.emit("bitcoin_readiness_stage", fields={"stage": stage})
+
+
+def _emit_command_failed(
+    events: EventSink,
+    stage: str,
+    category: str,
+    *,
+    error: BaseException | None = None,
+) -> None:
+    fields = {"stage": stage, "error_category": category}
+    if isinstance(error, BlockTemplateError):
+        fields.update(
+            {
+                "template_error_category": error.category,
+                "template_field_path": error.field_path,
+                "template_expected_kind": error.expected_kind,
+                "template_observed_condition": error.observed_condition,
+            }
+        )
     try:
         events.emit(
             "command_failed",
             level="ERROR",
-            fields={"stage": stage, "error_category": category},
+            fields=fields,
         )
     except EventLogError:
         pass
@@ -598,6 +630,8 @@ def _error_category(error: BaseException) -> str:
         return error.category
     if isinstance(error, _SignalError):
         return "signal_failure"
+    if isinstance(error, BlockTemplateError):
+        return "template_parse_failure"
     name = type(error).__name__
     if "Compute" in name:
         return "compute_failure"
