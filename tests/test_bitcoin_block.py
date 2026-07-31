@@ -49,7 +49,12 @@ def _transaction(marker: int = 0x11) -> bytes:
     )
 
 
-def _template(*, transactions: tuple[bytes, ...] = (), flags: bytes = b"\x51"):
+def _template(
+    *,
+    transactions: tuple[bytes, ...] = (),
+    flags: bytes = b"\x51",
+    height: int = 128,
+):
     parsed_transactions = tuple(parse_transaction(raw) for raw in transactions)
     witness_root = calculate_hash_merkle_root(
         (bytes(32), *(transaction.wtxid for transaction in parsed_transactions))
@@ -62,7 +67,7 @@ def _template(*, transactions: tuple[bytes, ...] = (), flags: bytes = b"\x51"):
             "version": 0x20000000,
             "bits": "207fffff",
             "target": f"{target:064x}",
-            "height": 128,
+            "height": height,
             "curtime": 1_700_000_001,
             "mintime": 1_700_000_000,
             "transactions": [
@@ -104,6 +109,25 @@ def _template(*, transactions: tuple[bytes, ...] = (), flags: bytes = b"\x51"):
 )
 def test_script_number_height_boundaries(height: int, expected: str) -> None:
     assert encode_script_number(height).hex() == expected
+
+
+@pytest.mark.parametrize(
+    ("height", "expected_prefix"),
+    [
+        (1, b"\x51"),
+        (2, b"\x52"),
+        (16, b"\x60"),
+        (17, b"\x01\x11"),
+        (128, b"\x02\x80\x00"),
+    ],
+)
+def test_coinbase_bip34_prefix_matches_core_script_integer_encoding(
+    height: int, expected_prefix: bytes
+) -> None:
+    coinbase = build_solo_coinbase(_template(height=height), _PAYOUT_SCRIPT, 0)
+
+    prefix_matches = coinbase.script_sig.startswith(expected_prefix)
+    assert prefix_matches
 
 
 def test_coinbase_exact_shape_value_outputs_and_witness_reserved_value() -> None:

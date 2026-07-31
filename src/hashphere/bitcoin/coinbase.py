@@ -51,11 +51,21 @@ def encode_script_number(value: int) -> bytes:
 
 
 def encode_push_data(data: bytes) -> bytes:
-    """Encode a minimal direct push used for the bounded BIP34 height."""
+    """Encode one bounded minimal direct data push."""
 
     if not isinstance(data, bytes) or len(data) > 75:
         raise CoinbaseConstructionError("direct push data must contain at most 75 bytes")
     return bytes((len(data),)) + data
+
+
+def encode_bip34_height(height: int) -> bytes:
+    """Match Bitcoin Core's consensus ``CScript() << height`` serialization."""
+
+    if not isinstance(height, int) or isinstance(height, bool) or height < 0:
+        raise CoinbaseConstructionError("block height must be a nonnegative integer")
+    if 1 <= height <= 16:
+        return bytes((0x50 + height,))
+    return encode_push_data(encode_script_number(height))
 
 
 def build_solo_coinbase(
@@ -78,10 +88,9 @@ def build_solo_coinbase(
     if not 0 <= template.coinbase_value <= MAX_MONEY:
         raise CoinbaseConstructionError("coinbase value exceeds the money limit")
 
-    height = encode_script_number(template.height)
     script_sig = b"".join(
         (
-            encode_push_data(height),
+            encode_bip34_height(template.height),
             template.coinbase_aux_flags,
             HASHPHERE_COINBASE_MARKER,
             coinbase_extra_nonce.to_bytes(COINBASE_EXTRA_NONCE_BYTES, "little"),

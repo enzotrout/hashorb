@@ -5,8 +5,12 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
-from hashphere.bitcoin.coinbase import SoloCoinbase, build_solo_coinbase
-from hashphere.bitcoin.serialization import encode_compact_size
+from hashphere.bitcoin.coinbase import (
+    SoloCoinbase,
+    build_solo_coinbase,
+    encode_bip34_height,
+)
+from hashphere.bitcoin.serialization import ByteReader, encode_compact_size
 from hashphere.bitcoin.template import BlockTemplate, calculate_hash_merkle_root
 from hashphere.bitcoin.transaction import parse_transaction
 from hashphere.mining.header import hash_block_header
@@ -170,6 +174,7 @@ def assemble_solo_block(variant: SoloWorkVariant, nonce: int) -> SoloBlockCandid
         variant.coinbase.transaction.raw,
         *(item.transaction.raw for item in variant.template.transactions),
     )
+    _verify_coinbase_height_prefix(transaction_raw[0], variant.template.height)
     reparsed = tuple(parse_transaction(raw) for raw in transaction_raw)
     merkle_root = calculate_hash_merkle_root(tuple(item.txid for item in reparsed))
     if merkle_root != variant.merkle_root or header[36:68] != merkle_root:
@@ -193,6 +198,23 @@ def assemble_solo_block(variant: SoloWorkVariant, nonce: int) -> SoloBlockCandid
         weight=weight,
         work_identity=variant.identity,
     )
+
+
+def _verify_coinbase_height_prefix(raw: bytes, height: int) -> None:
+    """Independently read the coinbase input and enforce Core's BIP34 prefix."""
+
+    reader = ByteReader(raw)
+    reader.read(4)
+    if reader.read(2) != b"\x00\x01":
+        raise SoloBlockError("candidate coinbase lacks the required witness serialization")
+    if reader.read_compact_size(maximum=1) != 1:
+        raise SoloBlockError("candidate coinbase must contain exactly one input")
+    if reader.read(32) != bytes(32) or int.from_bytes(reader.read(4), "little") != 0xFFFFFFFF:
+        raise SoloBlockError("candidate coinbase input outpoint is invalid")
+    script_length = reader.read_compact_size(maximum=100)
+    script_sig = reader.read(script_length)
+    if not script_sig.startswith(encode_bip34_height(height)):
+        raise SoloBlockError("candidate coinbase height prefix is invalid")
 
 
 def _work_identity(
