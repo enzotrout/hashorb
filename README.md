@@ -275,6 +275,12 @@ metadata as optional but strict when present, and reports parser failures only
 through allowlisted field/category enums. That gate performed no hashing,
 proposal, submission, wallet, or Stratum operation.
 
+The bounded `solo-hash` mainnet gate then completed on device-0 CUDA through
+Lite after 698 ranges and 69,719,476,736 hashes at an aggregate 2.834 GH/s. It
+ended at the 60-second runtime limit after two templates, one replacement, and
+18 work variants, with zero candidates, proposals, submissions, Stratum
+connections, or failures.
+
 ## Choose a performance profile
 
 **What:** Profiles translate Lite, Auto, Max, or Custom intent into existing

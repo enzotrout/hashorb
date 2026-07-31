@@ -234,6 +234,10 @@ dependency indices and optional fee/sigops metadata while retaining strict
 transaction identities, weight, SegWit, target, and mandatory-rule checks.
 Readiness parser diagnostics expose only fixed categories and field paths.
 
+The submission-free `solo-hash` gate also passed against a live mainnet
+template through Lite/device-0 CUDA. Its bounded 60-second run ended normally
+with zero proposal, submission, or Stratum activity.
+
 ---
 
 # Next Session

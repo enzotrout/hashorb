@@ -229,6 +229,14 @@ validated the configured destination, resolved the Lite profile, and recorded
 one completed readiness run with no hashes, candidates, proposals, submissions,
 wallet actions, or Stratum commands.
 
+The subsequent bounded mainnet `solo-hash` gate resolved Lite to device-0
+CUDA, used sequential scheduling, and reached its 60-second runtime limit after
+698 ranges and 69,719,476,736 hashes at 2.834 GH/s aggregate. It received two
+templates, replaced work once, used 18 variants, advanced the coinbase extra
+nonce 16 times, and rolled no timestamps. It completed once with zero
+candidates, suppressions, proposals, submissions, Stratum activity, or
+failures. The temporary sanitized log was summarized and removed.
+
 Physical two-GPU validation, Windows CUDA, portable CUDA wheels, the dashboard,
 distributed workers, long polling, and adaptive tuning remain deferred.
 
