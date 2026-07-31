@@ -72,6 +72,7 @@ def smoke_distribution(distribution_directory: Path) -> None:
         commands = [
             [str(command), "--help"],
             [str(command), "bitcoin-core-check", "--help"],
+            [str(command), "solo-hash", "--help"],
             [str(command), "solo-mine", "--help"],
             [str(command), "doctor", "--log-dir", "logs"],
             *[

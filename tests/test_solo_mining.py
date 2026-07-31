@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
+import hashphere.bitcoin.solo as solo_module
 from hashphere.bitcoin.rpc import (
     BitcoinRpcRemoteError,
     BitcoinRpcTransportError,
@@ -13,6 +14,8 @@ from hashphere.bitcoin.rpc import (
     SubmissionOutcome,
 )
 from hashphere.bitcoin.solo import (
+    HashOnlyCandidatePolicy,
+    ProposalSubmissionCandidatePolicy,
     SoloMiningError,
     SoloMiningOutcome,
     SoloMiningPlan,
@@ -110,9 +113,9 @@ class RecordingObserver:
         del roll_count
         self.events.append("time")
 
-    def candidate_found(self, variant: object, candidate: object) -> None:
-        del variant, candidate
-        self.events.append("candidate")
+    def candidate_found(self, variant: object, submission_enabled: bool) -> None:
+        del variant
+        self.events.append("candidate_submission" if submission_enabled else "candidate_hash_only")
 
     def candidate_suppressed(self, reason: str, suppression_count: int) -> None:
         del reason, suppression_count
@@ -138,6 +141,7 @@ def _run(
     plan: SoloMiningPlan | None = None,
     stop: StopController | None = None,
     fetch_template: object | None = None,
+    candidate_policy: object | None = None,
     propose_block: object | None = None,
     submit_block: object | None = None,
     observer: RecordingObserver | None = None,
@@ -159,15 +163,21 @@ def _run(
         strategy=select_search_strategy(strategy_name),
         stop_token=StopController() if stop is None else stop,
         fetch_template=selected_fetch,  # type: ignore[arg-type]
-        propose_block=(
-            (lambda block: ProposalOutcome(True, "accepted"))
-            if propose_block is None
-            else propose_block
-        ),  # type: ignore[arg-type]
-        submit_block=(
-            (lambda block: SubmissionOutcome(True, "accepted"))
-            if submit_block is None
-            else submit_block
+        candidate_policy=(
+            ProposalSubmissionCandidatePolicy(
+                propose_block=(
+                    (lambda block: ProposalOutcome(True, "accepted"))
+                    if propose_block is None
+                    else propose_block
+                ),  # type: ignore[arg-type]
+                submit_block=(
+                    (lambda block: SubmissionOutcome(True, "accepted"))
+                    if submit_block is None
+                    else submit_block
+                ),  # type: ignore[arg-type]
+            )
+            if candidate_policy is None
+            else candidate_policy
         ),  # type: ignore[arg-type]
         observer=observer,
         monotonic_clock=(lambda: 0.0) if monotonic_clock is None else monotonic_clock,  # type: ignore[arg-type]
@@ -217,13 +227,42 @@ def test_current_candidate_is_independently_proposed_submitted_and_terminal_once
         "variant",
         "range",
         "template",
-        "candidate",
+        "candidate_submission",
         "proposal",
         "template",
         "submission",
         "completed",
     ]
     assert observer.terminal_results == [result]
+
+
+def test_hash_only_candidate_is_verified_without_block_or_rpc_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observer = RecordingObserver()
+
+    def forbidden_assembly(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("hash-only policy must not assemble a block")
+
+    monkeypatch.setattr(solo_module, "assemble_solo_block", forbidden_assembly)
+    policy = HashOnlyCandidatePolicy()
+
+    result = _run(candidate_policy=policy, observer=observer)
+
+    assert result.outcome is SoloMiningOutcome.CANDIDATE_FOUND_SUBMISSION_DISABLED
+    assert result.candidates_found == 1
+    assert result.proposals_performed == result.submissions_performed == 0
+    assert observer.events == [
+        "template",
+        "variant",
+        "range",
+        "template",
+        "candidate_hash_only",
+        "completed",
+    ]
+    assert not hasattr(policy, "propose_block")
+    assert not hasattr(policy, "submit_block")
 
 
 def test_proposal_rejection_prevents_submission() -> None:
@@ -298,6 +337,7 @@ def test_candidate_on_replaced_template_is_suppressed_without_proposal() -> None
         template=initial,
         fetch_template=lambda: replacement,
         observer=observer,
+        candidate_policy=HashOnlyCandidatePolicy(),
         propose_block=lambda block: (
             proposal_calls.append(block) or ProposalOutcome(True, "accepted")
         ),
@@ -346,7 +386,11 @@ def test_user_stop_and_runtime_expiry_suppress_post_compute_candidate() -> None:
         clock_value[0] = 1.0
         return result
 
-    expired = _run(backend=PythonSequentialBackend(expired_search), stop=runtime_stop)
+    expired = _run(
+        backend=PythonSequentialBackend(expired_search),
+        stop=runtime_stop,
+        candidate_policy=HashOnlyCandidatePolicy(),
+    )
     assert expired.outcome is SoloMiningOutcome.RUNTIME_LIMIT_REACHED
     assert expired.candidates_suppressed == 1
 
@@ -399,6 +443,7 @@ def test_same_template_is_not_stale_and_periodic_replacement_is_prompt() -> None
         backend=PythonSequentialBackend(search),
         plan=SoloMiningPlan(0, 2, max_chunks=2, template_poll_seconds=30),
         fetch_template=lambda: calls.pop(0),
+        candidate_policy=HashOnlyCandidatePolicy(),
         monotonic_clock=lambda: now[0],
         nonce_limit=4,
     )
@@ -419,6 +464,7 @@ def test_both_strategies_preserve_exact_bounded_coverage(strategy_name: str) -> 
     result = _run(
         backend=PythonSequentialBackend(search),
         plan=SoloMiningPlan(0, 2, max_chunks=4),
+        candidate_policy=HashOnlyCandidatePolicy(),
         strategy_name=strategy_name,
         nonce_limit=8,
     )
@@ -434,7 +480,10 @@ def test_backend_candidate_flag_is_not_trusted_without_python_verification() -> 
         return NonceSearchResult(start, stop, 1, 1, match)
 
     with pytest.raises(SoloMiningError, match="independent verification"):
-        _run(backend=PythonSequentialBackend(dishonest))
+        _run(
+            backend=PythonSequentialBackend(dishonest),
+            candidate_policy=HashOnlyCandidatePolicy(),
+        )
 
 
 def test_profile_pacing_wait_is_stop_aware_and_called_between_ranges() -> None:

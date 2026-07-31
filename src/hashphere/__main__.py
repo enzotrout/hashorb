@@ -119,6 +119,7 @@ _NONCE_LIMIT = 1 << 32
 _MAX_NONCE = _NONCE_LIMIT - 1
 _KNOWN_LOG_COMMANDS = (
     "bitcoin-core-check",
+    "solo-hash",
     "solo-mine",
     "stratum-handshake",
     "stratum-observe",
@@ -128,7 +129,7 @@ _KNOWN_LOG_COMMANDS = (
 )
 _USAGE = (
     "Usage: hashphere "
-    "{bitcoin-core-check,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
+    "{bitcoin-core-check,solo-hash,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
     "stratum-mine-chunks,stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} "
     "[options]"
 )
@@ -1096,7 +1097,11 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
         if summary.solo_weighted_hashes_per_second is None
         else f"{summary.solo_weighted_hashes_per_second:.2f}"
     )
-    print("\nBitcoin Core true solo:")
+    bitcoin_command_counts = dict(summary.command_counts)
+    print("\nBitcoin Core solo work:")
+    print(f"  Read-only check runs: {bitcoin_command_counts.get('bitcoin-core-check', 0)}")
+    print(f"  Hash-only runs: {bitcoin_command_counts.get('solo-hash', 0)}")
+    print(f"  Submission-capable runs: {bitcoin_command_counts.get('solo-mine', 0)}")
     for chain, count in summary.solo_chain_counts:
         print(f"  Chain {chain}: {count}")
     print(f"  Templates received: {summary.solo_template_count}")
@@ -1114,6 +1119,10 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
         print(f"  Proposal {category}: {count}")
     for category, count in summary.solo_submission_outcome_counts:
         print(f"  Submission {category}: {count}")
+    print(f"  Proposal calls: {sum(count for _, count in summary.solo_proposal_outcome_counts)}")
+    print(
+        f"  Submission calls: {sum(count for _, count in summary.solo_submission_outcome_counts)}"
+    )
     print(f"  Accepted blocks: {summary.solo_accepted_block_count}")
     print(f"  Rejected blocks: {summary.solo_rejected_block_count}")
     print(f"  RPC failures: {summary.solo_rpc_failure_count}")

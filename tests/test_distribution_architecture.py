@@ -246,6 +246,22 @@ def test_environment_template_uses_one_nonconflicting_configuration_vocabulary()
     assert "Lifecycle limits, liveness thresholds, reconnect policy" in text
     assert "YOUR_BITCOIN_ADDRESS" in text
     assert len(re.findall(r"^HASHPHERE_COMPUTE_PROFILE=", text, flags=re.MULTILINE)) == 0
+    assert "# HASHPHERE_ENABLE_TRUE_SOLO_HASHING=1" in text
+    assert len(re.findall(r"^HASHPHERE_ENABLE_TRUE_SOLO_HASHING=", text, flags=re.MULTILINE)) == 0
+
+
+def test_bitcoin_core_documentation_preserves_three_command_boundaries() -> None:
+    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    architecture = (_ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    true_solo = (_ROOT / "docs" / "14-bitcoin-core-true-solo.md").read_text(encoding="utf-8")
+
+    for text in (readme, architecture, true_solo):
+        assert "bitcoin-core-check" in text
+        assert "solo-hash" in text
+        assert "solo-mine" in text
+    assert "cannot earn a reward" in readme
+    assert "no proposal callable" in architecture
+    assert "HASHPHERE_ENABLE_TRUE_SOLO_HASHING=1" in true_solo
 
 
 def test_platform_directories_contain_no_miner_copy() -> None:

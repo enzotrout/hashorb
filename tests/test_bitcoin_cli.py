@@ -21,6 +21,7 @@ from hashphere.bitcoin.rpc import (
 from hashphere.bitcoin.template import calculate_hash_merkle_root
 from hashphere.compute.python import PythonSequentialBackend
 from hashphere.crypto import double_sha256
+from hashphere.mining import NonceSearchResult
 from hashphere.mining.target import decode_compact_target
 from hashphere.observability import summarize_jsonl
 
@@ -96,6 +97,7 @@ def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(solo_settings_module, "load_dotenv", lambda: False)
     for name in (
         "HASHPHERE_ENABLE_BITCOIN_RPC_CHECK",
+        "HASHPHERE_ENABLE_TRUE_SOLO_HASHING",
         "HASHPHERE_ENABLE_TRUE_SOLO",
         "HASHPHERE_ENABLE_BLOCK_SUBMISSION",
         "HASHPHERE_SOLO_PAYOUT_ADDRESS",
@@ -139,6 +141,12 @@ def _solo_arguments(*extra: str) -> list[str]:
     ]
 
 
+def _solo_hash_arguments(*extra: str) -> list[str]:
+    arguments = _solo_arguments(*extra)
+    arguments[0] = "solo-hash"
+    return arguments
+
+
 def test_help_has_no_rpc_profile_or_package_side_effects(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -151,9 +159,125 @@ def test_help_has_no_rpc_profile_or_package_side_effects(
         return FakeClient()
 
     assert run_bitcoin_command(["solo-mine", "--help"], rpc_client_factory=factory) == 0  # type: ignore[arg-type]
+    assert run_bitcoin_command(["solo-hash", "--help"], rpc_client_factory=factory) == 0  # type: ignore[arg-type]
     assert run_bitcoin_command(["bitcoin-core-check", "--help"], rpc_client_factory=factory) == 0  # type: ignore[arg-type]
     assert calls == 0
     assert "solo-mine" in capsys.readouterr().out
+
+
+def test_solo_hash_requires_its_distinct_opt_in_before_rpc(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _rpc_environment(monkeypatch)
+    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+    calls = 0
+
+    def factory(settings: object) -> FakeClient:
+        nonlocal calls
+        del settings
+        calls += 1
+        return FakeClient()
+
+    status = run_bitcoin_command(
+        _solo_hash_arguments(),
+        rpc_client_factory=factory,  # type: ignore[arg-type]
+    )
+
+    assert status == 1
+    assert calls == 0
+    assert "configuration_failure" in capsys.readouterr().err
+
+
+def test_solo_hash_constructs_backend_only_after_template_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _rpc_environment(monkeypatch)
+    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    client = FakeClient()
+    client.template["version"] = "private-invalid-template-value"
+    backend_calls = 0
+
+    def backend(name: str, **options: object) -> PythonSequentialBackend:
+        nonlocal backend_calls
+        del name, options
+        backend_calls += 1
+        return PythonSequentialBackend()
+
+    status = run_bitcoin_command(
+        _solo_hash_arguments(),
+        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        backend_selector=backend,
+    )
+
+    assert status == 1
+    assert client.template_calls == 1
+    assert backend_calls == 0
+    assert client.proposals == client.submissions == []
+    assert client.closed
+
+
+def test_solo_hash_has_no_proposal_or_submission_capability_even_when_armed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _rpc_environment(monkeypatch)
+    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+    monkeypatch.setenv("HASHPHERE_STRATUM_HOST", "invalid\nstratum")
+    client = FakeClient()
+    log = tmp_path / "solo-hash.jsonl"
+
+    status = run_bitcoin_command(
+        _solo_hash_arguments("--event-log", str(log)),
+        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        backend_selector=lambda name, **options: PythonSequentialBackend(),
+    )
+
+    assert status == 0
+    assert client.proposals == client.submissions == []
+    assert client.closed
+    assert not hasattr(command_module._HashOnlyTemplateSource(client), "propose_block")
+    assert not hasattr(command_module._HashOnlyTemplateSource(client), "submit_block")
+    records = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert [record["event"] for record in records].count("command_completed") == 1
+    candidate = next(record for record in records if record["event"] == "solo_candidate_found")
+    assert candidate["submission_enabled"] is False
+    completed = records[-1]
+    assert completed["outcome"] == "candidate_found_submission_disabled"
+    assert completed["proposals"] == completed["submissions"] == 0
+    summary = summarize_jsonl(log)
+    assert summary.command_counts == (("solo-hash", 1),)
+    assert summary.completed_run_count == 1
+    assert summary.failed_run_count == 0
+    assert summary.solo_candidate_count == 1
+    assert summary.solo_proposal_outcome_counts == ()
+    assert summary.solo_submission_outcome_counts == ()
+    assert "submission unavailable" in capsys.readouterr().out
+    contents = log.read_text(encoding="utf-8")
+    for private_value in (_PAYOUT, _PASSWORD, _SCRIPT.hex(), "21" * 32, "207fffff"):
+        assert private_value not in contents
+
+
+def test_solo_hash_chunk_limit_completes_without_candidate_or_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _rpc_environment(monkeypatch)
+    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    client = FakeClient()
+
+    def exhausted(work: object, start: int, stop: int) -> NonceSearchResult:
+        del work
+        return NonceSearchResult(start, stop, stop - start, 10, None)
+
+    status = run_bitcoin_command(
+        _solo_hash_arguments(),
+        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        backend_selector=lambda name, **options: PythonSequentialBackend(exhausted),
+    )
+
+    assert status == 0
+    assert client.proposals == client.submissions == []
 
 
 def test_readiness_requires_its_own_opt_in_before_rpc(
@@ -440,15 +564,20 @@ def test_solo_argument_errors_have_no_rpc_side_effect(
         ("custom", ("--backend", "python", "--chunk-size", "128"), "python"),
     ],
 )
+@pytest.mark.parametrize("command", ["solo-hash", "solo-mine"])
 def test_all_profiles_drive_the_same_solo_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
     profile: str,
     extra: tuple[str, ...],
     expected_backend: str,
+    command: str,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+    if command == "solo-hash":
+        monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    else:
+        monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
+        monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
 
     class CpuOnlyCapabilities:
         def logical_cpu_count(self) -> int:
@@ -476,7 +605,7 @@ def test_all_profiles_drive_the_same_solo_lifecycle(
         return PythonSequentialBackend()
 
     status = run_bitcoin_command(
-        ["solo-mine", "--profile", profile, *extra, "--max-chunks", "1"],
+        [command, "--profile", profile, *extra, "--max-chunks", "1"],
         rpc_client_factory=lambda settings: FakeClient(),  # type: ignore[arg-type]
         backend_selector=backend,
     )
@@ -489,14 +618,19 @@ def test_all_profiles_drive_the_same_solo_lifecycle(
     ("device_arguments", "expected_backend"),
     [(("--device", "0"), "cuda"), (("--devices", "0,1"), "cuda-multi")],
 )
+@pytest.mark.parametrize("command", ["solo-hash", "solo-mine"])
 def test_mocked_cuda_profile_selection_reaches_existing_backend_boundary(
     monkeypatch: pytest.MonkeyPatch,
     device_arguments: tuple[str, ...],
     expected_backend: str,
+    command: str,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+    if command == "solo-hash":
+        monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    else:
+        monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
+        monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
 
     class CudaCapabilities:
         def logical_cpu_count(self) -> int:
@@ -525,7 +659,7 @@ def test_mocked_cuda_profile_selection_reaches_existing_backend_boundary(
 
     status = run_bitcoin_command(
         [
-            "solo-mine",
+            command,
             "--profile",
             "auto",
             *device_arguments,
@@ -538,6 +672,72 @@ def test_mocked_cuda_profile_selection_reaches_existing_backend_boundary(
 
     assert status == 0
     assert selected == [expected_backend]
+
+
+@pytest.mark.parametrize(
+    ("backend_name", "controls"),
+    [
+        ("python", ()),
+        ("native", ()),
+        ("native-parallel", ("--workers", "2")),
+        ("cuda", ("--device", "0", "--threads-per-block", "256")),
+        ("cuda-multi", ("--devices", "0,1", "--threads-per-block", "256")),
+    ],
+)
+def test_solo_hash_reaches_every_existing_backend_boundary_without_submission(
+    monkeypatch: pytest.MonkeyPatch,
+    backend_name: str,
+    controls: tuple[str, ...],
+) -> None:
+    _rpc_environment(monkeypatch)
+    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+
+    class AllCapabilities:
+        def logical_cpu_count(self) -> int:
+            return 2
+
+        def native_available(self) -> bool:
+            return True
+
+        def cuda_available(self, device_ordinal: int, threads_per_block: int) -> bool:
+            del device_ordinal, threads_per_block
+            return True
+
+        def cuda_multi_available(
+            self, device_ordinals: tuple[int, ...], threads_per_block: int
+        ) -> bool:
+            del device_ordinals, threads_per_block
+            return True
+
+    monkeypatch.setattr(command_module, "LocalComputeProfileCapabilities", AllCapabilities)
+    selected: list[str] = []
+    client = FakeClient()
+
+    def backend(name: str, **options: object) -> PythonSequentialBackend:
+        del options
+        selected.append(name)
+        return PythonSequentialBackend()
+
+    status = run_bitcoin_command(
+        [
+            "solo-hash",
+            "--profile",
+            "custom",
+            "--backend",
+            backend_name,
+            "--chunk-size",
+            "128",
+            *controls,
+            "--max-chunks",
+            "1",
+        ],
+        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        backend_selector=backend,
+    )
+
+    assert status == 0
+    assert selected == [backend_name]
+    assert client.proposals == client.submissions == []
 
 
 def test_solo_signal_scope_translates_and_restores_portable_handlers(
@@ -556,9 +756,11 @@ def test_solo_signal_scope_translates_and_restores_portable_handlers(
     )
 
     scope.install()
-    handler = installed[signal.SIGINT]
-    assert callable(handler)
-    handler(signal.SIGINT, None)
-    assert controller.stop_requested
+    for signal_number in command_module._supported_signals():
+        handler = installed[signal_number]
+        assert callable(handler)
+        handler(signal_number, None)
+        assert controller.stop_requested
     scope.restore()
-    assert installed[signal.SIGINT] is previous
+    for signal_number in command_module._supported_signals():
+        assert installed[signal_number] is previous

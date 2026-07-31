@@ -37,6 +37,7 @@ from hashphere.config.solo import (
     BLOCK_SUBMISSION_FLAG,
     SOLO_PAYOUT_ADDRESS,
     TRUE_SOLO_FLAG,
+    TRUE_SOLO_HASHING_FLAG,
     SoloCommandSettings,
     require_exact_opt_in,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "Settings",
     "SoloCommandSettings",
     "TRUE_SOLO_FLAG",
+    "TRUE_SOLO_HASHING_FLAG",
     "parse_cuda_devices",
     "parse_compute_profile",
     "parse_compute_profile_overrides_from_env",

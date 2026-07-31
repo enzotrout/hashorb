@@ -351,7 +351,7 @@ def _aggregate_known_event(
         category = _nonblank_string(_required(record, "error_category"), "error_category")
         accumulator.command_failure_count += 1
         accumulator.failure_counts[(stage, category)] += 1
-        if record["command"] in {"solo-mine", "bitcoin-core-check"} and category in {
+        if record["command"] in {"solo-hash", "solo-mine", "bitcoin-core-check"} and category in {
             "authentication_failure",
             "protocol_failure",
             "remote_failure",
@@ -401,18 +401,28 @@ def _aggregate_known_event(
         accumulator.solo_total_hashes_checked += hashes
         accumulator.solo_total_elapsed_ns += elapsed
     elif event == "solo_candidate_found":
+        if record["command"] == "solo-hash" and "submission_enabled" not in record:
+            raise _RecordValidationError("hash-only candidate must declare submission disabled")
+        if "submission_enabled" in record:
+            submission_enabled = _actual_bool(record["submission_enabled"], "submission_enabled")
+            if record["command"] == "solo-hash" and submission_enabled:
+                raise _RecordValidationError("hash-only candidate cannot enable submission")
         accumulator.solo_candidate_count += 1
     elif event == "solo_candidate_suppressed":
         _nonblank_string(_required(record, "reason"), "reason")
         _positive_int(_required(record, "suppression_count"), "suppression_count")
         accumulator.solo_candidate_suppressed_count += 1
     elif event == "solo_block_proposal_completed":
+        if record["command"] == "solo-hash":
+            raise _RecordValidationError("hash-only run cannot contain a proposal event")
         accepted = _actual_bool(_required(record, "accepted"), "accepted")
         category = _nonblank_string(_required(record, "status_category"), "status_category")
         if accepted != (category == "accepted"):
             raise _RecordValidationError("proposal category contradicts acceptance")
         accumulator.solo_proposal_outcome_counts[category] += 1
     elif event == "solo_block_submission_completed":
+        if record["command"] == "solo-hash":
+            raise _RecordValidationError("hash-only run cannot contain a submission event")
         accepted = _actual_bool(_required(record, "accepted"), "accepted")
         category = _nonblank_string(_required(record, "status_category"), "status_category")
         if accepted != (category == "accepted"):

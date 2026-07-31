@@ -14,8 +14,15 @@ from typing import Protocol
 
 from dotenv import load_dotenv
 
-from hashphere.bitcoin.rpc import BitcoinCoreRpcClient, BitcoinRpcError
+from hashphere.bitcoin.rpc import (
+    BitcoinCoreRpcClient,
+    BitcoinRpcError,
+    BlockchainInfo,
+    PayoutDestination,
+)
 from hashphere.bitcoin.solo import (
+    HashOnlyCandidatePolicy,
+    ProposalSubmissionCandidatePolicy,
     SoloMiningOutcome,
     SoloMiningPlan,
     SoloMiningResult,
@@ -36,6 +43,7 @@ from hashphere.config import (
     DEFAULT_CUDA_DEVICES,
     DEFAULT_CUDA_THREADS_PER_BLOCK,
     TRUE_SOLO_FLAG,
+    TRUE_SOLO_HASHING_FLAG,
     BitcoinRpcSettings,
     ComputeProfileOverrides,
     ResolvedComputeProfile,
@@ -54,10 +62,11 @@ from hashphere.mining import (
 )
 from hashphere.observability import EventLogError, EventSink, JsonlEventSink, NullEventSink
 
-BITCOIN_COMMANDS = frozenset({"bitcoin-core-check", "solo-mine"})
+BITCOIN_COMMANDS = frozenset({"bitcoin-core-check", "solo-hash", "solo-mine"})
 _SUCCESSFUL_SOLO_OUTCOMES = frozenset(
     {
         SoloMiningOutcome.BLOCK_ACCEPTED,
+        SoloMiningOutcome.CANDIDATE_FOUND_SUBMISSION_DISABLED,
         SoloMiningOutcome.CANDIDATE_SUPPRESSED,
         SoloMiningOutcome.CHUNK_LIMIT_REACHED,
         SoloMiningOutcome.RUNTIME_LIMIT_REACHED,
@@ -68,6 +77,24 @@ _SUCCESSFUL_SOLO_OUTCOMES = frozenset(
 
 type RpcClientFactory = Callable[[BitcoinRpcSettings], BitcoinCoreRpcClient]
 type BackendSelector = Callable[..., MiningComputeBackend]
+
+
+class _HashOnlyTemplateSource:
+    """Expose only read-only template operations to the hash-only command."""
+
+    __slots__ = ("__client",)
+
+    def __init__(self, client: BitcoinCoreRpcClient) -> None:
+        self.__client = client
+
+    def get_blockchain_info(self) -> BlockchainInfo:
+        return self.__client.get_blockchain_info()
+
+    def validate_address(self, address: str) -> PayoutDestination:
+        return self.__client.validate_address(address)
+
+    def get_block_template(self) -> dict[str, object]:
+        return self.__client.get_block_template()
 
 
 class _SignalError(RuntimeError):
@@ -184,9 +211,12 @@ class _SoloEventObserver:
     def timestamp_rolled(self, roll_count: int) -> None:
         self.events.emit("solo_timestamp_rolled", fields={"roll_count": roll_count})
 
-    def candidate_found(self, variant: object, candidate: object) -> None:
-        del variant, candidate
-        self.events.emit("solo_candidate_found")
+    def candidate_found(self, variant: object, submission_enabled: bool) -> None:
+        del variant
+        self.events.emit(
+            "solo_candidate_found",
+            fields={"submission_enabled": submission_enabled},
+        )
 
     def candidate_suppressed(self, reason: str, suppression_count: int) -> None:
         self.events.emit(
@@ -247,12 +277,13 @@ def run_bitcoin_command(
             parsed,
             lambda events: _run_readiness_check(events, rpc_client_factory),
         )
-    if parsed.command == "solo-mine":
+    if parsed.command in {"solo-hash", "solo-mine"}:
         return _with_events(
             parsed,
             lambda events: _run_solo_command(
                 parsed,
                 events,
+                hash_only=parsed.command == "solo-hash",
                 rpc_client_factory=rpc_client_factory,
                 backend_selector=(
                     _default_backend_selector if backend_selector is None else backend_selector
@@ -268,23 +299,27 @@ def _command_parser() -> argparse.ArgumentParser:
     check = commands.add_parser("bitcoin-core-check", exit_on_error=False)
     check.add_argument("--event-log")
 
-    mine = commands.add_parser("solo-mine", exit_on_error=False)
-    mine.add_argument("--profile")
-    mine.add_argument("--backend")
-    mine.add_argument("--workers", type=_positive_integer)
-    mine.add_argument("--device", type=_nonnegative_integer)
-    mine.add_argument("--devices")
-    mine.add_argument("--threads-per-block", type=_positive_integer)
-    mine.add_argument("--chunk-size", type=_positive_integer)
-    mine.add_argument("--inter-range-delay-seconds", type=_nonnegative_float)
-    mine.add_argument("--strategy", default=None)
-    mine.add_argument("--start-nonce", type=_nonnegative_integer, default=0)
-    mine.add_argument("--max-chunks", type=_positive_integer)
-    mine.add_argument("--max-runtime-seconds", type=_positive_float)
-    mine.add_argument("--template-poll-seconds", type=_positive_float, default=30.0)
-    mine.add_argument("--max-time-roll-seconds", type=_nonnegative_integer, default=7_200)
-    mine.add_argument("--event-log")
+    _add_solo_search_options(commands.add_parser("solo-hash", exit_on_error=False))
+    _add_solo_search_options(commands.add_parser("solo-mine", exit_on_error=False))
     return parser
+
+
+def _add_solo_search_options(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--profile")
+    command.add_argument("--backend")
+    command.add_argument("--workers", type=_positive_integer)
+    command.add_argument("--device", type=_nonnegative_integer)
+    command.add_argument("--devices")
+    command.add_argument("--threads-per-block", type=_positive_integer)
+    command.add_argument("--chunk-size", type=_positive_integer)
+    command.add_argument("--inter-range-delay-seconds", type=_nonnegative_float)
+    command.add_argument("--strategy", default=None)
+    command.add_argument("--start-nonce", type=_nonnegative_integer, default=0)
+    command.add_argument("--max-chunks", type=_positive_integer)
+    command.add_argument("--max-runtime-seconds", type=_positive_float)
+    command.add_argument("--template-poll-seconds", type=_positive_float, default=30.0)
+    command.add_argument("--max-time-roll-seconds", type=_nonnegative_integer, default=7_200)
+    command.add_argument("--event-log")
 
 
 def _with_events(arguments: _Arguments, operation: Callable[[EventSink], int]) -> int:
@@ -370,6 +405,7 @@ def _run_solo_command(
     arguments: argparse.Namespace,
     events: EventSink,
     *,
+    hash_only: bool,
     rpc_client_factory: RpcClientFactory,
     backend_selector: BackendSelector,
 ) -> int:
@@ -380,19 +416,27 @@ def _run_solo_command(
     cleanup_failed = False
     try:
         load_dotenv()
-        require_exact_opt_in(TRUE_SOLO_FLAG)
-        require_exact_opt_in(BLOCK_SUBMISSION_FLAG)
+        if hash_only:
+            require_exact_opt_in(TRUE_SOLO_HASHING_FLAG)
+        else:
+            require_exact_opt_in(TRUE_SOLO_FLAG)
+            require_exact_opt_in(BLOCK_SUBMISSION_FLAG)
         command_settings = SoloCommandSettings.from_env()
         plan, profile, strategy = _resolve_solo_policy(arguments)
         client = rpc_client_factory(BitcoinRpcSettings.from_env())
-        chain_info = client.get_blockchain_info()
+        template_source = _HashOnlyTemplateSource(client) if hash_only else client
+        chain_info = template_source.get_blockchain_info()
         if chain_info.initial_block_download:
             raise ValueError("Bitcoin Core initial block download is active")
-        destination = client.validate_address(command_settings.payout_address)
-        initial_template = parse_block_template(client.get_block_template())
+        destination = template_source.validate_address(command_settings.payout_address)
+        initial_template = parse_block_template(template_source.get_block_template())
         print(f"Bitcoin Core chain: {chain_info.chain}")
         print("Payout destination: configured and valid for this chain")
-        print("Mining mode: direct Bitcoin Core true solo (no Stratum)")
+        print(
+            "Mining mode: Bitcoin Core hash only (submission unavailable)"
+            if hash_only
+            else "Mining mode: direct Bitcoin Core true solo (no Stratum)"
+        )
 
         backend = backend_selector(
             profile.backend_name,
@@ -424,6 +468,14 @@ def _run_solo_command(
         _emit_backend(events, backend)
         _emit_strategy(events, strategy)
         observer = _SoloEventObserver(events)
+        candidate_policy = (
+            HashOnlyCandidatePolicy()
+            if hash_only
+            else ProposalSubmissionCandidatePolicy(
+                client.propose_block,
+                client.submit_block,
+            )
+        )
         result = run_solo_mining(
             plan,
             chain=chain_info.chain,
@@ -432,15 +484,16 @@ def _run_solo_command(
             backend=backend,
             strategy=strategy,
             stop_token=stop_controller,
-            fetch_template=lambda: parse_block_template(client.get_block_template()),
-            propose_block=client.propose_block,
-            submit_block=client.submit_block,
+            fetch_template=lambda: parse_block_template(template_source.get_block_template()),
+            candidate_policy=candidate_policy,
             observer=observer,
         )
     except (BitcoinRpcError, RuntimeError, ValueError) as exc:
         category = _error_category(exc)
-        _emit_command_failed(events, "solo_mining", category, error=exc)
-        print(f"Solo mining failed ({category}).", file=sys.stderr)
+        stage = "solo_hashing" if hash_only else "solo_mining"
+        _emit_command_failed(events, stage, category, error=exc)
+        label = "Solo hashing" if hash_only else "Solo mining"
+        print(f"{label} failed ({category}).", file=sys.stderr)
         return 1
     finally:
         if signal_scope is not None:
@@ -484,7 +537,8 @@ def _run_solo_command(
             "hashes_checked": result.total_hashes_checked,
         },
     )
-    print(f"Solo mining outcome: {result.outcome.value}")
+    label = "Solo hashing" if hash_only else "Solo mining"
+    print(f"{label} outcome: {result.outcome.value}")
     print(f"Completed ranges: {result.chunks_completed}")
     print(f"Hashes checked: {result.total_hashes_checked}")
     return 0 if result.outcome in _SUCCESSFUL_SOLO_OUTCOMES else 1

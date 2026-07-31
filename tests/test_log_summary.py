@@ -162,6 +162,36 @@ def test_two_runs_restart_sequences_and_count_commands_and_outcomes(tmp_path: Pa
     assert summary.completion_outcome_counts == (("handshake_succeeded", 2),)
 
 
+@pytest.mark.parametrize(
+    ("event", "fields"),
+    [
+        (
+            "solo_block_proposal_completed",
+            {"accepted": True, "status_category": "accepted"},
+        ),
+        (
+            "solo_block_submission_completed",
+            {"accepted": True, "status_category": "accepted"},
+        ),
+        ("solo_candidate_found", {"submission_enabled": True}),
+    ],
+)
+def test_hash_only_logs_reject_submission_capabilities(
+    tmp_path: Path, event: str, fields: dict[str, object]
+) -> None:
+    path = tmp_path / "invalid-hash-only.jsonl"
+    write_records(
+        path,
+        [
+            event_record("run", 1, "command_started", command="solo-hash"),
+            event_record("run", 2, event, command="solo-hash", **fields),
+        ],
+    )
+
+    with pytest.raises(LogSummaryError, match="hash-only"):
+        summarize_jsonl(path)
+
+
 def test_profile_events_are_summarized_and_future_names_remain_readable(tmp_path: Path) -> None:
     path = tmp_path / "profiles.jsonl"
     write_records(

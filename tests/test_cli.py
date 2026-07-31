@@ -213,7 +213,7 @@ def test_non_mining_log_file_argument_errors_are_rejected(
     assert cli_module.main(arguments) == 2
     assert capsys.readouterr().err == (
         "Usage: hashphere "
-        "{bitcoin-core-check,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
+        "{bitcoin-core-check,solo-hash,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
         "stratum-mine-chunks,stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} "
         "[options]\n"
     )
@@ -714,7 +714,7 @@ def test_unknown_command_prints_usage(
     assert captured.out == ""
     assert captured.err.strip() == (
         "Usage: hashphere "
-        "{bitcoin-core-check,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
+        "{bitcoin-core-check,solo-hash,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
         "stratum-mine-chunks,stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} "
         "[options]"
     )

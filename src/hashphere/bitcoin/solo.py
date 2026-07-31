@@ -5,16 +5,11 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-from hashphere.bitcoin.block import (
-    SoloBlockCandidate,
-    SoloWorkVariant,
-    assemble_solo_block,
-    prepare_solo_work,
-)
+from hashphere.bitcoin.block import SoloWorkVariant, assemble_solo_block, prepare_solo_work
 from hashphere.bitcoin.coinbase import MAX_COINBASE_EXTRA_NONCE, next_coinbase_extra_nonce
 from hashphere.bitcoin.rpc import BitcoinRpcError, ProposalOutcome, SubmissionOutcome
 from hashphere.bitcoin.template import BlockTemplate
@@ -34,6 +29,7 @@ _PACING_SLICE_SECONDS = 0.1
 type TemplateFetcher = Callable[[], BlockTemplate]
 type BlockProposer = Callable[[bytes], ProposalOutcome]
 type BlockSubmitter = Callable[[bytes], SubmissionOutcome]
+type TemplateRefresher = Callable[[], bool]
 type StopAwareWaiter = Callable[[float, StopToken], None]
 
 
@@ -55,6 +51,7 @@ class SoloMiningOutcome(StrEnum):
     PROPOSAL_REJECTED = "proposal_rejected"
     PROPOSAL_UNAVAILABLE = "proposal_unavailable"
     CANDIDATE_SUPPRESSED = "candidate_suppressed"
+    CANDIDATE_FOUND_SUBMISSION_DISABLED = "candidate_found_submission_disabled"
     BLOCK_ACCEPTED = "block_accepted"
     BLOCK_REJECTED = "block_rejected"
     RPC_FAILURE = "rpc_failure"
@@ -164,7 +161,7 @@ class SoloMiningObserver(Protocol):
     def timestamp_rolled(self, roll_count: int) -> None:
         """Observe a safe cumulative timestamp-roll counter."""
 
-    def candidate_found(self, variant: SoloWorkVariant, candidate: SoloBlockCandidate) -> None:
+    def candidate_found(self, variant: SoloWorkVariant, submission_enabled: bool) -> None:
         """Observe one locally verified current candidate."""
 
     def candidate_suppressed(self, reason: str, suppression_count: int) -> None:
@@ -209,8 +206,8 @@ class NullSoloMiningObserver:
     def timestamp_rolled(self, roll_count: int) -> None:
         del roll_count
 
-    def candidate_found(self, variant: SoloWorkVariant, candidate: SoloBlockCandidate) -> None:
-        del variant, candidate
+    def candidate_found(self, variant: SoloWorkVariant, submission_enabled: bool) -> None:
+        del variant, submission_enabled
 
     def candidate_suppressed(self, reason: str, suppression_count: int) -> None:
         del reason, suppression_count
@@ -223,6 +220,144 @@ class NullSoloMiningObserver:
 
     def completed(self, result: SoloMiningResult) -> None:
         del result
+
+
+@dataclass(frozen=True, slots=True)
+class CandidatePolicyResult:
+    """Sanitized terminal decision returned by one candidate capability."""
+
+    outcome: SoloMiningOutcome
+    proposal_category: str | None = None
+    submission_category: str | None = None
+    suppressions: int = 0
+    suppression_reason: str | None = None
+    proposals: int = 0
+    submissions: int = 0
+
+
+@runtime_checkable
+class SoloCandidatePolicy(Protocol):
+    """Capability boundary applied only after independent candidate verification."""
+
+    def handle_verified_candidate(
+        self,
+        variant: SoloWorkVariant,
+        nonce: int,
+        *,
+        refresh_template: TemplateRefresher,
+        stop_token: StopToken,
+        observer: SoloMiningObserver,
+    ) -> CandidatePolicyResult:
+        """Return one terminal decision without exposing candidate material."""
+
+
+@dataclass(frozen=True, slots=True)
+class HashOnlyCandidatePolicy:
+    """Stop on a verified current candidate without block or RPC capabilities."""
+
+    def handle_verified_candidate(
+        self,
+        variant: SoloWorkVariant,
+        nonce: int,
+        *,
+        refresh_template: TemplateRefresher,
+        stop_token: StopToken,
+        observer: SoloMiningObserver,
+    ) -> CandidatePolicyResult:
+        del nonce, refresh_template, stop_token
+        observer.candidate_found(variant, False)
+        return CandidatePolicyResult(SoloMiningOutcome.CANDIDATE_FOUND_SUBMISSION_DISABLED)
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalSubmissionCandidatePolicy:
+    """Own the only proposal and submission capabilities in the solo lifecycle."""
+
+    propose_block: BlockProposer = field(repr=False)
+    submit_block: BlockSubmitter = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not callable(self.propose_block) or not callable(self.submit_block):
+            raise SoloMiningValidationError("submission policy callables are invalid")
+
+    def handle_verified_candidate(
+        self,
+        variant: SoloWorkVariant,
+        nonce: int,
+        *,
+        refresh_template: TemplateRefresher,
+        stop_token: StopToken,
+        observer: SoloMiningObserver,
+    ) -> CandidatePolicyResult:
+        candidate = assemble_solo_block(variant, nonce)
+        observer.candidate_found(variant, True)
+        try:
+            proposal = self.propose_block(candidate.serialized_block)
+        except BitcoinRpcError as exc:
+            if getattr(exc, "code_category", None) == "method_unavailable":
+                return CandidatePolicyResult(SoloMiningOutcome.PROPOSAL_UNAVAILABLE)
+            return CandidatePolicyResult(
+                SoloMiningOutcome.RPC_FAILURE,
+                suppressions=1,
+                suppression_reason="rpc_invalidated",
+            )
+        if not isinstance(proposal, ProposalOutcome):
+            raise SoloMiningValidationError("propose_block must return ProposalOutcome")
+        observer.proposal_completed(proposal)
+        if not proposal.accepted:
+            return CandidatePolicyResult(
+                SoloMiningOutcome.PROPOSAL_REJECTED,
+                proposal_category=proposal.category,
+                proposals=1,
+            )
+        try:
+            changed = refresh_template()
+        except BitcoinRpcError:
+            return CandidatePolicyResult(
+                SoloMiningOutcome.RPC_FAILURE,
+                proposal_category=proposal.category,
+                suppressions=1,
+                suppression_reason="rpc_invalidated",
+                proposals=1,
+            )
+        if changed:
+            return CandidatePolicyResult(
+                SoloMiningOutcome.CANDIDATE_SUPPRESSED,
+                proposal_category=proposal.category,
+                suppressions=1,
+                suppression_reason="template_replaced",
+                proposals=1,
+            )
+        if stop_token.stop_requested:
+            return CandidatePolicyResult(
+                _stop_outcome(stop_token),
+                proposal_category=proposal.category,
+                suppressions=1,
+                suppression_reason="stop_requested",
+                proposals=1,
+            )
+        try:
+            submission = self.submit_block(candidate.serialized_block)
+        except BitcoinRpcError:
+            return CandidatePolicyResult(
+                SoloMiningOutcome.RPC_FAILURE,
+                proposal_category=proposal.category,
+                proposals=1,
+            )
+        if not isinstance(submission, SubmissionOutcome):
+            raise SoloMiningValidationError("submit_block must return SubmissionOutcome")
+        observer.submission_completed(submission)
+        return CandidatePolicyResult(
+            (
+                SoloMiningOutcome.BLOCK_ACCEPTED
+                if submission.accepted
+                else SoloMiningOutcome.BLOCK_REJECTED
+            ),
+            proposal_category=proposal.category,
+            submission_category=submission.category,
+            proposals=1,
+            submissions=1,
+        )
 
 
 @dataclass(slots=True)
@@ -267,8 +402,7 @@ def run_solo_mining(
     strategy: MiningSearchStrategy,
     stop_token: StopToken,
     fetch_template: TemplateFetcher,
-    propose_block: BlockProposer,
-    submit_block: BlockSubmitter,
+    candidate_policy: SoloCandidatePolicy,
     observer: SoloMiningObserver | None = None,
     monotonic_clock: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], float] = time.time,
@@ -276,7 +410,7 @@ def run_solo_mining(
     initial_coinbase_extra_nonce: int = 0,
     nonce_limit: int = NONCE_LIMIT,
 ) -> SoloMiningResult:
-    """Mine bounded ranges, suppress stale candidates, propose, and submit once."""
+    """Search bounded solo work and delegate only verified current candidates."""
 
     _validate_run_inputs(
         plan,
@@ -287,8 +421,7 @@ def run_solo_mining(
         strategy,
         stop_token,
         fetch_template,
-        propose_block,
-        submit_block,
+        candidate_policy,
         monotonic_clock,
         wall_clock,
         initial_coinbase_extra_nonce,
@@ -491,63 +624,27 @@ def run_solo_mining(
                 suppressions += 1
                 selected_observer.candidate_suppressed("stop_requested", suppressions)
                 return finish(_stop_outcome(stop_token))
-            candidate = assemble_solo_block(current_variant, result.match.nonce)
             candidates += 1
-            selected_observer.candidate_found(current_variant, candidate)
-            try:
-                proposal = propose_block(candidate.serialized_block)
-            except BitcoinRpcError as exc:
-                if getattr(exc, "code_category", None) == "method_unavailable":
-                    return finish(SoloMiningOutcome.PROPOSAL_UNAVAILABLE)
-                suppressions += 1
-                selected_observer.candidate_suppressed("rpc_invalidated", suppressions)
-                return finish(SoloMiningOutcome.RPC_FAILURE)
-            if not isinstance(proposal, ProposalOutcome):
-                raise SoloMiningValidationError("propose_block must return ProposalOutcome")
-            proposals += 1
-            selected_observer.proposal_completed(proposal)
-            if not proposal.accepted:
-                return finish(
-                    SoloMiningOutcome.PROPOSAL_REJECTED,
-                    proposal_category=proposal.category,
+            decision = candidate_policy.handle_verified_candidate(
+                current_variant,
+                result.match.nonce,
+                refresh_template=lambda: refresh_template(force=True),
+                stop_token=stop_token,
+                observer=selected_observer,
+            )
+            if not isinstance(decision, CandidatePolicyResult):
+                raise SoloMiningValidationError(
+                    "candidate policy must return CandidatePolicyResult"
                 )
-            try:
-                changed = refresh_template(force=True)
-            except BitcoinRpcError:
-                suppressions += 1
-                selected_observer.candidate_suppressed("rpc_invalidated", suppressions)
-                return finish(
-                    SoloMiningOutcome.RPC_FAILURE,
-                    proposal_category=proposal.category,
-                )
-            if changed:
-                suppressions += 1
-                selected_observer.candidate_suppressed("template_replaced", suppressions)
-                return finish(
-                    SoloMiningOutcome.CANDIDATE_SUPPRESSED,
-                    proposal_category=proposal.category,
-                )
-            if stop_token.stop_requested:
-                suppressions += 1
-                selected_observer.candidate_suppressed("stop_requested", suppressions)
-                return finish(_stop_outcome(stop_token), proposal_category=proposal.category)
-            try:
-                submission = submit_block(candidate.serialized_block)
-            except BitcoinRpcError:
-                return finish(
-                    SoloMiningOutcome.RPC_FAILURE,
-                    proposal_category=proposal.category,
-                )
-            if not isinstance(submission, SubmissionOutcome):
-                raise SoloMiningValidationError("submit_block must return SubmissionOutcome")
-            submissions += 1
-            selected_observer.submission_completed(submission)
+            suppressions += decision.suppressions
+            if decision.suppression_reason is not None:
+                selected_observer.candidate_suppressed(decision.suppression_reason, suppressions)
+            proposals += decision.proposals
+            submissions += decision.submissions
             return finish(
-                SoloMiningOutcome.BLOCK_ACCEPTED
-                if submission.accepted
-                else SoloMiningOutcome.BLOCK_REJECTED,
-                proposal_category=proposal.category,
-                submission_category=submission.category,
+                decision.outcome,
+                proposal_category=decision.proposal_category,
+                submission_category=decision.submission_category,
             )
 
         if plan.max_chunks is not None and chunks >= plan.max_chunks:
@@ -586,8 +683,7 @@ def _validate_run_inputs(
     strategy: object,
     stop_token: object,
     fetch_template: object,
-    propose_block: object,
-    submit_block: object,
+    candidate_policy: object,
     monotonic_clock: object,
     wall_clock: object,
     initial_coinbase_extra_nonce: object,
@@ -608,10 +704,10 @@ def _validate_run_inputs(
     validate_search_strategy_compatibility(strategy, backend.capabilities)
     if not isinstance(stop_token, StopToken):
         raise SoloMiningValidationError("stop_token must implement StopToken")
+    if not isinstance(candidate_policy, SoloCandidatePolicy):
+        raise SoloMiningValidationError("candidate_policy must implement SoloCandidatePolicy")
     for callback, name in (
         (fetch_template, "fetch_template"),
-        (propose_block, "propose_block"),
-        (submit_block, "submit_block"),
         (monotonic_clock, "monotonic_clock"),
         (wall_clock, "wall_clock"),
     ):

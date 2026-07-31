@@ -12,7 +12,12 @@ import time
 import pytest
 
 from hashphere.bitcoin import BitcoinCoreRpcClient, BitcoinRpcError, parse_block_template
-from hashphere.bitcoin.solo import SoloMiningOutcome, SoloMiningPlan, run_solo_mining
+from hashphere.bitcoin.solo import (
+    ProposalSubmissionCandidatePolicy,
+    SoloMiningOutcome,
+    SoloMiningPlan,
+    run_solo_mining,
+)
 from hashphere.compute.python import PythonSequentialBackend
 from hashphere.config.bitcoin_rpc import BitcoinRpcSettings
 from hashphere.mining import StopController, select_search_strategy
@@ -152,8 +157,10 @@ def test_isolated_regtest_constructs_proposes_and_submits_complete_block() -> No
                 strategy=select_search_strategy("sequential"),
                 stop_token=StopController(),
                 fetch_template=lambda: parse_block_template(client.get_block_template()),
-                propose_block=client.propose_block,
-                submit_block=client.submit_block,
+                candidate_policy=ProposalSubmissionCandidatePolicy(
+                    client.propose_block,
+                    client.submit_block,
+                ),
             )
 
             assert result.outcome is SoloMiningOutcome.BLOCK_ACCEPTED, (
