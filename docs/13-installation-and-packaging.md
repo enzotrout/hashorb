@@ -63,10 +63,12 @@ design. The image or wheel must never bundle the NVIDIA host driver.
 
 ### Docker CPU
 
-The repository-root `Dockerfile` pins a controlled Python patch version. A full
-Debian builder compiles the CPU wheel; the slim final image contains neither a
-compiler nor uv. The final user is the unprivileged `hashsphere` account with
-numeric UID/GID 10001. `/app/logs` is writable and declared as a volume.
+The repository-root `Dockerfile` pins a controlled Python patch version and the
+multi-architecture digest of both Python base images. Dependabot may propose a
+reviewed digest update. A full Debian builder compiles the CPU wheel; the slim
+final image contains neither a compiler nor uv. The final user is the
+unprivileged `hashsphere` account with numeric UID/GID 10001. `/app/logs` is
+writable and declared as a volume. The offline doctor is also the health check.
 
 The JSON exec entry point is `hashsphere`, so there is no shell or uv parent
 between Docker and Python. The default command is offline doctor, not mining.
@@ -224,6 +226,16 @@ assumptions:
 docker volume create hashphere-logs
 docker run --rm -v hashphere-logs:/app/logs hashphere:cpu \
   doctor --log-dir /app/logs
+```
+
+The offline image also supports a read-only root, dropped capabilities, and
+`no-new-privileges` when the log path is a writable volume or tmpfs:
+
+```bash
+docker run --rm --read-only \
+  --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 \
+  --cap-drop=ALL --security-opt=no-new-privileges \
+  hashphere:cpu
 ```
 
 Live operation remains explicit and was not executed by packaging validation.

@@ -11,13 +11,14 @@ def test_dockerfile_builds_cpu_wheel_and_has_a_minimal_nonroot_runtime() -> None
     text = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "ARG PYTHON_VERSION=3.13.14" in text
-    assert "-bookworm AS builder" in text
-    assert "-slim-bookworm AS runtime" in text
+    assert "-bookworm@sha256:" in text
+    assert "-slim-bookworm@sha256:" in text
     assert "HASHPHERE_BUILD_CUDA=0" in text
     assert "python -m pip wheel" in text
     assert "USER hashphere" in text
     assert 'ENTRYPOINT ["hashsphere"]' in text
     assert 'CMD ["doctor", "--log-dir", "/app/logs"]' in text
+    assert 'CMD ["hashsphere", "doctor", "--log-dir", "/app/logs"]' in text
     assert "uv run" not in text
     assert "stratum-mine" not in text
     assert "HASHPHERE_BITCOIN_ADDRESS" not in text
