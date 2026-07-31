@@ -94,11 +94,13 @@ data, bits, and targets are never observable fields.
 
 The coinbase has version 2, locktime zero, exactly one null outpoint input,
 index and sequence `0xffffffff`, and a consensus-bounded script. The script
-contains minimally encoded BIP34 height, Core's auxiliary flags, the fixed
-neutral `/Hashsphere/` marker, and a private 64-bit coinbase extra nonce. The
-first output pays exactly `coinbasevalue` satoshis to Core's validated script.
-The second is the zero-valued witness commitment. There is no other spendable
-output and no fee selection.
+starts with Core's exact `CScript() << height` BIP34 serialization: heights 1
+through 16 use `OP_1` through `OP_16`, while later heights use the minimally
+encoded script number as a data push. It then contains Core's auxiliary flags,
+the fixed neutral `/Hashsphere/` marker, and a private 64-bit coinbase extra
+nonce. The first output pays exactly `coinbasevalue` satoshis to Core's
+validated script. The second is the zero-valued witness commitment. There is
+no other spendable output and no fee selection.
 
 The ordinary block merkle tree starts with the newly derived coinbase txid,
 then exact template txids. It hashes internal-order pairs with double SHA-256
@@ -143,12 +145,17 @@ retry.
 
 ## Proposal and submission semantics
 
-Local verification is mandatory but not sufficient. The complete block is
-sent once to `getblocktemplate` proposal mode. A null result is acceptance; any
-strict rejection category prevents submission. Proposal unavailability is
-fail-closed. After the second freshness check, `submitblock` is called once.
-Only a null result means accepted. Duplicate, invalid, inconclusive, other
-rejection, and transport failure remain distinct sanitized terminal outcomes.
+Local verification is mandatory but not sufficient; Bitcoin Core remains the
+final block-validity authority. The complete block is sent once to
+`getblocktemplate` proposal mode. A null result is acceptance; an allowlisted
+Core rejection token becomes a stable category such as `bad_coinbase_height`
+or `bad_witness_commitment`. Control characters, whitespace abuse, oversized
+values, structured content, and arbitrary text are never copied into output;
+an unknown safe token becomes `other_proposal_rejection`. Every rejection
+prevents submission. Proposal unavailability is fail-closed. After the second
+freshness check, `submitblock` is called once. Only a null result means
+accepted. Duplicate, invalid, inconclusive, other rejection, and transport
+failure remain distinct sanitized terminal outcomes.
 
 No mainnet block submission was performed during implementation or validation.
 The mainnet path is the same tested builder but remains entirely operator
@@ -183,8 +190,10 @@ submission, profiles, strategies, runtime, signals, events, summary, and
 privacy. The opt-in integration test creates a new temporary regtest data
 directory, binds only loopback, uses synthetic credentials and a synthetic
 wallet-free address, submits one Hashsphere-built block, checks height, stops
-the process, and removes temporary state. It was skipped on the DGX Spark
-because no compatible `bitcoind` executable was present; nothing was installed.
+the process, and removes temporary state. It passed against Bitcoin Core
+v31.1: proposal validation accepted, `submitblock` ran exactly once, and the
+isolated chain advanced from height 0 to 1. No wallet or non-regtest node was
+used.
 
 Physical two-GPU validation, Windows CUDA, portable CUDA wheels, the dashboard,
 distributed workers, long polling, and adaptive tuning remain deferred.

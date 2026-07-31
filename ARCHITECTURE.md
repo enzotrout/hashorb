@@ -126,8 +126,10 @@ synchronous JSON-RPC-over-HTTP client for `getblockchaininfo`,
 `validateaddress`, `getblocktemplate` proposal/template modes, and
 `submitblock`. It has deterministic request identifiers, one-shot bounded HTTP
 requests, injected transport tests, exact authentication-method exclusivity,
-strict response envelopes, and sanitized error categories. No generic RPC CLI,
-connection pool, retry loop, package-import connection, or TLS claim exists.
+strict response envelopes, and allowlisted proposal-rejection categories.
+Malformed or unknown rejection content cannot enter normal output; an unknown
+safe token becomes one generic category. No generic RPC CLI, connection pool,
+retry loop, package-import connection, or TLS claim exists.
 
 `hashphere.bitcoin.template` and `transaction` strictly parse the exact modern
 template subset. They independently derive txid, wtxid, stripped size, and
@@ -138,8 +140,10 @@ witness merkle tree and zero coinbase reserved value. A short digest over all
 effective template fields is the only template identity exposed.
 
 `hashphere.bitcoin.coinbase` owns the version-2, one-input, two-output SegWit
-coinbase. It encodes BIP34 height minimally, appends Core's auxiliary flags, a
-fixed neutral Hashsphere marker, and an internal bounded 64-bit extra nonce.
+coinbase. It encodes BIP34 height with Core's exact `CScript` integer rule,
+including `OP_1` through `OP_16` at the early heights used by regtest, then
+appends Core's auxiliary flags, a fixed neutral Hashsphere marker, and an
+internal bounded 64-bit extra nonce.
 The exact template coinbase value goes to the Core-validated payout script;
 the only other output is the zero-valued witness commitment. No wallet, fee
 selection, alternate spendable output, or configurable arbitrary message is
@@ -169,6 +173,8 @@ complete block, emits one candidate, requires Core proposal acceptance, forces
 freshness again, and calls `submitblock` once. Stop, runtime expiry, replacement,
 or RPC invalidation suppresses a candidate before submission. RPC and compute
 cleanup remain command-owned, while one result owns the terminal outcome.
+Core remains the final block-validity authority; local checks are defense in
+depth and a sanitized proposal rejection always suppresses submission.
 
 `bitcoin-core-check` and `solo-mine` are separate CLI branches. The former has
 its own read-only opt-in. The latter requires independent exact mining and

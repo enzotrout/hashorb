@@ -181,7 +181,7 @@ Planned:
 
 # Current Milestone
 
-**Bitcoin Core True-Solo Architecture — Implemented, Regtest Gate Pending Locally**
+**Bitcoin Core True-Solo Architecture — Implemented and Accepted by Core Regtest**
 
 Objective:
 
@@ -221,6 +221,12 @@ remains a separate recovery milestone. Fibonacci-bounce, random, strided,
 partitioned-global, and probabilistic search orders remain a later experimental
 strategy-expansion point.
 
+The isolated wallet-free Bitcoin Core v31.1 regtest gate now accepts one
+Hashsphere-constructed block and advances the private chain from height 0 to 1.
+The gate exposed and corrected Core's consensus `CScript` integer encoding for
+BIP34 heights 1 through 16; proposal rejection categories remain sanitized and
+proposal-rejected blocks are never submitted.
+
 ---
 
 # Next Session
@@ -229,8 +235,7 @@ Continue with:
 
 **Run the new CPU packaging workflow on macOS and Windows runners, select a
 project license before publication, and run the explicit two-device hardware
-gate only on a host with at least two real CUDA devices. Run the isolated
-true-solo regtest gate when a compatible existing `bitcoind` is available.
-Keep Windows CUDA, portable CUDA wheels, Docker NVIDIA, long polling, thermal
-feedback, and runtime profile switching deferred until their prerequisites are
-cleanly validated.**
+gate only on a host with at least two real CUDA devices. Keep Windows CUDA,
+portable CUDA wheels, Docker NVIDIA, long polling, thermal feedback, and
+runtime profile switching deferred until their prerequisites are cleanly
+validated.**

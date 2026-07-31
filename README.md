@@ -249,8 +249,10 @@ sequential, orbiting-bit, chunk limits, runtime limits, SIGINT, and SIGTERM all
 retain their existing boundaries. Template polling is bounded and defaults to
 30 seconds; candidates force a freshness check before proposal and another
 after an accepted proposal. Long polling is deferred. No mainnet submission
-was executed during this milestone. The deterministic isolated regtest gate is
-implemented but skipped when a compatible existing `bitcoind` is unavailable.
+was executed during this milestone. The deterministic isolated regtest gate
+passed against Bitcoin Core v31.1: Core accepted one Hashsphere-built block and
+the isolated chain advanced from height 0 to 1 without a wallet. Proposal
+rejections remain sanitized categories and always suppress submission.
 See [`docs/14-bitcoin-core-true-solo.md`](docs/14-bitcoin-core-true-solo.md).
 
 ## Choose a performance profile
