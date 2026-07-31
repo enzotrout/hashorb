@@ -371,3 +371,101 @@ submission-capable mainnet gate, subject to operator review of the manual GitHub
 settings and re-establishment of the loopback RPC configuration before any
 readiness or mining command. This approval does not itself enable submission or
 authorize a mainnet run.
+
+## Post-rename HashOrb audit addendum
+
+- Addendum date: 2026-07-31
+- Pre-rename baseline: `910d754`
+- Migration branch: `rename/hashorb`
+- Migration implementation range: `572befb..b7cfeb5`
+
+### What
+
+The active project identity moved to HashOrb, `hashorb`, `HASHORB_`, and
+`hashorb.com` before the first public release. The Python distribution, import
+package, console command, module execution, environment configuration, native
+and CUDA qualified module names, installers, Docker image examples, workflows,
+tests, and documentation were renamed without adding a compatibility package or
+old command. A private operator migration tool is provided but was not executed
+against operator configuration.
+
+The migration commits recorded by this addendum are:
+
+- `572befb` — active package, build, configuration, workflow, Docker, test, and
+  documentation identity
+- `8688c17` — collision-safe, value-suppressing operator environment migration
+  and negative identity tests
+- `d5d8fba` — deterministic environment isolation and marker-length boundary
+  fixtures
+- `b7cfeb5` — authoritative wheel and sdist identity verification
+
+### Why
+
+The rename crossed every audited capability and build boundary. Revalidation
+was required to show that stale binaries or editable installs did not conceal an
+old package, that old-prefixed opt-ins cannot arm mining or submission, and that
+the RPC, lifecycle, native, CUDA, workflow, privacy, and container protections
+from the original audit remain intact.
+
+### Plain talk
+
+The labels changed; the miner and its safety switches did not. Clean packages
+contain only HashOrb code, old settings fail safely, and the dangerous send path
+is still available only to the separately opted-in command.
+
+### Post-rename evidence
+
+- Full deterministic suite: 2,170 passed and the same 20 intentionally gated or
+  platform-specific tests skipped. This exceeds the pre-rename 2,159-pass
+  baseline without reducing coverage.
+- Focused identity, packaging, Docker, and security architecture suite: 39
+  passed with one Windows-only installer execution skipped on Linux.
+- Capability, RPC, configuration, and solo regression suite: 229 passed with
+  one Windows-only skip. The template-only hash boundary, immutable opt-ins,
+  one-shot candidate policy, loopback-only RPC, bounded parsing, private cookie,
+  and private event-log protections remained green.
+- Clean CPU artifacts: `hashorb-0.1.0-cp313-cp313-linux_aarch64.whl` and
+  `hashorb-0.1.0.tar.gz`. Both identify `hashorb` version 0.1.0; fresh installed
+  `hashorb` and `python -m hashorb` commands passed, both old imports failed, and
+  no old console command was installed.
+- Native: the strict warning set with `-Werror` passed. Isolated ordinary and
+  ASan/UBSan builds each passed 98 native, boundary, and parallel tests. ASan
+  leak detection remained disabled only for CPython process-global retention.
+- CUDA: a clean explicit `sm_121` build passed all 13 device-0 tests, including
+  evaluated launch sizes 64/128/256/512, final nonce, randomized parity,
+  resource replacement, and one-device `cuda-multi`. This is not a physical
+  multi-GPU claim.
+- Compute-sanitizer: memcheck and initcheck each passed 13 tests with zero
+  errors; synccheck passed five relevant tests with zero errors; racecheck
+  passed five with zero hazards.
+- Bandit 1.9.4, pip-audit 2.10.1, Gitleaks 8.30.1 current-tree and full-history
+  redacted scans, Actionlint 1.7.12, offline/pedantic Zizmor 1.28.0, and Trivy
+  0.69.3 filesystem checks passed. The ephemeral CycloneDX inventory contained
+  no forbidden private field and was deleted.
+- The digest-pinned CPU image rebuilt as `hashorb:security`; non-root identity,
+  read-only root, private log tmpfs, dropped capabilities, `no-new-privileges`,
+  offline health, history privacy, and Trivy image checks passed.
+- Ruff, Ruff format, strict mypy, `uv lock --check`, and `git diff --check`
+  passed. No dependency or scanner version changed for the rename.
+
+Current-tree and fresh-artifact old-name matches are limited to this historical
+audit, the pre-release migration guide and tool, sanitized runtime legacy-key
+detection, distribution negative verification, and negative tests. Git history
+is intentionally not rewritten.
+
+HS-01 through HS-11 remain permanent finding IDs with their original
+dispositions. HS-11 remains image-only, narrowly reviewed, and expires on
+2026-10-31; its scope and expiry were not changed. No new Critical, High,
+Medium, or Low security finding was introduced by the rename. Two deterministic
+test integration assumptions—dotenv isolation and a fixed marker-length
+fixture—were corrected without changing production mining or consensus rules.
+
+Hosted Packaging and Security results are not part of this local addendum and
+must not be described as passing unless authenticated after the branch push.
+Manual GitHub security and repository-rule settings remain pending.
+
+The prior approval remains valid for the separately controlled
+submission-capable mainnet gate, subject to operator review of hosted results
+and manual GitHub settings, repository/configuration migration, and a fresh
+loopback read-only readiness check before any later live operation. This
+addendum does not enable submission or authorize a mainnet command.
