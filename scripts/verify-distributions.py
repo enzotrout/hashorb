@@ -121,7 +121,11 @@ def _verify_sdist_contents(members: Iterable[tuple[str, bytes]]) -> None:
     }
     if not required <= basenames:
         raise DistributionVerificationError("sdist is missing required source metadata")
-    metadata_names = [name for name in names if name.endswith("/PKG-INFO")]
+    metadata_names = [
+        name
+        for name in names
+        if PurePosixPath(name).name == "PKG-INFO" and len(PurePosixPath(name).parts) == 2
+    ]
     package_initializers = [name for name in names if name.endswith("/src/hashorb/__init__.py")]
     if len(metadata_names) != 1 or len(package_initializers) != 1:
         raise DistributionVerificationError("sdist project metadata or package root is ambiguous")

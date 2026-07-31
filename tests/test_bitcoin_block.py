@@ -15,8 +15,8 @@ from hashorb.bitcoin.block import (
 from hashorb.bitcoin.coinbase import (
     COINBASE_EXTRA_NONCE_BYTES,
     HASHORB_COINBASE_MARKER,
-    MAX_COINBASE_SCRIPT_BYTES,
     MAX_COINBASE_EXTRA_NONCE,
+    MAX_COINBASE_SCRIPT_BYTES,
     WITNESS_RESERVED_VALUE,
     CoinbaseConstructionError,
     build_solo_coinbase,
