@@ -139,6 +139,13 @@ and unsupported rules; and verify Core's default SegWit commitment from the
 witness merkle tree and zero coinbase reserved value. A short digest over all
 effective template fields is the only template identity exposed.
 
+Template dependency entries preserve Core's per-input 1-based ordering, so the
+same earlier transaction index may appear more than once when multiple inputs
+spend it. Fee and sigops metadata are nullable when absent and strictly bounded
+when present. Parser failures carry only allowlisted category, field-path,
+expectation, and condition enums; values and arbitrary keys never cross the
+diagnostic boundary.
+
 `hashphere.bitcoin.coinbase` owns the version-2, one-input, two-output SegWit
 coinbase. It encodes BIP34 height with Core's exact `CScript` integer rule,
 including `OP_1` through `OP_16` at the early heights used by regtest, then
@@ -182,6 +189,8 @@ submission opt-ins plus an explicit finite chunk or runtime boundary. RPC
 secrets and payout addresses are environment-only; compute/profile controls
 remain CLI-capable. Neither branch imports, configures, connects, reconnects,
 or submits to Stratum.
+Readiness emits authenticated, chain, synchronization, and template-RPC stages
+before strict parsing, but only the terminal `ready` event denotes success.
 
 ---
 

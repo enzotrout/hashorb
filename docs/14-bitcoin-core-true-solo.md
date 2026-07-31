@@ -77,6 +77,14 @@ independent bounded parser removes witness serialization to derive txid,
 retains it to derive wtxid, computes BIP141 weight, rejects trailing or
 noncanonical data, and verifies every identity Core supplied.
 
+Core constructs each `depends` array per transaction input. Multiple inputs
+that spend the same earlier template transaction therefore repeat its 1-based
+index; repetition is valid metadata and remains preserved. `fee` and `sigops`
+are unknown when absent under the GBT contract, so the model stores `None` in
+that case and validates their exact integer bounds whenever Core provides them.
+Transaction data, identities, weight, ordering, and every dependency range
+remain strict.
+
 The compact target is decoded with the existing Core-compatible sign and
 overflow rules. When Core also supplies a numeric target, the two must agree.
 Only `csv`, `segwit` (including Core's required `!segwit` marker), and `taproot`
@@ -175,6 +183,12 @@ labels candidates as shares, and old Stratum/profile logs retain their schema-1
 interpretation. Unknown future events are preserved only as validated records
 and do not invent aggregates.
 
+Readiness records authenticated, chain-verified, synchronization-verified, and
+template-RPC-reachable stages before parsing. A parser failure then carries
+only an allowlisted category, field path, expected kind, and observed condition;
+template values and arbitrary keys are never included. Intermediate stages do
+not count as a successful check: only terminal outcome `ready` does.
+
 ## Package, platform, and validation status
 
 The RPC client uses only the Python standard library and adds no package or
@@ -194,6 +208,12 @@ the process, and removes temporary state. It passed against Bitcoin Core
 v31.1: proposal validation accepted, `submitblock` ran exactly once, and the
 isolated chain advanced from height 0 to 1. No wallet or non-regtest node was
 used.
+
+The loopback cookie-authenticated read-only gate subsequently passed against a
+fully synchronized Bitcoin Core v31.1 mainnet node. It parsed the live template,
+validated the configured destination, resolved the Lite profile, and recorded
+one completed readiness run with no hashes, candidates, proposals, submissions,
+wallet actions, or Stratum commands.
 
 Physical two-GPU validation, Windows CUDA, portable CUDA wheels, the dashboard,
 distributed workers, long polling, and adaptive tuning remain deferred.

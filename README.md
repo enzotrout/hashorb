@@ -255,6 +255,14 @@ the isolated chain advanced from height 0 to 1 without a wallet. Proposal
 rejections remain sanitized categories and always suppress submission.
 See [`docs/14-bitcoin-core-true-solo.md`](docs/14-bitcoin-core-true-solo.md).
 
+The read-only gate also passed against a synchronized loopback Bitcoin Core
+v31.1 mainnet node using cookie authentication. Its live template demonstrated
+that `transactions[].depends` is per input and may repeat one earlier 1-based
+index. Hashsphere preserves those repeats, treats documented fee/sigops
+metadata as optional but strict when present, and reports parser failures only
+through allowlisted field/category enums. That gate performed no hashing,
+proposal, submission, wallet, or Stratum operation.
+
 ## Choose a performance profile
 
 **What:** Profiles translate Lite, Auto, Max, or Custom intent into existing

@@ -227,6 +227,12 @@ The gate exposed and corrected Core's consensus `CScript` integer encoding for
 BIP34 heights 1 through 16; proposal rejection categories remain sanitized and
 proposal-rejected blocks are never submitted.
 
+The read-only synchronized-mainnet readiness gate now also passes through
+loopback cookie RPC. Live Core v31.1 compatibility preserves repeated per-input
+dependency indices and optional fee/sigops metadata while retaining strict
+transaction identities, weight, SegWit, target, and mandatory-rule checks.
+Readiness parser diagnostics expose only fixed categories and field paths.
+
 ---
 
 # Next Session
