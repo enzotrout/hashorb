@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from hashphere.mining import (
+from hashorb.mining import (
     MAX_LIVENESS_SECONDS,
     StratumLivenessError,
     StratumLivenessPolicy,
     StratumLivenessTracker,
     StratumStaleReason,
 )
-from hashphere.network.stratum import (
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
 )

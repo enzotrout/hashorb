@@ -7,19 +7,19 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from hashphere.bitcoin.serialization import (
+from hashorb.bitcoin.serialization import (
     BitcoinSerializationError,
     ByteReader,
     encode_compact_size,
 )
-from hashphere.bitcoin.template import (
+from hashorb.bitcoin.template import (
     BlockTemplateError,
     calculate_hash_merkle_root,
     parse_block_template,
 )
-from hashphere.bitcoin.transaction import BitcoinTransactionError, parse_transaction
-from hashphere.crypto import double_sha256
-from hashphere.mining.target import decode_compact_target
+from hashorb.bitcoin.transaction import BitcoinTransactionError, parse_transaction
+from hashorb.crypto import double_sha256
+from hashorb.mining.target import decode_compact_target
 
 _COMMITMENT_PREFIX = bytes.fromhex("6a24aa21a9ed")
 

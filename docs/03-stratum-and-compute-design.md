@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Hashphere will initially mine through Solo CKPool using the Stratum
+HashOrb will initially mine through Solo CKPool using the Stratum
 protocol. This avoids requiring a local Bitcoin Core node and the full
 blockchain download during early development.
 
@@ -20,7 +20,7 @@ CKPool authentication uses:
 - an optional worker name appended to the address
 - a simple Stratum password, normally `x`
 
-Hashphere constructs the username as:
+HashOrb constructs the username as:
 
     <bitcoin-address>.<worker-name>
 
@@ -29,12 +29,12 @@ must not be embedded in source code.
 
 ## Worker Identity
 
-Hashphere separates the payout address from the worker identity:
+HashOrb separates the payout address from the worker identity:
 
-    HASHPHERE_BITCOIN_ADDRESS=YOUR_BITCOIN_ADDRESS
-    HASHPHERE_WORKER_NAME=auto
+    HASHORB_BITCOIN_ADDRESS=YOUR_BITCOIN_ADDRESS
+    HASHORB_WORKER_NAME=auto
 
-When `HASHPHERE_WORKER_NAME` is `auto`, Hashphere uses the machine
+When `HASHORB_WORKER_NAME` is `auto`, HashOrb uses the machine
 hostname after sanitizing it.
 
 Examples:
@@ -47,9 +47,9 @@ Docker containers whose generated hostnames may not be stable.
 
 ## Security Boundary
 
-Hashphere requires only a public Bitcoin receive address.
+HashOrb requires only a public Bitcoin receive address.
 
-Hashphere must never request, read, store, or transmit:
+HashOrb must never request, read, store, or transmit:
 
 - wallet seed phrases
 - wallet private keys
@@ -61,7 +61,7 @@ payout.
 
 ## Architectural Principle
 
-Hashphere separates the mining engine from the source of mining work.
+HashOrb separates the mining engine from the source of mining work.
 
                          +-------------------+
                          |   Mining Engine   |
@@ -389,8 +389,8 @@ belongs to the separate deterministic progression boundary below.
 ## One-Shot Live Mining Orchestration
 
 `stratum-mine-once` is guarded by both
-`HASHPHERE_ENABLE_LIVE_STRATUM=1` and
-`HASHPHERE_ENABLE_LIVE_MINING=1`. It loads `Settings`, handshakes through
+`HASHORB_ENABLE_LIVE_STRATUM=1` and
+`HASHORB_ENABLE_LIVE_MINING=1`. It loads `Settings`, handshakes through
 `StratumClient`, creates a `MiningJobAssembler` from the subscription, generates
 one `extra_nonce_2`, prepares fixed work once, searches exactly one caller-
 bounded half-open nonce range, and conditionally submits the exact returned
@@ -447,7 +447,7 @@ searched. One drain therefore records at most one replacement transition from
 the previously searched job to the final job selected for the next chunk. Both
 `clean_jobs=true` and `clean_jobs=false` switch to the newer job. The former
 invalidates old work by protocol instruction, while the latter switch is
-Hashphere's deliberate freshness policy even though the pool may still accept
+HashOrb's deliberate freshness policy even though the pool may still accept
 the old job.
 
 A replacement restarts its own nonce position at the configured start, but
@@ -745,12 +745,12 @@ optionally resolves operating intent into the existing backend, worker,
 explicit-device, validated launch-size, chunk, and pacing controls before
 backend construction. Omission preserves legacy selection.
 
-`HASHPHERE_COMPUTE_WORKERS` currently provides one explicit strict worker count
+`HASHORB_COMPUTE_WORKERS` currently provides one explicit strict worker count
 only to `native-parallel`; it does not implement a profile or alter either
 sequential backend.
 
-`HASHPHERE_CUDA_DEVICE` supplies one strict device ordinal only when `cuda` is
-explicitly selected. `HASHPHERE_CUDA_DEVICES` is required for `cuda-multi` and
+`HASHORB_CUDA_DEVICE` supplies one strict device ordinal only when `cuda` is
+explicitly selected. `HASHORB_CUDA_DEVICES` is required for `cuda-multi` and
 supplies a unique explicit ordinal list. Neither setting affects CPU backends
 or performs automatic device discovery.
 
@@ -803,7 +803,7 @@ contracts are documented in
 ## Mining and Compute Components
 
 ```text
-src/hashphere/
+src/hashorb/
 ├── compute/
 │   ├── backend.py
 │   ├── benchmark.py
@@ -835,7 +835,7 @@ or Bitcoin-domain semantics.
 
 ## Cryptographic Components
 
-    src/hashphere/crypto/
+    src/hashorb/crypto/
     └── hashing.py
 
 Responsibilities:
@@ -844,7 +844,7 @@ Responsibilities:
 
 ## Proposed Stratum Components
 
-    src/hashphere/network/
+    src/hashorb/network/
     └── stratum/
         ├── client.py
         ├── messages.py

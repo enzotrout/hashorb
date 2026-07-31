@@ -6,8 +6,8 @@ import io
 
 import pytest
 
-import hashphere.network.stratum.transport as transport_module
-from hashphere.network.stratum import (
+import hashorb.network.stratum.transport as transport_module
+from hashorb.network.stratum import (
     StratumConnectionError,
     StratumProtocolError,
     StratumReceiveTimeoutError,

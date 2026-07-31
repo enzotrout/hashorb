@@ -8,7 +8,7 @@ from dataclasses import FrozenInstanceError, dataclass, field
 
 import pytest
 
-from hashphere.mining import (
+from hashorb.mining import (
     MAX_RUNTIME_SECONDS,
     ContinuousMiningError,
     ContinuousMiningOutcome,
@@ -32,8 +32,8 @@ from hashphere.mining import (
     StratumRecoveryStatistics,
     run_continuous_mining,
 )
-from hashphere.mining.continuous import MiningNotification
-from hashphere.network.stratum import (
+from hashorb.mining.continuous import MiningNotification
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumClientState,

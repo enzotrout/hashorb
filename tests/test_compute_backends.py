@@ -6,8 +6,8 @@ from dataclasses import FrozenInstanceError, dataclass
 
 import pytest
 
-import hashphere.mining.search as search_module
-from hashphere.compute import (
+import hashorb.mining.search as search_module
+from hashorb.compute import (
     ComputeBackendCapabilities,
     ComputeBackendExecutionError,
     ComputeBackendRegistry,
@@ -25,7 +25,7 @@ from hashphere.compute import (
     list_compute_backends,
     select_compute_backend,
 )
-from hashphere.mining import (
+from hashorb.mining import (
     NonceSearchResult,
     PreparedMiningWork,
     search_nonce_range,

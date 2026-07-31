@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-import hashphere.mining.target as target_module
-from hashphere.mining import (
+import hashorb.mining.target as target_module
+from hashorb.mining import (
     MiningJob,
     TargetValidationError,
     block_hash_to_int,

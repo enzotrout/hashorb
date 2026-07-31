@@ -7,15 +7,15 @@ from collections.abc import Iterator
 
 import pytest
 
-import hashphere.compute.native as native_module
-from hashphere.compute import (
+import hashorb.compute.native as native_module
+from hashorb.compute import (
     ComputeBackendCapabilities,
     ComputeBackendExecutionError,
     ComputeBackendValidationError,
     NativeSequentialBackend,
     PythonSequentialBackend,
 )
-from hashphere.mining import (
+from hashorb.mining import (
     PreparedMiningWork,
     block_hash_to_int,
     hash_block_header,

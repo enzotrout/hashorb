@@ -6,14 +6,14 @@ from dataclasses import replace
 
 import pytest
 
-from hashphere.bitcoin.block import (
+from hashorb.bitcoin.block import (
     SoloBlockError,
     assemble_solo_block,
     prepare_solo_work,
     serialize_solo_header,
 )
-from hashphere.bitcoin.coinbase import (
-    HASHPHERE_COINBASE_MARKER,
+from hashorb.bitcoin.coinbase import (
+    HASHORB_COINBASE_MARKER,
     MAX_COINBASE_EXTRA_NONCE,
     WITNESS_RESERVED_VALUE,
     CoinbaseConstructionError,
@@ -21,12 +21,12 @@ from hashphere.bitcoin.coinbase import (
     encode_script_number,
     next_coinbase_extra_nonce,
 )
-from hashphere.bitcoin.serialization import ByteReader
-from hashphere.bitcoin.template import calculate_hash_merkle_root, parse_block_template
-from hashphere.bitcoin.transaction import parse_transaction
-from hashphere.crypto import double_sha256
-from hashphere.mining import search_nonce_range
-from hashphere.mining.target import decode_compact_target
+from hashorb.bitcoin.serialization import ByteReader
+from hashorb.bitcoin.template import calculate_hash_merkle_root, parse_block_template
+from hashorb.bitcoin.transaction import parse_transaction
+from hashorb.crypto import double_sha256
+from hashorb.mining import search_nonce_range
+from hashorb.mining.target import decode_compact_target
 
 _PAYOUT_SCRIPT = bytes.fromhex("0014" + "42" * 20)
 _COMMITMENT_PREFIX = bytes.fromhex("6a24aa21a9ed")
@@ -142,7 +142,7 @@ def test_coinbase_exact_shape_value_outputs_and_witness_reserved_value() -> None
     assert int.from_bytes(reader.read(4), "little") == 0xFFFFFFFF
     script_length = reader.read_compact_size(maximum=100)
     script_sig = reader.read(script_length)
-    assert script_sig.startswith(bytes.fromhex("02800051") + HASHPHERE_COINBASE_MARKER)
+    assert script_sig.startswith(bytes.fromhex("02800051") + HASHORB_COINBASE_MARKER)
     assert script_sig.endswith((7).to_bytes(8, "little"))
     assert int.from_bytes(reader.read(4), "little") == 0xFFFFFFFF
     assert reader.read_compact_size(maximum=2) == 2

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Hashphere uses an isolated and reproducible Python environment.
+HashOrb uses an isolated and reproducible Python environment.
 
 The project does **not** install dependencies into a platform system Python.
 
@@ -45,7 +45,7 @@ Install project dependencies:
 uv sync --locked
 ```
 
-This also attempts to build Hashphere's optional portable native C extension
+This also attempts to build HashOrb's optional portable native C extension
 when a platform compiler is available. The extension is not required for the
 default Python backend or a Python-only installation. Native development and
 clean-build instructions are documented in
@@ -100,7 +100,7 @@ uv lock --check
 
 ## Environment Separation
 
-Hashphere environment:
+HashOrb environment:
 
 ```text
 <repository>/.venv

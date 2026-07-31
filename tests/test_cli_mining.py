@@ -9,14 +9,14 @@ from pathlib import Path
 
 import pytest
 
-import hashphere.__main__ as cli_module
-from hashphere.compute import (
+import hashorb.__main__ as cli_module
+from hashorb.compute import (
     ComputeBackendCapabilities,
     ComputeBackendSelectionError,
     CudaBackend,
 )
-from hashphere.config import Settings
-from hashphere.mining import (
+from hashorb.config import Settings
+from hashorb.mining import (
     CoinbaseError,
     MiningJob,
     NonceSearchError,
@@ -25,7 +25,7 @@ from hashphere.mining import (
     PreparedMiningWork,
     SequentialSearchStrategy,
 )
-from hashphere.network.stratum import (
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumClientError,
@@ -168,7 +168,7 @@ def install_mining_fakes(
 
     def client_factory(received_settings: Settings, user_agent: str) -> FakeClient:
         assert received_settings is selected_settings
-        assert user_agent == "Hashphere/0.1"
+        assert user_agent == "HashOrb/0.1"
         return client
 
     def generate_extra_nonce_2(byte_size: int) -> str:
@@ -226,8 +226,8 @@ def install_mining_fakes(
         return original_selector(received_settings)
 
     monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select_backend)
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", "1")
     return configured
 
 
@@ -355,10 +355,10 @@ def test_live_stratum_opt_in_is_required(
 ) -> None:
     client = FakeClient([difficulty_notification(), mining_notification()])
     install_mining_fakes(monkeypatch, client)
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_STRATUM")
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_STRATUM")
 
     assert cli_module.main(mining_arguments()) == 2
-    assert "HASHPHERE_ENABLE_LIVE_STRATUM=1" in capsys.readouterr().err
+    assert "HASHORB_ENABLE_LIVE_STRATUM=1" in capsys.readouterr().err
     assert client.handshake_calls == 0
 
 
@@ -460,8 +460,8 @@ def test_unknown_backend_fails_before_client_construction_without_echoing_select
 
     monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(lambda cls: settings))
     monkeypatch.setattr(cli_module, "StratumClient", forbidden_client)
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", "1")
 
     assert cli_module.main(mining_arguments()) == 2
 
@@ -491,8 +491,8 @@ def test_unavailable_backend_fails_before_client_construction(
     monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(lambda cls: settings))
     monkeypatch.setattr(cli_module, "_select_configured_compute_backend", unavailable)
     monkeypatch.setattr(cli_module, "StratumClient", forbidden_client)
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", "1")
 
     assert cli_module.main(mining_arguments()) == 2
     assert capsys.readouterr().err == "Compute backend configuration is invalid.\n"
@@ -514,8 +514,8 @@ def test_unknown_strategy_fails_before_client_construction_without_echoing_selec
 
     monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(lambda cls: settings))
     monkeypatch.setattr(cli_module, "StratumClient", forbidden_client)
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", "1")
 
     assert cli_module.main(mining_arguments()) == 2
 
@@ -549,8 +549,8 @@ def test_incompatible_strategy_and_backend_fail_before_client_construction(
         lambda received: IncompatibleStrategy(),
     )
     monkeypatch.setattr(cli_module, "StratumClient", forbidden_client)
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", "1")
 
     assert cli_module.main(mining_arguments()) == 2
     assert client_calls == 0
@@ -565,12 +565,12 @@ def test_live_mining_opt_in_must_equal_exactly_one(
     client = FakeClient([difficulty_notification(), mining_notification()])
     install_mining_fakes(monkeypatch, client)
     if value is None:
-        monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_MINING")
+        monkeypatch.delenv("HASHORB_ENABLE_LIVE_MINING")
     else:
-        monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", value)
+        monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", value)
 
     assert cli_module.main(mining_arguments()) == 2
-    assert "HASHPHERE_ENABLE_LIVE_MINING=1" in capsys.readouterr().err
+    assert "HASHORB_ENABLE_LIVE_MINING=1" in capsys.readouterr().err
     assert client.handshake_calls == 0
 
 
@@ -1049,8 +1049,8 @@ def test_configuration_failure_is_nonzero_without_client(
         "from_env",
         classmethod(lambda cls: (_ for _ in ()).throw(ValueError("address is required"))),
     )
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", "1")
 
     assert cli_module.main(mining_arguments()) == 2
     assert "Configuration error: address is required" in capsys.readouterr().err

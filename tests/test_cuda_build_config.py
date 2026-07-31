@@ -11,7 +11,7 @@ from setuptools import Distribution
 
 def load_setup_module():
     setup_path = Path(__file__).resolve().parents[1] / "setup.py"
-    spec = importlib.util.spec_from_file_location("hashsphere_setup", setup_path)
+    spec = importlib.util.spec_from_file_location("hashorb_setup", setup_path)
     module = importlib.util.module_from_spec(spec)
     with patch.object(setuptools, "setup"):
         assert spec.loader is not None
@@ -30,7 +30,7 @@ def test_cuda_arch_flags_require_an_explicit_tested_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = load_setup_module()
-    monkeypatch.delenv("HASHPHERE_CUDA_ARCH", raising=False)
+    monkeypatch.delenv("HASHORB_CUDA_ARCH", raising=False)
 
     assert module._cuda_arch_flags("121") == ["-gencode", "arch=compute_121,code=sm_121"]
     assert module._cuda_arch_flags("120") == ["-gencode", "arch=compute_120,code=sm_120"]
@@ -42,7 +42,7 @@ def test_cuda_arch_flags_require_an_explicit_tested_target(
 def test_cuda_arch_flags_reject_malformed_or_untested_values(arch: str) -> None:
     module = load_setup_module()
 
-    with pytest.raises(RuntimeError, match="HASHPHERE_CUDA_ARCH"):
+    with pytest.raises(RuntimeError, match="HASHORB_CUDA_ARCH"):
         module._cuda_arch_flags(arch)
 
 
@@ -50,14 +50,14 @@ def test_cuda_arch_flags_read_the_explicit_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = load_setup_module()
-    monkeypatch.setenv("HASHPHERE_CUDA_ARCH", "121")
+    monkeypatch.setenv("HASHORB_CUDA_ARCH", "121")
 
     assert module._cuda_arch_flags() == ["-gencode", "arch=compute_121,code=sm_121"]
 
 
 def test_cpu_only_setup_ignores_cuda_architecture(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("HASHPHERE_BUILD_CUDA", raising=False)
-    monkeypatch.setenv("HASHPHERE_CUDA_ARCH", "not-a-compiler-flag")
+    monkeypatch.delenv("HASHORB_BUILD_CUDA", raising=False)
+    monkeypatch.setenv("HASHORB_CUDA_ARCH", "not-a-compiler-flag")
 
     load_setup_module()
 

@@ -5,6 +5,11 @@ Baseline commit: `e2ba7b4`
 Audited implementation range: `e2ba7b4..1407d3e`  
 Milestone status: complete; no unresolved Critical or High finding
 
+> Historical record: this audit was completed before the project was renamed to
+> HashOrb. The original project name is retained in this section where needed
+> to preserve the evidence and finding context. Finding IDs HS-01 through HS-11
+> are permanent and are not project-brand abbreviations.
+
 ## What
 
 This audit covers Hashsphere's Python command boundaries, Bitcoin Core RPC,

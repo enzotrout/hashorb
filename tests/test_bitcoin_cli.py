@@ -8,22 +8,22 @@ from pathlib import Path
 
 import pytest
 
-import hashphere.bitcoin.command as command_module
-import hashphere.config.bitcoin_rpc as rpc_settings_module
-import hashphere.config.solo as solo_settings_module
-from hashphere.bitcoin.command import run_bitcoin_command
-from hashphere.bitcoin.rpc import (
+import hashorb.bitcoin.command as command_module
+import hashorb.config.bitcoin_rpc as rpc_settings_module
+import hashorb.config.solo as solo_settings_module
+from hashorb.bitcoin.command import run_bitcoin_command
+from hashorb.bitcoin.rpc import (
     BlockchainInfo,
     PayoutDestination,
     ProposalOutcome,
     SubmissionOutcome,
 )
-from hashphere.bitcoin.template import calculate_hash_merkle_root
-from hashphere.compute.python import PythonSequentialBackend
-from hashphere.crypto import double_sha256
-from hashphere.mining import NonceSearchResult
-from hashphere.mining.target import decode_compact_target
-from hashphere.observability import summarize_jsonl
+from hashorb.bitcoin.template import calculate_hash_merkle_root
+from hashorb.compute.python import PythonSequentialBackend
+from hashorb.crypto import double_sha256
+from hashorb.mining import NonceSearchResult
+from hashorb.mining.target import decode_compact_target
+from hashorb.observability import summarize_jsonl
 
 _PAYOUT = "bcrt1qsyntheticdestination000000000000000000000"
 _PASSWORD = "synthetic-rpc-password"
@@ -99,38 +99,38 @@ def _raw_template() -> dict[str, object]:
 
 @pytest.fixture(autouse=True)
 def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(command_module, "load_dotenv", lambda: False)
-    monkeypatch.setattr(rpc_settings_module, "load_dotenv", lambda: False)
-    monkeypatch.setattr(solo_settings_module, "load_dotenv", lambda: False)
+    monkeypatch.setattr(command_module, "load_hashorb_environment", lambda: False)
+    monkeypatch.setattr(rpc_settings_module, "load_hashorb_environment", lambda: False)
+    monkeypatch.setattr(solo_settings_module, "load_hashorb_environment", lambda: False)
     for name in (
-        "HASHPHERE_ENABLE_BITCOIN_RPC_CHECK",
-        "HASHPHERE_ENABLE_TRUE_SOLO_HASHING",
-        "HASHPHERE_ENABLE_TRUE_SOLO",
-        "HASHPHERE_ENABLE_BLOCK_SUBMISSION",
-        "HASHPHERE_SOLO_PAYOUT_ADDRESS",
-        "HASHPHERE_BITCOIN_RPC_HOST",
-        "HASHPHERE_BITCOIN_RPC_PORT",
-        "HASHPHERE_BITCOIN_RPC_USER",
-        "HASHPHERE_BITCOIN_RPC_PASSWORD",
-        "HASHPHERE_BITCOIN_RPC_COOKIE_FILE",
-        "HASHPHERE_BITCOIN_RPC_TIMEOUT_SECONDS",
-        "HASHPHERE_COMPUTE_PROFILE",
-        "HASHPHERE_COMPUTE_BACKEND",
-        "HASHPHERE_COMPUTE_WORKERS",
-        "HASHPHERE_SEARCH_STRATEGY",
-        "HASHPHERE_CHUNK_SIZE",
-        "HASHPHERE_INTER_RANGE_DELAY_SECONDS",
-        "HASHPHERE_STRATUM_HOST",
-        "HASHPHERE_STRATUM_PORT",
-        "HASHPHERE_BITCOIN_ADDRESS",
+        "HASHORB_ENABLE_BITCOIN_RPC_CHECK",
+        "HASHORB_ENABLE_TRUE_SOLO_HASHING",
+        "HASHORB_ENABLE_TRUE_SOLO",
+        "HASHORB_ENABLE_BLOCK_SUBMISSION",
+        "HASHORB_SOLO_PAYOUT_ADDRESS",
+        "HASHORB_BITCOIN_RPC_HOST",
+        "HASHORB_BITCOIN_RPC_PORT",
+        "HASHORB_BITCOIN_RPC_USER",
+        "HASHORB_BITCOIN_RPC_PASSWORD",
+        "HASHORB_BITCOIN_RPC_COOKIE_FILE",
+        "HASHORB_BITCOIN_RPC_TIMEOUT_SECONDS",
+        "HASHORB_COMPUTE_PROFILE",
+        "HASHORB_COMPUTE_BACKEND",
+        "HASHORB_COMPUTE_WORKERS",
+        "HASHORB_SEARCH_STRATEGY",
+        "HASHORB_CHUNK_SIZE",
+        "HASHORB_INTER_RANGE_DELAY_SECONDS",
+        "HASHORB_STRATUM_HOST",
+        "HASHORB_STRATUM_PORT",
+        "HASHORB_BITCOIN_ADDRESS",
     ):
         monkeypatch.delenv(name, raising=False)
 
 
 def _rpc_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HASHPHERE_SOLO_PAYOUT_ADDRESS", _PAYOUT)
-    monkeypatch.setenv("HASHPHERE_BITCOIN_RPC_USER", "synthetic-user")
-    monkeypatch.setenv("HASHPHERE_BITCOIN_RPC_PASSWORD", _PASSWORD)
+    monkeypatch.setenv("HASHORB_SOLO_PAYOUT_ADDRESS", _PAYOUT)
+    monkeypatch.setenv("HASHORB_BITCOIN_RPC_USER", "synthetic-user")
+    monkeypatch.setenv("HASHORB_BITCOIN_RPC_PASSWORD", _PASSWORD)
 
 
 def _solo_arguments(*extra: str) -> list[str]:
@@ -176,7 +176,7 @@ def test_solo_hash_requires_its_distinct_opt_in_before_rpc(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_BLOCK_SUBMISSION", "1")
     calls = 0
 
     def factory(settings: object) -> FakeClient:
@@ -199,7 +199,7 @@ def test_solo_hash_constructs_backend_only_after_template_readiness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO_HASHING", "1")
     client = FakeTemplateClient()
     client.template["version"] = "private-invalid-template-value"
     backend_calls = 0
@@ -228,9 +228,9 @@ def test_solo_hash_has_no_proposal_or_submission_capability_even_when_armed(
     tmp_path: Path,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
-    monkeypatch.setenv("HASHPHERE_STRATUM_HOST", "invalid\nstratum")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO_HASHING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_BLOCK_SUBMISSION", "1")
+    monkeypatch.setenv("HASHORB_STRATUM_HOST", "invalid\nstratum")
     client = FakeTemplateClient()
     log = tmp_path / "solo-hash.jsonl"
 
@@ -268,7 +268,7 @@ def test_solo_hash_rejects_accidentally_injected_submission_client_before_comput
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO_HASHING", "1")
     client = FakeClient()
     backend_calls = 0
 
@@ -295,7 +295,7 @@ def test_solo_hash_chunk_limit_completes_without_candidate_or_submission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO_HASHING", "1")
     client = FakeTemplateClient()
 
     def exhausted(work: object, start: int, stop: int) -> NonceSearchResult:
@@ -344,7 +344,7 @@ def test_readiness_is_read_only_sanitized_and_closes_rpc(
     tmp_path: Path,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_BITCOIN_RPC_CHECK", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_BITCOIN_RPC_CHECK", "1")
     client = FakeTemplateClient()
     log = tmp_path / "readiness.jsonl"
 
@@ -397,7 +397,7 @@ def test_readiness_template_failure_emits_only_sanitized_diagnostic_stages(
     tmp_path: Path,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_BITCOIN_RPC_CHECK", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_BITCOIN_RPC_CHECK", "1")
     template = _raw_template()
     private_value = "private-template-value"
     template["version"] = private_value
@@ -450,7 +450,7 @@ def test_solo_requires_both_distinct_opt_ins_before_rpc(
         calls += 1
         return FakeClient()
 
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO", "1")
     status = run_bitcoin_command(_solo_arguments(), rpc_client_factory=factory)  # type: ignore[arg-type]
     assert status == 1
     assert calls == 0
@@ -463,10 +463,10 @@ def test_solo_uses_no_stratum_configuration_and_submits_complete_block_once(
     tmp_path: Path,
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
-    monkeypatch.setenv("HASHPHERE_STRATUM_HOST", "invalid\nstratum")
-    monkeypatch.setenv("HASHPHERE_STRATUM_PORT", "not-a-port")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_BLOCK_SUBMISSION", "1")
+    monkeypatch.setenv("HASHORB_STRATUM_HOST", "invalid\nstratum")
+    monkeypatch.setenv("HASHORB_STRATUM_PORT", "not-a-port")
     client = FakeClient()
     backend_options: list[dict[str, object]] = []
 
@@ -528,8 +528,8 @@ def test_sanitized_proposal_rejection_event_suppresses_submission(
             return ProposalOutcome(False, "bad_coinbase_height")
 
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_BLOCK_SUBMISSION", "1")
     client = RejectingClient()
     log = tmp_path / "rejected.jsonl"
 
@@ -554,8 +554,8 @@ def test_solo_rejects_unbounded_invocation_before_rpc(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_BLOCK_SUBMISSION", "1")
     calls = 0
 
     def factory(settings: object) -> FakeClient:
@@ -612,10 +612,10 @@ def test_all_profiles_drive_the_same_solo_lifecycle(
 ) -> None:
     _rpc_environment(monkeypatch)
     if command == "solo-hash":
-        monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+        monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO_HASHING", "1")
     else:
-        monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
-        monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+        monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO", "1")
+        monkeypatch.setenv("HASHORB_ENABLE_BLOCK_SUBMISSION", "1")
 
     class CpuOnlyCapabilities:
         def logical_cpu_count(self) -> int:
@@ -666,10 +666,10 @@ def test_mocked_cuda_profile_selection_reaches_existing_backend_boundary(
 ) -> None:
     _rpc_environment(monkeypatch)
     if command == "solo-hash":
-        monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+        monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO_HASHING", "1")
     else:
-        monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
-        monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+        monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO", "1")
+        monkeypatch.setenv("HASHORB_ENABLE_BLOCK_SUBMISSION", "1")
 
     class CudaCapabilities:
         def logical_cpu_count(self) -> int:
@@ -730,7 +730,7 @@ def test_solo_hash_reaches_every_existing_backend_boundary_without_submission(
     controls: tuple[str, ...],
 ) -> None:
     _rpc_environment(monkeypatch)
-    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_TRUE_SOLO_HASHING", "1")
 
     class AllCapabilities:
         def logical_cpu_count(self) -> int:

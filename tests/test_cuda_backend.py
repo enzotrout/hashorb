@@ -8,15 +8,15 @@ from decimal import Decimal
 
 import pytest
 
-import hashphere.compute.cuda as cuda_module
-from hashphere.compute import (
+import hashorb.compute.cuda as cuda_module
+from hashorb.compute import (
     ComputeBackendCapabilities,
     ComputeBackendExecutionError,
     ComputeBackendValidationError,
     CudaBackend,
     cuda_grid_stride_offsets,
 )
-from hashphere.mining import PreparedMiningWork, block_hash_to_int, hash_block_header
+from hashorb.mining import PreparedMiningWork, block_hash_to_int, hash_block_header
 
 _MAX_TARGET = (1 << 256) - 1
 _PREFIX = bytes(range(76))

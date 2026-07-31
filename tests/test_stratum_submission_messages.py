@@ -7,8 +7,8 @@ from copy import deepcopy
 
 import pytest
 
-from hashphere.mining import NonceSearchMatch, PreparedMiningWork
-from hashphere.network.stratum import (
+from hashorb.mining import NonceSearchMatch, PreparedMiningWork
+from hashorb.network.stratum import (
     StratumMessageError,
     build_submit_request,
     parse_submit_result,

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from hashphere.mining import block_hash_to_int, hash_block_header
+from hashorb.mining import block_hash_to_int, hash_block_header
 
-native_extension = pytest.importorskip("hashphere.compute._native")
+native_extension = pytest.importorskip("hashorb.compute._native")
 
 _PREFIX = bytes(range(76))
 _MAX_TARGET = (2**256 - 1).to_bytes(32, byteorder="little", signed=False)

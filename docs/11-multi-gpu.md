@@ -23,15 +23,15 @@ Stratum command was run while implementing or validating this milestone.
 Single-device CUDA remains unchanged:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda
-HASHPHERE_CUDA_DEVICE=0
+HASHORB_COMPUTE_BACKEND=cuda
+HASHORB_CUDA_DEVICE=0
 ```
 
 Multi-device CUDA is a separate explicit selector and requires a list:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda-multi
-HASHPHERE_CUDA_DEVICES=0,1
+HASHORB_COMPUTE_BACKEND=cuda-multi
+HASHORB_CUDA_DEVICES=0,1
 ```
 
 The list contains one to 256 unique, unpadded ASCII decimal ordinals from `0`
@@ -39,7 +39,7 @@ through `2147483647`. Surrounding whitespace on list elements is accepted.
 Empty elements, duplicates, signs, decimal padding, non-ASCII digits, excessive
 ordinals, and an omitted list are rejected before networking. Ordinals are
 canonicalized into ascending order, making device-to-range assignment stable.
-Hashsphere never discovers or selects every visible GPU implicitly.
+HashOrb never discovers or selects every visible GPU implicitly.
 
 A one-device list is allowed. It validates real extension, context, executor,
 partition, reduction, and cleanup integration on a single-GPU host. It is not
@@ -147,7 +147,7 @@ assignment.
 The offline synthetic benchmark accepts explicit devices:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend cuda-multi \
   --devices 0,1 \
   --hash-count 500000000
@@ -195,7 +195,7 @@ material.
 Orchestration is Python-level and uses the same optional `_cuda` extension for
 every device. Normal wheel and source builds remain CPU-capable without `nvcc`;
 the sdist retains CUDA source, while a CUDA extension is built only with
-`HASHPHERE_BUILD_CUDA=1` and an explicit supported architecture. Linux ARM64
+`HASHORB_BUILD_CUDA=1` and an explicit supported architecture. Linux ARM64
 local CUDA development builds retain the existing runtime-path policy and
 private-prefix remapping. macOS and Windows remain CPU-only; Windows CUDA and
 portable CUDA wheel publication remain deferred.
@@ -215,4 +215,4 @@ Python parity, the global smallest candidate, complete cleanup, terminal device
 failure behavior, no duplicate work or stale candidate, and no hardware-
 identifier leakage. Aggregate throughput should exceed the fastest individual
 device when the hardware and workload allow it. Until that gate passes,
-Hashsphere claims architecture validation, not real multi-GPU validation.
+HashOrb claims architecture validation, not real multi-GPU validation.

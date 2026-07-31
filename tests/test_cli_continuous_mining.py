@@ -13,10 +13,10 @@ from types import FrameType
 
 import pytest
 
-import hashphere.__main__ as cli_module
-from hashphere.compute import ComputeBackendCapabilities, ComputeBackendExecutionError
-from hashphere.config import Settings
-from hashphere.mining import (
+import hashorb.__main__ as cli_module
+from hashorb.compute import ComputeBackendCapabilities, ComputeBackendExecutionError
+from hashorb.config import Settings
+from hashorb.mining import (
     MAX_RUNTIME_SECONDS,
     ContinuousMiningOutcome,
     ContinuousMiningPlan,
@@ -26,7 +26,7 @@ from hashphere.mining import (
     PreparedMiningWork,
     StopController,
 )
-from hashphere.network.stratum import (
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumClientError,
@@ -34,7 +34,7 @@ from hashphere.network.stratum import (
     StratumConnectionError,
     SubscribeResult,
 )
-from hashphere.observability import JsonlEventSink, summarize_jsonl
+from hashorb.observability import JsonlEventSink, summarize_jsonl
 
 type PythonSignalHandler = Callable[[int, FrameType | None], None]
 
@@ -238,7 +238,7 @@ def install_fakes(
 
     def client_factory(received_settings: Settings, user_agent: str) -> FakeClient:
         assert received_settings is selected_settings
-        assert user_agent == "Hashphere/0.1"
+        assert user_agent == "HashOrb/0.1"
         if not clients:
             raise AssertionError("unexpected Stratum client creation")
         return clients.popleft()
@@ -318,8 +318,8 @@ def install_fakes(
         return True
 
     monkeypatch.setattr(cli_module, "wait_for_reconnect_delay", wait_without_sleep)
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", "1")
     signals = install_signal_fakes(monkeypatch)
 
     if deterministic_log:
@@ -516,16 +516,16 @@ def test_both_live_opt_ins_are_required(
 ) -> None:
     client = FakeClient()
     install_fakes(monkeypatch, client)
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_STRATUM")
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_STRATUM")
 
     assert cli_module.main(arguments()) == 2
-    assert "HASHPHERE_ENABLE_LIVE_STRATUM=1" in capsys.readouterr().err
+    assert "HASHORB_ENABLE_LIVE_STRATUM=1" in capsys.readouterr().err
     assert client.handshake_calls == 0
 
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_MINING")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_MINING")
     assert cli_module.main(arguments()) == 2
-    assert "HASHPHERE_ENABLE_LIVE_MINING=1" in capsys.readouterr().err
+    assert "HASHORB_ENABLE_LIVE_MINING=1" in capsys.readouterr().err
     assert client.handshake_calls == 0
 
 

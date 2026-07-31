@@ -6,10 +6,10 @@ from dataclasses import dataclass
 
 import pytest
 
-import hashphere.__main__ as cli_module
-from hashphere.compute import ComputeBackendCapabilities
-from hashphere.config import ComputeProfileOverrides
-from hashphere.mining import NonceSearchResult, PreparedMiningWork
+import hashorb.__main__ as cli_module
+from hashorb.compute import ComputeBackendCapabilities
+from hashorb.config import ComputeProfileOverrides
+from hashorb.mining import NonceSearchResult, PreparedMiningWork
 
 
 @dataclass
@@ -62,16 +62,16 @@ class FakeBackend:
 
 @pytest.fixture(autouse=True)
 def isolated_profile_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli_module, "load_dotenv", lambda: False)
+    monkeypatch.setattr(cli_module, "load_hashorb_environment", lambda: False)
     for name in (
-        "HASHPHERE_COMPUTE_PROFILE",
-        "HASHPHERE_COMPUTE_BACKEND",
-        "HASHPHERE_COMPUTE_WORKERS",
-        "HASHPHERE_CUDA_DEVICE",
-        "HASHPHERE_CUDA_DEVICES",
-        "HASHPHERE_CUDA_THREADS_PER_BLOCK",
-        "HASHPHERE_CHUNK_SIZE",
-        "HASHPHERE_INTER_RANGE_DELAY_SECONDS",
+        "HASHORB_COMPUTE_PROFILE",
+        "HASHORB_COMPUTE_BACKEND",
+        "HASHORB_COMPUTE_WORKERS",
+        "HASHORB_CUDA_DEVICE",
+        "HASHORB_CUDA_DEVICES",
+        "HASHORB_CUDA_THREADS_PER_BLOCK",
+        "HASHORB_CHUNK_SIZE",
+        "HASHORB_INTER_RANGE_DELAY_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -101,7 +101,7 @@ def test_profile_info_is_offline_and_prints_only_sanitized_resolution(
 def test_cli_profile_takes_precedence_over_environment_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", "lite")
+    monkeypatch.setenv("HASHORB_COMPUTE_PROFILE", "lite")
     monkeypatch.setattr(cli_module, "LocalComputeProfileCapabilities", FakeCapabilities)
 
     resolved = cli_module._resolve_command_profile(
@@ -122,7 +122,7 @@ def test_cli_profile_takes_precedence_over_environment_profile(
 def test_environment_profile_is_used_when_cli_profile_is_omitted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", "auto")
+    monkeypatch.setenv("HASHORB_COMPUTE_PROFILE", "auto")
     monkeypatch.setattr(cli_module, "LocalComputeProfileCapabilities", FakeCapabilities)
 
     resolved = cli_module._resolve_command_profile(

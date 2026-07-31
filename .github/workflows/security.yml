@@ -56,16 +56,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Build CPU image
-        run: docker build --tag hashphere:security .
+        run: docker build --tag hashorb:security .
       - name: Run hardened offline container smoke
         run: |
-          docker run --rm --read-only --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 --cap-drop=ALL --security-opt=no-new-privileges hashphere:security
-          test "$(docker run --rm --entrypoint id hashphere:security -u)" = "10001"
+          docker run --rm --read-only --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 --cap-drop=ALL --security-opt=no-new-privileges hashorb:security
+          test "$(docker run --rm --entrypoint id hashorb:security -u)" = "10001"
       - name: Check image history privacy
         run: |
-          if docker history --no-trunc hashphere:security | grep -qE -i 'bitcoin_address|stratum_password|YOUR_BITCOIN_ADDRESS'; then
+          if docker history --no-trunc hashorb:security | grep -qE -i 'bitcoin_address|stratum_password|YOUR_BITCOIN_ADDRESS'; then
             echo "Image history contains a forbidden configuration marker."
             exit 1
           fi
       - name: Scan CPU runtime image
-        run: scripts/run-security-audit.sh image hashphere:security
+        run: scripts/run-security-audit.sh image hashorb:security

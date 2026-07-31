@@ -11,19 +11,19 @@ import time
 
 import pytest
 
-from hashphere.bitcoin import BitcoinCoreRpcClient, BitcoinRpcError, parse_block_template
-from hashphere.bitcoin.solo import (
+from hashorb.bitcoin import BitcoinCoreRpcClient, BitcoinRpcError, parse_block_template
+from hashorb.bitcoin.solo import (
     ProposalSubmissionCandidatePolicy,
     SoloMiningOutcome,
     SoloMiningPlan,
     run_solo_mining,
 )
-from hashphere.compute.python import PythonSequentialBackend
-from hashphere.config.bitcoin_rpc import BitcoinRpcSettings
-from hashphere.mining import StopController, select_search_strategy
+from hashorb.compute.python import PythonSequentialBackend
+from hashorb.config.bitcoin_rpc import BitcoinRpcSettings
+from hashorb.mining import StopController, select_search_strategy
 
 _BITCOIND = shutil.which("bitcoind")
-_REGTEST_OPT_IN = "HASHPHERE_ENABLE_REGTEST_TESTS"
+_REGTEST_OPT_IN = "HASHORB_ENABLE_REGTEST_TESTS"
 
 
 def _unused_loopback_port() -> int:
@@ -95,7 +95,7 @@ def _wait_for_rpc(client: BitcoinCoreRpcClient, process: subprocess.Popen[bytes]
     ),
 )
 def test_isolated_regtest_constructs_proposes_and_submits_complete_block() -> None:
-    """Prove one wallet-free Hashsphere-built block advances an isolated chain."""
+    """Prove one wallet-free HashOrb-built block advances an isolated chain."""
 
     assert _BITCOIND is not None
     version = subprocess.run(
@@ -107,10 +107,10 @@ def test_isolated_regtest_constructs_proposes_and_submits_complete_block() -> No
     assert b"Bitcoin Core" in version.stdout
     rpc_port = _unused_loopback_port()
     peer_port = _unused_loopback_port()
-    username = "hashsphere-regtest"
+    username = "hashorb-regtest"
     password = "synthetic-isolated-regtest-secret"
 
-    with tempfile.TemporaryDirectory(prefix="hashsphere-regtest-") as data_directory:
+    with tempfile.TemporaryDirectory(prefix="hashorb-regtest-") as data_directory:
         process = subprocess.Popen(
             [
                 _BITCOIND,

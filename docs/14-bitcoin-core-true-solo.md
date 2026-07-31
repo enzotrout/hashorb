@@ -2,7 +2,7 @@
 
 ## What
 
-Hashsphere has three structurally separate Bitcoin Core commands:
+HashOrb has three structurally separate Bitcoin Core commands:
 
 - `bitcoin-core-check` performs an explicitly enabled, read-only readiness
   check.
@@ -25,7 +25,7 @@ becoming an accidental authority over direct block construction.
 
 ## Plain talk
 
-The node describes the next valid block. Hashphere can inspect it, hash it with
+The node describes the next valid block. HashOrb can inspect it, hash it with
 the send button absent, or—through a separately armed command—ask the node to
 validate and accept a winner.
 
@@ -41,20 +41,20 @@ loopback endpoint; do not weaken Core's authentication or RPC allowlist.
 Configure exactly one authentication method:
 
 ```dotenv
-HASHPHERE_BITCOIN_RPC_HOST=127.0.0.1
-HASHPHERE_BITCOIN_RPC_PORT=8332
-HASHPHERE_BITCOIN_RPC_TIMEOUT_SECONDS=10
-HASHPHERE_BITCOIN_RPC_USER=YOUR_RPC_USER
-HASHPHERE_BITCOIN_RPC_PASSWORD=YOUR_RPC_PASSWORD
+HASHORB_BITCOIN_RPC_HOST=127.0.0.1
+HASHORB_BITCOIN_RPC_PORT=8332
+HASHORB_BITCOIN_RPC_TIMEOUT_SECONDS=10
+HASHORB_BITCOIN_RPC_USER=YOUR_RPC_USER
+HASHORB_BITCOIN_RPC_PASSWORD=YOUR_RPC_PASSWORD
 ```
 
 or:
 
 ```dotenv
-HASHPHERE_BITCOIN_RPC_COOKIE_FILE=EXPLICIT_COOKIE_PATH
+HASHORB_BITCOIN_RPC_COOKIE_FILE=EXPLICIT_COOKIE_PATH
 ```
 
-Cookie paths are explicit on Linux, macOS, and Windows. Hashsphere never
+Cookie paths are explicit on Linux, macOS, and Windows. HashOrb never
 searches default data directories or reads another file. Cookie data must be a
 small UTF-8 `username:password` record with only one optional final newline.
 The file must be regular and not a symlink; POSIX files must be owned by the
@@ -67,11 +67,11 @@ raw exception.
 Startup obtains Core's exact `main`, `test`, `testnet4`, `signet`, or `regtest`
 identity; safety is never inferred from the port. The template and payout
 script come from the same authenticated RPC client. The required
-`HASHPHERE_SOLO_PAYOUT_ADDRESS` has no default. Core's general non-wallet
+`HASHORB_SOLO_PAYOUT_ADDRESS` has no default. Core's general non-wallet
 `validateaddress` RPC validates it for the connected chain and returns the
 exact `scriptPubKey`.
 
-Hashsphere does not create, load, modify, or import into a wallet. The address
+HashOrb does not create, load, modify, or import into a wallet. The address
 need not belong to the node. Invalid cross-network destinations stop before
 mining. The address and resulting script remain private.
 
@@ -112,7 +112,7 @@ index and sequence `0xffffffff`, and a consensus-bounded script. The script
 starts with Core's exact `CScript() << height` BIP34 serialization: heights 1
 through 16 use `OP_1` through `OP_16`, while later heights use the minimally
 encoded script number as a data push. It then contains Core's auxiliary flags,
-the fixed neutral `/Hashsphere/` marker, and a private 64-bit coinbase extra
+the fixed neutral `/HashOrb/` marker, and a private 64-bit coinbase extra
 nonce. The first output pays exactly `coinbasevalue` satoshis to Core's
 validated script. The second is the zero-valued witness commitment. There is
 no other spendable output and no fee selection.
@@ -225,7 +225,7 @@ assembly, progression, replacement, stale candidate suppression, proposal,
 submission, profiles, strategies, runtime, signals, events, summary, and
 privacy. The opt-in integration test creates a new temporary regtest data
 directory, binds only loopback, uses synthetic credentials and a synthetic
-wallet-free address, submits one Hashsphere-built block, checks height, stops
+wallet-free address, submits one HashOrb-built block, checks height, stops
 the process, and removes temporary state. It passed against Bitcoin Core
 v31.1: proposal validation accepted, `submitblock` ran exactly once, and the
 isolated chain advanced from height 0 to 1. No wallet or non-regtest node was
@@ -253,15 +253,15 @@ distributed workers, long polling, and adaptive tuning remain deferred.
 Read-only readiness (does not mine, propose, or submit):
 
 ```bash
-HASHPHERE_ENABLE_BITCOIN_RPC_CHECK=1 \
-uv run hashphere bitcoin-core-check
+HASHORB_ENABLE_BITCOIN_RPC_CHECK=1 \
+uv run hashorb bitcoin-core-check
 ```
 
 Bounded hash-only compute (cannot propose or submit):
 
 ```bash
-HASHPHERE_ENABLE_TRUE_SOLO_HASHING=1 \
-uv run hashphere solo-hash \
+HASHORB_ENABLE_TRUE_SOLO_HASHING=1 \
+uv run hashorb solo-hash \
   --profile lite \
   --max-runtime-seconds 60 \
   --event-log logs/solo-hash.jsonl
@@ -270,16 +270,16 @@ uv run hashphere solo-hash \
 Isolated regtest end-to-end gate (starts only an existing compatible binary):
 
 ```bash
-HASHPHERE_ENABLE_REGTEST_TESTS=1 \
+HASHORB_ENABLE_REGTEST_TESTS=1 \
 uv run pytest -q tests/test_bitcoin_regtest.py -rs
 ```
 
 Short bounded mainnet-capable command (review endpoint and chain before use):
 
 ```bash
-HASHPHERE_ENABLE_TRUE_SOLO=1 \
-HASHPHERE_ENABLE_BLOCK_SUBMISSION=1 \
-uv run hashphere solo-mine \
+HASHORB_ENABLE_TRUE_SOLO=1 \
+HASHORB_ENABLE_BLOCK_SUBMISSION=1 \
+uv run hashorb solo-mine \
   --profile auto \
   --max-chunks 1 \
   --max-runtime-seconds 30
@@ -288,7 +288,7 @@ uv run hashphere solo-mine \
 Sanitized log summary:
 
 ```bash
-uv run hashphere logs-summary --log-file logs/solo.jsonl
+uv run hashorb logs-summary --log-file logs/solo.jsonl
 ```
 
 Offline proof that malformed Stratum configuration is ignored by solo mining:

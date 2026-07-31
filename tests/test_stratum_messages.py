@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from hashphere.network.stratum import (
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumError,
@@ -23,10 +23,10 @@ from hashphere.network.stratum import (
 
 
 def test_build_subscribe_request() -> None:
-    assert build_subscribe_request(0, "Hashphere/0.1") == {
+    assert build_subscribe_request(0, "HashOrb/0.1") == {
         "id": 0,
         "method": "mining.subscribe",
-        "params": ["Hashphere/0.1"],
+        "params": ["HashOrb/0.1"],
     }
 
 
@@ -41,7 +41,7 @@ def test_build_authorize_request_accepts_conventional_password() -> None:
 @pytest.mark.parametrize("request_id", [-1, True, 1.5])
 def test_request_builders_reject_invalid_request_ids(request_id: object) -> None:
     with pytest.raises((TypeError, ValueError), match="request_id"):
-        build_subscribe_request(request_id, "Hashphere/0.1")  # type: ignore[arg-type]
+        build_subscribe_request(request_id, "HashOrb/0.1")  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

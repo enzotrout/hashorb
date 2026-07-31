@@ -33,14 +33,14 @@ def _run(command: list[str], *, cwd: Path, environment: dict[str, str]) -> None:
 def smoke_distribution(distribution_directory: Path) -> None:
     """Install the one wheel in a temporary venv and run only offline commands."""
 
-    wheels = sorted(distribution_directory.glob("hashphere-*.whl"))
+    wheels = sorted(distribution_directory.glob("hashorb-*.whl"))
     if len(wheels) != 1:
-        raise SmokeError("expected exactly one Hashsphere wheel")
+        raise SmokeError("expected exactly one HashOrb wheel")
     uv = shutil.which("uv")
     if uv is None:
         raise SmokeError("uv is required")
 
-    with tempfile.TemporaryDirectory(prefix="hashsphere-installed-smoke-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="hashorb-installed-smoke-") as temporary:
         root = Path(temporary)
         environment_directory = root / "venv"
         subprocess.run(
@@ -52,7 +52,11 @@ def smoke_distribution(distribution_directory: Path) -> None:
         )
         scripts_directory = environment_directory / ("Scripts" if os.name == "nt" else "bin")
         python = scripts_directory / ("python.exe" if os.name == "nt" else "python")
-        command = scripts_directory / ("hashsphere.exe" if os.name == "nt" else "hashsphere")
+        command = scripts_directory / ("hashorb.exe" if os.name == "nt" else "hashorb")
+        legacy_commands = [
+            scripts_directory / (f"{name}.exe" if os.name == "nt" else name)
+            for name in ("hashphere", "hashsphere")
+        ]
         subprocess.run(
             [uv, "pip", "install", "--python", str(python), str(wheels[0])],
             check=True,
@@ -66,11 +70,14 @@ def smoke_distribution(distribution_directory: Path) -> None:
         empty_log = run_directory / "empty.jsonl"
         empty_log.write_text("", encoding="utf-8", newline="")
         environment = {
-            name: value for name, value in os.environ.items() if not name.startswith("HASHPHERE_")
+            name: value
+            for name, value in os.environ.items()
+            if not name.startswith(("HASHORB_", "HASHSPHERE_", "HASHPHERE_"))
         }
         environment["PYTHON_DOTENV_DISABLED"] = "1"
         commands = [
             [str(command), "--help"],
+            [str(python), "-I", "-m", "hashorb", "--help"],
             [str(command), "bitcoin-core-check", "--help"],
             [str(command), "solo-hash", "--help"],
             [str(command), "solo-mine", "--help"],
@@ -101,6 +108,24 @@ def smoke_distribution(distribution_directory: Path) -> None:
         ]
         for smoke_command in commands:
             _run(smoke_command, cwd=run_directory, environment=environment)
+        _run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                (
+                    "import importlib.metadata, importlib.util; "
+                    "assert importlib.metadata.version('hashorb') == '0.1.0'; "
+                    "assert importlib.util.find_spec('hashorb') is not None; "
+                    "assert importlib.util.find_spec('hashphere') is None; "
+                    "assert importlib.util.find_spec('hashsphere') is None"
+                ),
+            ],
+            cwd=run_directory,
+            environment=environment,
+        )
+        if any(path.exists() for path in legacy_commands):
+            raise SmokeError("a legacy console command is installed")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -117,7 +117,7 @@ tuple of configured ordinals. Full ownership and proof details are in
 ## Python Reference Backend
 
 `PythonSequentialBackend` delegates exactly once to the existing validated
-`hashphere.mining.search.search_nonce_range` function. It does not duplicate
+`hashorb.mining.search.search_nonce_range` function. It does not duplicate
 header construction, hashing, hash-to-integer conversion, target comparison,
 or range validation. The exact supplied bounds pass through unchanged and the
 validated result is returned unchanged.
@@ -139,7 +139,7 @@ extension with only:
 
 The C loop appends four explicit unsigned little-endian nonce bytes, performs
 Bitcoin double-SHA256, compares the raw digest independently and inclusively to
-both targets using Hashphere's little-endian proof-of-work interpretation, and
+both targets using HashOrb's little-endian proof-of-work interpretation, and
 stops at the first match. It preserves the exact range and count and never
 constructs coinbase, Merkle, target, job, or Stratum data. The loop releases
 the GIL and creates no threads.
@@ -246,7 +246,7 @@ import, or hardware probing.
 
 The built-in registry always contains `python` and also describes `cuda`,
 `cuda-multi`, `native`, and `native-parallel` whether available or unavailable. An ordinary
-CPU registry leaves CUDA uninitialized, so importing Hashphere or selecting a
+CPU registry leaves CUDA uninitialized, so importing HashOrb or selecting a
 CPU backend does not probe a GPU. CUDA listing or explicit selection performs
 the controlled extension/runtime/device initialization. Configuration accepts:
 
@@ -268,18 +268,18 @@ before a mining command constructs a live client. The legacy backend selector
 not share semantics. See
 [`12-performance-profiles.md`](12-performance-profiles.md).
 
-`HASHPHERE_COMPUTE_WORKERS` is a strict unpadded ASCII decimal value from 1
+`HASHORB_COMPUTE_WORKERS` is a strict unpadded ASCII decimal value from 1
 through 256, defaults to 2, and configures only `native-parallel`. It does not
 alter Python or native sequential search. Profiles may own smarter resource
 policy later but do not interpret this value today.
 
-`HASHPHERE_CUDA_DEVICE` is a strict unpadded ASCII decimal device ordinal,
+`HASHORB_CUDA_DEVICE` is a strict unpadded ASCII decimal device ordinal,
 defaults to zero, and is parsed only for explicit CUDA selection. Invalid
 syntax fails before networking. CPU backends ignore it. No UUID, serial number,
 PCI address, compiler path, driver path, or automatic multi-device selection is
 part of the contract.
 
-`HASHPHERE_CUDA_DEVICES` is required for explicit `cuda-multi` selection. It
+`HASHORB_CUDA_DEVICES` is required for explicit `cuda-multi` selection. It
 contains one to 256 unique comma-separated ordinals, accepts surrounding
 element whitespace, and canonicalizes them into ascending order. It never
 discovers visible devices. A one-device list is a supported integration mode,

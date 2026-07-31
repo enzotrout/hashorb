@@ -7,10 +7,10 @@ from collections.abc import Mapping
 
 import pytest
 
-import hashphere.network.stratum.client as client_module
-from hashphere.config import Settings
-from hashphere.mining import NonceSearchMatch, PreparedMiningWork
-from hashphere.network.stratum import (
+import hashorb.network.stratum.client as client_module
+from hashorb.config import Settings
+from hashorb.mining import NonceSearchMatch, PreparedMiningWork
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumClient,
@@ -19,7 +19,7 @@ from hashphere.network.stratum import (
     StratumMessageError,
     StratumRequestError,
 )
-from hashphere.network.stratum.messages import build_submit_request
+from hashorb.network.stratum.messages import build_submit_request
 
 
 class FakeTransport:
@@ -134,7 +134,7 @@ def mining_notification(job_id: str = "queued-job") -> dict[str, object]:
 def make_client(transport: FakeTransport) -> StratumClient:
     """Create a client backed by the deterministic transport."""
 
-    return StratumClient(make_settings(), "Hashphere/0.1", transport=transport)
+    return StratumClient(make_settings(), "HashOrb/0.1", transport=transport)
 
 
 def make_authorized_client(

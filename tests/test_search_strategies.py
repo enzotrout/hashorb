@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from hashphere.mining import (
+from hashorb.mining import (
     MiningSearchStrategy,
     OrbitingBitSearchStrategy,
     SearchAssignment,

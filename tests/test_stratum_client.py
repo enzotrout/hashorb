@@ -8,9 +8,9 @@ from decimal import Decimal
 
 import pytest
 
-import hashphere.network.stratum.client as client_module
-from hashphere.config import Settings
-from hashphere.network.stratum import (
+import hashorb.network.stratum.client as client_module
+from hashorb.config import Settings
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumAuthorizationError,
@@ -140,7 +140,7 @@ def mining_notification(job_id: object = "job-1") -> dict[str, object]:
 def make_client(
     transport: FakeTransport,
     *,
-    user_agent: str = "Hashphere/0.1",
+    user_agent: str = "HashOrb/0.1",
 ) -> StratumClient:
     """Create a client backed by a fake transport."""
 
@@ -159,7 +159,7 @@ def test_client_constructs_normal_transport_from_settings(
 
     monkeypatch.setattr(client_module, "StratumTransport", fake_transport)
 
-    client = StratumClient(make_settings(), "Hashphere/0.1")
+    client = StratumClient(make_settings(), "HashOrb/0.1")
 
     assert client.state is StratumClientState.DISCONNECTED
     assert created_with == [("pool.example.com", 3333)]
@@ -185,7 +185,7 @@ def test_valid_state_transitions_and_request_contents() -> None:
     assert transport.sent[0] == {
         "id": 1,
         "method": "mining.subscribe",
-        "params": ["Hashphere/0.1"],
+        "params": ["HashOrb/0.1"],
     }
 
     client.authorize()

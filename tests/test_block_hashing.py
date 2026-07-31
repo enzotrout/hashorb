@@ -6,8 +6,8 @@ import hashlib
 
 import pytest
 
-import hashphere.mining.header as header_module
-from hashphere.mining import (
+import hashorb.mining.header as header_module
+from hashorb.mining import (
     BlockHeaderValidationError,
     MiningJob,
     build_coinbase_transaction,

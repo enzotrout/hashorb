@@ -7,8 +7,8 @@ from typing import Final
 
 import pytest
 
-import hashphere.mining.search as search_module
-from hashphere.mining import (
+import hashorb.mining.search as search_module
+from hashorb.mining import (
     CoinbaseValidationError,
     MiningJob,
     NonceSearchMatch,

@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError, dataclass, field
 
 import pytest
 
-from hashphere.config import (
+from hashorb.config import (
     ComputeProfileOverrides,
     ComputeProfileResolutionError,
     ComputeProfileValidationError,

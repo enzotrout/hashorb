@@ -8,10 +8,10 @@ from collections.abc import Iterator
 
 import pytest
 
-from hashphere.compute import CudaBackend, CudaMultiBackend, PythonSequentialBackend
-from hashphere.mining import PreparedMiningWork, block_hash_to_int, hash_block_header
+from hashorb.compute import CudaBackend, CudaMultiBackend, PythonSequentialBackend
+from hashorb.mining import PreparedMiningWork, block_hash_to_int, hash_block_header
 
-_CUDA_TEST_FLAG = "HASHPHERE_ENABLE_CUDA_TESTS"
+_CUDA_TEST_FLAG = "HASHORB_ENABLE_CUDA_TESTS"
 _MAX_TARGET = (1 << 256) - 1
 _PREFIX = bytes(range(76))
 
@@ -50,14 +50,14 @@ def digest_value(header_prefix: bytes, nonce: int) -> int:
 def cuda_backend() -> Iterator[CudaBackend]:
     """Initialize the explicitly requested CUDA device and close it after each test."""
 
-    device_text = os.getenv("HASHPHERE_CUDA_DEVICE", "0")
+    device_text = os.getenv("HASHORB_CUDA_DEVICE", "0")
     if (
         not device_text
         or not device_text.isascii()
         or not device_text.isdecimal()
         or (len(device_text) > 1 and device_text.startswith("0"))
     ):
-        pytest.fail("HASHPHERE_CUDA_DEVICE must be an unpadded ASCII decimal integer")
+        pytest.fail("HASHORB_CUDA_DEVICE must be an unpadded ASCII decimal integer")
     backend = CudaBackend(int(device_text))
     if not backend.capabilities.available:
         pytest.skip("CUDA extension or requested CUDA device is unavailable")
@@ -183,7 +183,7 @@ def test_cuda_reuses_resources_and_replaces_prepared_work(
 def test_one_device_cuda_multi_has_real_hardware_parity() -> None:
     """Validate orchestration plumbing on one GPU; this is not a scaling claim."""
 
-    device_ordinal = int(os.getenv("HASHPHERE_CUDA_DEVICE", "0"))
+    device_ordinal = int(os.getenv("HASHORB_CUDA_DEVICE", "0"))
     backend = CudaMultiBackend((device_ordinal,))
     if not backend.capabilities.available:
         pytest.skip("CUDA extension or requested CUDA device is unavailable")
@@ -202,7 +202,7 @@ def test_one_device_cuda_multi_has_real_hardware_parity() -> None:
 
 @pytest.mark.parametrize("threads_per_block", [64, 128, 256, 512])
 def test_evaluated_cuda_launch_sizes_have_real_parity(threads_per_block: int) -> None:
-    device_ordinal = int(os.getenv("HASHPHERE_CUDA_DEVICE", "0"))
+    device_ordinal = int(os.getenv("HASHORB_CUDA_DEVICE", "0"))
     backend = CudaBackend(device_ordinal, threads_per_block=threads_per_block)
     if not backend.capabilities.available:
         pytest.skip("CUDA extension or requested CUDA device is unavailable")

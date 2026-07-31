@@ -1,8 +1,11 @@
 # Security policy
 
+The project was renamed to HashOrb before its first public release. This policy
+applies to the canonical `hashorb` package and repository identity.
+
 ## Supported versions
 
-Hashsphere is pre-release software. Only the current `main` branch is supported
+HashOrb is pre-release software. Only the current `main` branch is supported
 for security fixes; no published release line currently receives backports.
 
 ## Reporting a vulnerability
@@ -39,15 +42,15 @@ fix and operator migration guidance are ready.
 
 ## Scope
 
-In scope are Hashsphere source, parsers, command capability boundaries, native
+In scope are HashOrb source, parsers, command capability boundaries, native
 and CUDA extensions, packages, the CPU container, maintained scripts, GitHub
 workflows, dependency configuration, event privacy, and unsafe interactions
-with Bitcoin Core or Stratum caused by Hashsphere.
+with Bitcoin Core or Stratum caused by HashOrb.
 
 Generally out of scope are social engineering, denial of service requiring
 unbounded traffic to infrastructure not operated by this project, unsupported
 forks or modified binaries, compromised kernels/root accounts/firmware/drivers,
-Bitcoin Core or pool-server vulnerabilities independent of Hashsphere, and
+Bitcoin Core or pool-server vulnerabilities independent of HashOrb, and
 reports containing only automated scanner output without a reachable impact.
 
 Good-faith, authorized research against synthetic local fixtures and isolated

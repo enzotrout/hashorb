@@ -7,11 +7,11 @@ from collections.abc import Iterator
 
 import pytest
 
-from hashphere.compute import CudaMultiBackend, PythonSequentialBackend
-from hashphere.config import parse_cuda_devices
-from hashphere.mining import PreparedMiningWork
+from hashorb.compute import CudaMultiBackend, PythonSequentialBackend
+from hashorb.config import parse_cuda_devices
+from hashorb.mining import PreparedMiningWork
 
-_MULTI_CUDA_TEST_FLAG = "HASHPHERE_ENABLE_MULTI_CUDA_TESTS"
+_MULTI_CUDA_TEST_FLAG = "HASHORB_ENABLE_MULTI_CUDA_TESTS"
 _MAX_TARGET = (1 << 256) - 1
 
 pytestmark = pytest.mark.skipif(
@@ -34,7 +34,7 @@ def prepared_work(*, share_target: int = 1, network_target: int = 1) -> Prepared
 @pytest.fixture
 def multi_cuda_backend() -> Iterator[CudaMultiBackend]:
     try:
-        ordinals = parse_cuda_devices(os.getenv("HASHPHERE_CUDA_DEVICES", ""))
+        ordinals = parse_cuda_devices(os.getenv("HASHORB_CUDA_DEVICES", ""))
     except ValueError as exc:
         pytest.fail(str(exc))
     if len(ordinals) < 2:
