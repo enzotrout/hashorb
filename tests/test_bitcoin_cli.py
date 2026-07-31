@@ -290,6 +290,39 @@ def test_solo_uses_no_stratum_configuration_and_submits_complete_block_once(
     assert summary.share_candidate_count == summary.share_submission_count == 0
 
 
+def test_sanitized_proposal_rejection_event_suppresses_submission(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    class RejectingClient(FakeClient):
+        def propose_block(self, block: bytes) -> ProposalOutcome:
+            self.proposals.append(block)
+            return ProposalOutcome(False, "bad_coinbase_height")
+
+    _rpc_environment(monkeypatch)
+    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", "1")
+    monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
+    client = RejectingClient()
+    log = tmp_path / "rejected.jsonl"
+
+    status = run_bitcoin_command(
+        _solo_arguments("--event-log", str(log)),
+        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        backend_selector=lambda name, **options: PythonSequentialBackend(),
+    )
+
+    assert status == 1
+    assert len(client.proposals) == 1
+    assert client.submissions == []
+    contents = log.read_text(encoding="utf-8")
+    output = capsys.readouterr().out
+    assert "bad_coinbase_height" in contents
+    for private_value in (_PAYOUT, _PASSWORD, _SCRIPT.hex(), client.proposals[0].hex()):
+        assert private_value not in contents
+        assert private_value not in output
+
+
 def test_solo_rejects_unbounded_invocation_before_rpc(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

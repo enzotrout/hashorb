@@ -196,6 +196,63 @@ def test_template_proposal_and_submission_have_strict_semantics() -> None:
         "submitblock",
     ]
     assert transport.requests[0]["params"] == [{"rules": ["segwit"]}]
+    proposal_parameters = transport.requests[1]["params"]
+    assert isinstance(proposal_parameters, list)
+    assert len(proposal_parameters) == 1
+    assert isinstance(proposal_parameters[0], dict)
+    assert set(proposal_parameters[0]) == {"mode", "data", "rules"}
+    assert proposal_parameters[0]["mode"] == "proposal"
+    assert proposal_parameters[0]["rules"] == ["segwit"]
+    assert proposal_parameters[0]["data"] == block.hex()
+
+
+@pytest.mark.parametrize(
+    ("reason", "category"),
+    [
+        ("bad-cb-missing", "bad_coinbase"),
+        ("bad-cb-height", "bad_coinbase_height"),
+        ("bad-cb-amount", "bad_coinbase_amount"),
+        ("bad-witness-merkle-match", "bad_witness_commitment"),
+        ("bad-txnmrklroot", "bad_transaction_merkle_root"),
+        ("bad-txns-nonfinal", "bad_transactions"),
+        ("high-hash", "high_hash"),
+        ("time-too-old", "invalid_time"),
+        ("bad-version", "invalid_version"),
+        ("bad-diffbits", "invalid_bits"),
+        ("bad-prevblk", "stale_previous_block"),
+        ("duplicate", "duplicate"),
+        ("private-secret-token", "other_proposal_rejection"),
+    ],
+)
+def test_proposal_rejection_reasons_map_to_strict_categories(reason: str, category: str) -> None:
+    transport = FakeTransport(lambda request: _response(request, reason))
+
+    outcome = BitcoinCoreRpcClient(_settings(), transport).propose_block(bytes(81))
+
+    assert not outcome.accepted
+    assert outcome.category == category
+    if reason == "private-secret-token":
+        assert reason not in repr(outcome)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        " bad-cb-height",
+        "bad-cb-height ",
+        "bad-cb-height\nprivate-detail",
+        "x" * 65,
+        '{"reason":"private-detail"}',
+        "private arbitrary RPC text",
+    ],
+)
+def test_proposal_rejection_rejects_unsafe_strings_without_exposing_them(reason: str) -> None:
+    transport = FakeTransport(lambda request: _response(request, reason))
+
+    with pytest.raises(BitcoinRpcProtocolError) as caught:
+        BitcoinCoreRpcClient(_settings(), transport).propose_block(bytes(81))
+
+    assert reason not in str(caught.value)
 
 
 @pytest.mark.parametrize(

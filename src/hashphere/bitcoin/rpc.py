@@ -19,11 +19,34 @@ MAX_COOKIE_BYTES = 4096
 _SUPPORTED_CHAINS = frozenset({"main", "test", "testnet4", "signet", "regtest"})
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
-_REJECTION_CATEGORIES = {
+_SAFE_REJECTION_TOKEN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_VERSION_REJECTION_TOKEN = re.compile(r"^bad-version\(0x[0-9a-f]{8}\)$")
+_MAX_REJECTION_TOKEN_CHARACTERS = 64
+_DUPLICATE_REJECTION_CATEGORIES = {
     "duplicate": "duplicate",
     "duplicate-invalid": "duplicate_invalid",
     "duplicate-inconclusive": "duplicate_inconclusive",
     "inconclusive": "inconclusive",
+}
+_PROPOSAL_REJECTION_CATEGORIES = {
+    "bad-cb-length": "bad_coinbase",
+    "bad-cb-missing": "bad_coinbase",
+    "bad-cb-multiple": "bad_coinbase",
+    "bad-cb-height": "bad_coinbase_height",
+    "bad-cb-amount": "bad_coinbase_amount",
+    "bad-witness-merkle-match": "bad_witness_commitment",
+    "bad-witness-nonce-size": "bad_witness_commitment",
+    "unexpected-witness": "bad_witness_commitment",
+    "bad-txnmrklroot": "bad_transaction_merkle_root",
+    "high-hash": "high_hash",
+    "time-invalid": "invalid_time",
+    "time-too-new": "invalid_time",
+    "time-too-old": "invalid_time",
+    "bad-version": "invalid_version",
+    "bad-diffbits": "invalid_bits",
+    "bad-prevblk": "stale_previous_block",
+    "stale-prevblk": "stale_previous_block",
+    "stale-work": "stale_previous_block",
 }
 
 
@@ -270,7 +293,10 @@ class BitcoinCoreRpcClient:
             return ProposalOutcome(accepted=True, category="accepted")
         if not isinstance(result, str) or not result:
             raise BitcoinRpcProtocolError("Bitcoin Core returned an invalid proposal result")
-        return ProposalOutcome(accepted=False, category=_rejection_category(result))
+        return ProposalOutcome(
+            accepted=False,
+            category=_proposal_rejection_category(result),
+        )
 
     def submit_block(self, serialized_block: bytes) -> SubmissionOutcome:
         """Submit one locally and proposal-validated complete block exactly once."""
@@ -280,7 +306,10 @@ class BitcoinCoreRpcClient:
             return SubmissionOutcome(accepted=True, category="accepted")
         if not isinstance(result, str) or not result:
             raise BitcoinRpcProtocolError("Bitcoin Core returned an invalid submission result")
-        return SubmissionOutcome(accepted=False, category=_rejection_category(result))
+        return SubmissionOutcome(
+            accepted=False,
+            category=_submission_rejection_category(result),
+        )
 
     def _call(self, method: str, params: list[object]) -> object:
         if self._closed:
@@ -460,10 +489,33 @@ def _rpc_code_category(code: int) -> str:
     return "rejected"
 
 
-def _rejection_category(reason: str) -> str:
-    normalized = reason.strip().lower()
-    if normalized in _REJECTION_CATEGORIES:
-        return _REJECTION_CATEGORIES[normalized]
-    if normalized.startswith("bad-"):
-        return "consensus_rejected"
+def _proposal_rejection_category(reason: str) -> str:
+    _validate_rejection_token(reason)
+    if reason in _DUPLICATE_REJECTION_CATEGORIES:
+        return _DUPLICATE_REJECTION_CATEGORIES[reason]
+    if reason in _PROPOSAL_REJECTION_CATEGORIES:
+        return _PROPOSAL_REJECTION_CATEGORIES[reason]
+    if _VERSION_REJECTION_TOKEN.fullmatch(reason) is not None:
+        return "invalid_version"
+    if reason.startswith("bad-txns-") or reason.startswith("bad-blk-"):
+        return "bad_transactions"
+    return "other_proposal_rejection"
+
+
+def _submission_rejection_category(reason: str) -> str:
+    _validate_rejection_token(reason)
+    if reason in _DUPLICATE_REJECTION_CATEGORIES:
+        return _DUPLICATE_REJECTION_CATEGORIES[reason]
     return "rejected"
+
+
+def _validate_rejection_token(reason: str) -> None:
+    if (
+        len(reason) > _MAX_REJECTION_TOKEN_CHARACTERS
+        or _CONTROL_CHARACTERS.search(reason) is not None
+        or (
+            _SAFE_REJECTION_TOKEN.fullmatch(reason) is None
+            and _VERSION_REJECTION_TOKEN.fullmatch(reason) is None
+        )
+    ):
+        raise BitcoinRpcProtocolError("Bitcoin Core returned an unsafe rejection token")

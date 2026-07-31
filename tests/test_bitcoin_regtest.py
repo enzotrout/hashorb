@@ -156,7 +156,9 @@ def test_isolated_regtest_constructs_proposes_and_submits_complete_block() -> No
                 submit_block=client.submit_block,
             )
 
-            assert result.outcome is SoloMiningOutcome.BLOCK_ACCEPTED
+            assert result.outcome is SoloMiningOutcome.BLOCK_ACCEPTED, (
+                f"sanitized proposal category: {result.proposal_category}"
+            )
             assert client.get_blockchain_info().blocks == initial_info.blocks + 1
         finally:
             client.close()
