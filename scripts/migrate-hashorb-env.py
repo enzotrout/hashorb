@@ -142,6 +142,10 @@ def _atomic_replace(path: Path, content: bytes, mode: int) -> None:
 def migrate(path: Path) -> int:
     """Migrate one private dotenv file without displaying any value."""
 
+    if os.name == "nt":
+        print("Environment migration requires a POSIX system.", file=sys.stderr)
+        return 1
+
     content, mode = _read_private_file(path)
     migrated, legacy_keys = _migration(content)
     if not legacy_keys:
@@ -155,6 +159,10 @@ def migrate(path: Path) -> int:
 
 def verify(path: Path) -> int:
     """Print only legacy key names that remain in one private dotenv file."""
+
+    if os.name == "nt":
+        print("Environment migration requires a POSIX system.", file=sys.stderr)
+        return 1
 
     content, _ = _read_private_file(path)
     _, legacy_keys = _migration(content)

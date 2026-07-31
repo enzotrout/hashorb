@@ -192,22 +192,44 @@ def test_cookie_authentication_rejects_malformed_contents(tmp_path: Path, conten
         BitcoinCoreRpcClient(_settings(username=None, password=None, cookie_file=cookie))
 
 
-def test_cookie_authentication_accepts_crlf_and_rejects_unsafe_files(tmp_path: Path) -> None:
+def test_cookie_authentication_accepts_crlf_line_endings(tmp_path: Path) -> None:
     cookie = tmp_path / ".cookie"
     cookie.write_bytes(b"__cookie__:synthetic-secret\r\n")
     cookie.chmod(0o600)
-    client = BitcoinCoreTemplateClient(
-        _settings(username=None, password=None, cookie_file=cookie),
-        FakeTransport(lambda request: _response(request, {})),
+    transport = FakeTransport(
+        lambda request: _response(
+            request,
+            {"chain": "regtest", "blocks": 1, "headers": 1, "initialblockdownload": False},
+        )
     )
-    client.close()
+    client = BitcoinCoreRpcClient(
+        _settings(username=None, password=None, cookie_file=cookie),
+        transport,
+    )
 
+    assert client.get_blockchain_info().chain == "regtest"
+    expected = base64.b64encode(b"__cookie__:synthetic-secret").decode()
+    assert transport.authorizations == [f"Basic {expected}"]
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="requires POSIX file mode semantics",
+)
+def test_cookie_authentication_rejects_unsafe_permissions_on_posix(tmp_path: Path) -> None:
+    cookie = tmp_path / ".cookie"
+    cookie.write_bytes(b"__cookie__:synthetic-secret\r\n")
     cookie.chmod(0o640)
+
     with pytest.raises(BitcoinRpcAuthenticationError, match="permissions"):
         BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=cookie))
 
 
-def test_cookie_authentication_rejects_symlinks_and_bounds_reads(tmp_path: Path) -> None:
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="requires POSIX symlink semantics",
+)
+def test_cookie_authentication_rejects_symlinks(tmp_path: Path) -> None:
     target = tmp_path / "target.cookie"
     target.write_text("__cookie__:synthetic-secret", encoding="utf-8")
     target.chmod(0o600)
@@ -216,6 +238,9 @@ def test_cookie_authentication_rejects_symlinks_and_bounds_reads(tmp_path: Path)
     with pytest.raises(BitcoinRpcAuthenticationError, match="could not be read"):
         BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=linked))
 
+
+def test_cookie_authentication_rejects_bounded_reads_and_malformed_contents(tmp_path: Path) -> None:
+    target = tmp_path / "target.cookie"
     target.write_bytes(b"a:" + b"x" * 4096)
     target.chmod(0o600)
     with pytest.raises(BitcoinRpcAuthenticationError, match="malformed"):
