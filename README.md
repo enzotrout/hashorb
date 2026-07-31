@@ -3,8 +3,8 @@
 Hashphere is an experimental Python Bitcoin mining project. Live operations are
 explicitly opt-in and include Stratum inspection, bounded mining, and a
 synchronous continuous lifecycle that searches one nonce chunk at a time.
-It also has a separate Bitcoin Core true-solo path that builds, independently
-checks, proposes, and submits a complete block through a user-operated node.
+It also has separate Bitcoin Core readiness, submission-free hashing, and
+true-solo paths through a user-operated node.
 Continuous mining now expands deterministic Bitcoin work space after a
 nonce boundary and recovers fresh authorized work after single-endpoint
 Stratum connection loss. Mining commands select one compute backend per
@@ -183,18 +183,18 @@ algorithm and coverage proof.
 
 ## Bitcoin Core true solo
 
-**What:** `bitcoin-core-check` is a read-only readiness boundary and
-`solo-mine` is a separate, bounded complete-block mining boundary. Neither
-command loads Stratum settings or opens a Stratum socket.
+**What:** `bitcoin-core-check` inspects RPC and templates without compute;
+`solo-hash` runs bounded production work with no proposal or submission
+capability; `solo-mine` is the submission-capable complete-block boundary.
+None loads Stratum settings or opens a Stratum socket.
 
 **Why:** Pool jobs own coinbase and submission policy. True solo must instead
 obtain one strict `getblocktemplate` from the operator's node, construct the
 BIP34/SegWit coinbase and merkle tree, search only the network target, validate
 the complete block in proposal mode, and call `submitblock` once.
 
-**Plain talk:** Your node supplies the current puzzle. Hashphere builds the
-whole block, searches it, and returns a winner to that same node without a
-pool in the middle.
+**Plain talk:** You can inspect the node, hash its real puzzle with the send
+button physically absent, or explicitly arm full solo mining.
 
 Sensitive RPC and payout settings are environment-only. The endpoint defaults
 to loopback (`127.0.0.1:8332`); there are no default credentials or payout
@@ -242,6 +242,18 @@ uv run hashphere solo-mine \
   --max-chunks 1 \
   --max-runtime-seconds 30 \
   --event-log logs/solo.jsonl
+```
+
+Hash-only work has its own exact opt-in and the same finite limits. Even if the
+submission opt-in is present elsewhere, this command receives neither proposal
+nor `submitblock` capability and cannot earn a reward because it cannot submit:
+
+```bash
+HASHPHERE_ENABLE_TRUE_SOLO_HASHING=1 \
+uv run hashphere solo-hash \
+  --profile lite \
+  --max-runtime-seconds 60 \
+  --event-log logs/solo-hash.jsonl
 ```
 
 Lite, Auto, Max, Custom, Python, native, native-parallel, CUDA, cuda-multi,

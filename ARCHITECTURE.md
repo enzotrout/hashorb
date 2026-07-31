@@ -175,20 +175,20 @@ resets progression and invalidates old work without storing nonce history.
 
 Normal polling is configurable, bounded, and never busy; long polling is
 deferred. A reported backend match is reconstructed and double-hashed in
-Python. The lifecycle then forces template freshness, constructs and checks the
-complete block, emits one candidate, requires Core proposal acceptance, forces
-freshness again, and calls `submitblock` once. Stop, runtime expiry, replacement,
-or RPC invalidation suppresses a candidate before submission. RPC and compute
-cleanup remain command-owned, while one result owns the terminal outcome.
-Core remains the final block-validity authority; local checks are defense in
-depth and a sanitized proposal rejection always suppresses submission.
+Python, then checked against fresh template identity. The lifecycle delegates
+only that verified current candidate to one capability policy. The hash-only
+policy has no proposal callable, submit callable, generic RPC client, or block
+assembly. The submission policy alone assembles the complete block, requires
+Core proposal acceptance, refreshes again, and calls `submitblock` once.
 
-`bitcoin-core-check` and `solo-mine` are separate CLI branches. The former has
-its own read-only opt-in. The latter requires independent exact mining and
-submission opt-ins plus an explicit finite chunk or runtime boundary. RPC
-secrets and payout addresses are environment-only; compute/profile controls
-remain CLI-capable. Neither branch imports, configures, connects, reconnects,
-or submits to Stratum.
+`bitcoin-core-check`, `solo-hash`, and `solo-mine` are separate CLI branches.
+The first has its own read-only opt-in and no compute. The second requires the
+exact hash-only opt-in, wraps the client in a template-only adapter, and cannot
+propose or submit under any environment combination. The third retains
+independent exact mining and submission opt-ins plus an explicit finite chunk
+or runtime boundary. RPC secrets and payout addresses are environment-only;
+compute/profile controls remain CLI-capable. None imports, configures,
+connects, reconnects, or submits to Stratum.
 Readiness emits authenticated, chain, synchronization, and template-RPC stages
 before strict parsing, but only the terminal `ready` event denotes success.
 

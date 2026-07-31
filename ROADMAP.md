@@ -157,6 +157,7 @@ Planned:
 
 - ✅ Stratum pool mining
 - ✅ Bitcoin Core true-solo mining
+- ✅ Structurally submission-free Bitcoin Core hash-only operation
 - ✅ GPU acceleration
 - ✅ NVIDIA DGX Spark support
 - ✅ Benchmark mode

@@ -2,15 +2,17 @@
 
 ## What
 
-Hashsphere has two structurally separate Bitcoin Core commands:
+Hashsphere has three structurally separate Bitcoin Core commands:
 
 - `bitcoin-core-check` performs an explicitly enabled, read-only readiness
   check.
+- `solo-hash` obtains real templates and runs production construction and
+  compute, but receives no proposal or submission capability.
 - `solo-mine` obtains a template, builds complete Bitcoin work, searches it
   through one existing compute backend and strategy, requires Core proposal
   validation, and submits a complete verified block at most once.
 
-Neither command uses CKPool, a Stratum setting, a Stratum socket, pool
+None uses CKPool, a Stratum setting, a Stratum socket, pool
 difficulty, or a share target.
 
 ## Why
@@ -23,9 +25,9 @@ becoming an accidental authority over direct block construction.
 
 ## Plain talk
 
-The node describes the next valid block. Hashphere builds that block, searches
-its header, checks every important byte again, asks the node to validate it,
-and returns it to the same node if it wins.
+The node describes the next valid block. Hashphere can inspect it, hash it with
+the send button absent, or—through a separately armed command—ask the node to
+validate and accept a winner.
 
 ## RPC trust and authentication
 
@@ -153,6 +155,16 @@ retry.
 
 ## Proposal and submission semantics
 
+`solo-hash` injects a stateless candidate policy with no RPC callables. The
+command uses a template-only adapter exposing chain state, address validation,
+and template retrieval; proposal, `submitblock`, and generic arbitrary RPC are
+not exposed to its lifecycle. A candidate is independently reconstructed and
+double-hashed, checked against the network target, refreshed against current
+work, recorded as `candidate_found_submission_disabled`, and stopped. It is not
+assembled into a complete block, written to disk, proposed, submitted, or
+described as accepted. This mode cannot receive a mining reward because it
+cannot submit.
+
 Local verification is mandatory but not sufficient; Bitcoin Core remains the
 final block-validity authority. The complete block is sent once to
 `getblocktemplate` proposal mode. A null result is acceptance; an allowlisted
@@ -178,7 +190,9 @@ They exclude credentials, paths, addresses, scripts, prior hashes, merkle
 roots, headers, bits, targets, transaction material, coinbase material,
 extra-nonce values, nonce values, candidate hashes, and raw blocks.
 
-`logs-summary` reports a distinct Bitcoin Core true-solo section. It never
+`logs-summary` classifies read-only checks, hash-only runs, submission-capable
+runs, and Stratum runs separately. The Bitcoin Core aggregate always prints
+proposal and submission call counts, including explicit zeroes. It never
 labels candidates as shares, and old Stratum/profile logs retain their schema-1
 interpretation. Unknown future events are preserved only as validated records
 and do not invent aggregates.
@@ -225,6 +239,16 @@ Read-only readiness (does not mine, propose, or submit):
 ```bash
 HASHPHERE_ENABLE_BITCOIN_RPC_CHECK=1 \
 uv run hashphere bitcoin-core-check
+```
+
+Bounded hash-only compute (cannot propose or submit):
+
+```bash
+HASHPHERE_ENABLE_TRUE_SOLO_HASHING=1 \
+uv run hashphere solo-hash \
+  --profile lite \
+  --max-runtime-seconds 60 \
+  --event-log logs/solo-hash.jsonl
 ```
 
 Isolated regtest end-to-end gate (starts only an existing compatible binary):
