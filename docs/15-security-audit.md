@@ -2,7 +2,8 @@
 
 Audit date: 2026-07-31  
 Baseline commit: `e2ba7b4`  
-Milestone status: remediation and final hardware validation in progress
+Audited implementation range: `e2ba7b4..1407d3e`  
+Milestone status: complete; no unresolved Critical or High finding
 
 ## What
 
@@ -208,9 +209,19 @@ ephemeral SBOM are checked for private material.
 | HS-08 | Low | workflows lacked concurrency cancellation | remediated in this milestone | Zizmor pedantic scan |
 | HS-09 | Low | CUDA fallback cleanup intentionally swallowed two exceptions without making that intent inspectable | remediated in this milestone | explicit discarded cleanup error; Bandit clean |
 | HS-10 | Low | Bandit treated the conventional public Stratum password placeholder as a hardcoded secret | reviewed false positive | one exact `B105` annotation with adjacent rationale; no broad allowlist |
+| HS-11 | Medium | the current Debian CPU runtime contains 24 package instances across 14 High/Critical upstream advisory IDs | time-bounded exceptions; not reachable by Hashsphere | image-only reviewed statements expire 2026-10-31; no Perl, gzip, ncurses, SQLite/SQL, minizip/ZIP, ACL, or block-device runtime path; new/expired findings fail |
 
-Remediation commit hashes and final test counts are filled in after the focused
-milestone commits are created.
+Remediation commits:
+
+- `230fa1a` closes HS-01 through HS-05 and HS-09/HS-10 with deterministic
+  capability, RPC, cookie, JSON, event-file, and scanner regressions.
+- `6bcca60` closes the existing-workflow part of HS-06, HS-07, and HS-08 by
+  pinning Actions and container bases and adding runtime hardening.
+- `a500021` adds weekly grouped Dependabot monitoring for Actions, Docker, and
+  the supported `uv` ecosystem.
+- `a2318fb` closes the remaining workflow automation findings and records the
+  reviewed HS-11 image exceptions.
+- `1407d3e` publishes the reporting policy and requires it in source artifacts.
 
 ## Residual risks and deferred work
 
@@ -236,6 +247,10 @@ milestone commits are created.
 - Scanner databases and hosted runner images remain external mutable services.
   Exact scanner executables/actions are pinned; advisory data freshness is
   intentionally updated on each scheduled run.
+- The 14 image advisory exceptions are accepted only because the affected
+  executable/input classes are absent from Hashsphere's runtime flow. They
+  expire on 2026-10-31 and must be removed when a fixed digest is available or
+  re-evaluated if the runtime begins using any affected component.
 
 ## Platform boundaries
 
@@ -272,6 +287,25 @@ After both workflow names are visible on the default branch:
 These controls are recommendations only; this milestone does not change remote
 rulesets or risk locking the operator out.
 
+The unauthenticated repository and ruleset APIs returned no accessible setting
+data, and no authenticated GitHub settings connector or CLI was available.
+Consequently this audit does not claim that Advanced Security, CodeQL, native
+secret scanning, Dependabot alerts, rulesets, or notifications are enabled.
+
+## Dependabot and SBOM policy
+
+GitHub documents PEP 621 `pyproject.toml` support and now exposes `uv` as its
+own package ecosystem. This repository therefore uses `package-ecosystem: uv`
+rather than pretending the pip updater owns `uv.lock`. Every update must retain
+the lockfile, pass `uv lock --check`, scanners, tests, and artifact checks, and
+be reviewed; there is no auto-merge, private registry, or broad ignore rule.
+Actions and Docker use separate weekly groups with small pull-request limits.
+
+The security artifact gate creates an ephemeral CycloneDX dependency inventory,
+checks it for private paths and authentication fields, and deletes it. GitHub's
+Dependency graph SPDX export is the preferred repository SBOM. Neither is
+published until licensing and release policy are defined.
+
 ## Tool inventory
 
 - Bandit 1.9.4
@@ -285,9 +319,50 @@ rulesets or risk locking the operator out.
 - GCC 13.3.0, CUDA toolkit 13.0, and compute-sanitizer from the installed Spark
   toolchain
 
+## Validation results
+
+- Full deterministic suite: 2,159 passed, 20 intentionally gated/skipped.
+- Focused packaging/security architecture: 28 passed, one Windows-only test
+  skipped on Linux. Unix dry-run and platform documentation remained green;
+  the PowerShell dry-run stays exercised only by Windows CI.
+- Ruff, Ruff format, strict mypy, uv lock, and diff checks: passed.
+- Bandit: no finding after one reviewed `B105` false-positive annotation.
+- pip-audit: no known vulnerability in the exact exported runtime or complete
+  locked development inventory.
+- Gitleaks: current tree and complete Git history passed with redaction; no
+  credential was detected.
+- Actionlint and offline pedantic Zizmor: no finding.
+- Trivy filesystem: no High/Critical vulnerability, misconfiguration, or secret.
+- Trivy image: no unreviewed High/Critical result and no secret or
+  misconfiguration; HS-11 contains the time-bounded unreachable advisories.
+- Wheel and sdist: privacy verifier and clean installed-distribution smoke
+  passed. The ephemeral CycloneDX SBOM contained no forbidden private field.
+- Native C: strict warning set with `-Werror` passed. The temporary
+  ASan/UBSan extension passed 76 native, boundary, and parallel tests with leak
+  detection disabled because CPython intentionally retains process-global
+  allocations.
+- CUDA: a clean explicit `sm_121` build passed 13 device-0 tests, every launch
+  size (64/128/256/512 threads), the final nonce boundary, randomized parity,
+  resource replacement, and one-device `cuda-multi`. Compute-sanitizer memcheck
+  and initcheck each passed 13 tests with zero errors; synccheck passed five
+  relevant tests with zero errors; racecheck passed five with zero hazards.
+- CPU Docker: build, non-root UID, history privacy, offline health, read-only
+  root, private tmpfs logs, all capabilities dropped, and
+  `no-new-privileges` passed.
+- Security workflow: its exact commands and permission/SHA contracts passed
+  locally. A hosted run will begin after push; authenticated remote status was
+  not available to this audit.
+- Optional post-change live readiness: no local RPC or payout configuration was
+  present, so the command stopped before RPC with `configuration_failure`.
+  Its sanitized log confirmed zero compute, proposal, submission, and Stratum
+  calls. No node call or mainnet action was attempted.
+
 ## Release recommendation
 
-No package, image, release, or SBOM is published by this milestone. The next
-controlled submission-capable mainnet gate remains blocked until final native,
-CUDA, container, full-suite, scanner, and clean-tree results are recorded here
-with no unresolved Critical or High finding.
+No package, image, release, or SBOM is published by this milestone. All required
+local gates passed, no real secret was found, and no unresolved Critical or High
+finding remains. Hashsphere is approved to proceed to the separately controlled
+submission-capable mainnet gate, subject to operator review of the manual GitHub
+settings and re-establishment of the loopback RPC configuration before any
+readiness or mining command. This approval does not itself enable submission or
+authorize a mainnet run.
