@@ -13,7 +13,7 @@ from pathlib import Path, PureWindowsPath
 
 import pytest
 
-from hashphere import __main__ as cli_module
+from hashorb import __main__ as cli_module
 
 _ROOT = Path(__file__).resolve().parents[1]
 _UNIX_INSTALLER_SUPPORTED = sys.platform.startswith("linux") or sys.platform == "darwin"
@@ -26,12 +26,12 @@ def test_release_metadata_has_one_console_entry_and_honest_python_range() -> Non
     assert project["version"] == "0.1.0"
     assert project["requires-python"] == ">=3.13,<3.14"
     assert project["readme"] == "README.md"
-    assert project["scripts"] == {"hashsphere": "hashphere.__main__:main"}
-    assert not hasattr(__import__("hashphere"), "__version__")
+    assert project["scripts"] == {"hashorb": "hashorb.__main__:main"}
+    assert not hasattr(__import__("hashorb"), "__version__")
 
 
 def test_console_entry_forwards_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli_module.sys, "argv", ["hashsphere", "--help"])
+    monkeypatch.setattr(cli_module.sys, "argv", ["hashorb", "--help"])
     assert cli_module.main() == 0
 
 
@@ -47,7 +47,7 @@ def test_unix_installer_is_cpu_only_strict_and_platform_guarded() -> None:
     assert "uv tool install" in text
     assert "sudo" not in text
     assert "curl" not in text
-    assert "HASHPHERE_BUILD_CUDA" not in text
+    assert "HASHORB_BUILD_CUDA" not in text
 
 
 @pytest.mark.skipif(
@@ -66,8 +66,8 @@ def test_unix_installer_dry_run_passes_on_supported_platform() -> None:
     )
     assert result.returncode == 0
     assert "uv tool install" in result.stdout
-    assert "hashsphere doctor" in result.stdout
-    assert "HASHPHERE_" not in result.stdout
+    assert "hashorb doctor" in result.stdout
+    assert "HASHORB_" not in result.stdout
     assert result.stderr == ""
 
 
@@ -80,7 +80,7 @@ def test_windows_installer_is_user_local_utf8_and_cpu_only() -> None:
     assert "--no-python-downloads" in text
     assert "Set-ExecutionPolicy" not in text
     assert "sudo" not in text
-    assert "HASHPHERE_BUILD_CUDA" not in text
+    assert "HASHORB_BUILD_CUDA" not in text
 
 
 @pytest.mark.skipif(
@@ -112,8 +112,8 @@ def test_windows_powershell_installer_dry_run_passes_on_windows() -> None:
 
     assert result.returncode == 0
     assert "uv tool install" in result.stdout
-    assert "hashsphere doctor" in result.stdout
-    assert "HASHPHERE_" not in result.stdout
+    assert "hashorb doctor" in result.stdout
+    assert "HASHORB_" not in result.stdout
     assert result.stderr == ""
 
 
@@ -174,12 +174,12 @@ def test_installers_never_start_mining_or_reference_configuration_values() -> No
     for installer in installers:
         text = installer.read_text(encoding="utf-8")
         assert "stratum-" not in text
-        assert "HASHPHERE_" not in text
+        assert "HASHORB_" not in text
         assert ".env" not in text
 
 
 def test_windows_style_log_path_remains_a_single_cli_value() -> None:
-    path = PureWindowsPath("D:/Hashsphere Data/Hashsphere Logs/events.jsonl")
+    path = PureWindowsPath("D:/HashOrb Data/HashOrb Logs/events.jsonl")
     parsed = cli_module._parse_doctor_arguments(["--log-dir", str(path.parent)])
 
     assert os.fspath(parsed[1]) == str(path.parent)
@@ -189,11 +189,11 @@ def test_distribution_verifier_rejects_private_environment_and_cuda_binary(
     tmp_path: Path,
 ) -> None:
     verifier_path = _ROOT / "scripts" / "verify-distributions.py"
-    archive = tmp_path / "synthetic.whl"
+    archive = tmp_path / "hashorb-0.1.0-py3-none-any.whl"
     with zipfile.ZipFile(archive, mode="w") as stream:
-        stream.writestr("hashsphere-0.1.0/.env", "synthetic")
+        stream.writestr("hashorb-0.1.0/.env", "synthetic")
         stream.writestr(
-            "hashsphere/compute/_cuda.cpython-313-aarch64-linux-gnu.so",
+            "hashorb/compute/_cuda.cpython-313-aarch64-linux-gnu.so",
             b"synthetic",
         )
 
@@ -235,19 +235,19 @@ def test_environment_template_uses_one_nonconflicting_configuration_vocabulary()
     }
 
     assert active_names == {
-        "HASHPHERE_BITCOIN_ADDRESS",
-        "HASHPHERE_SEARCH_STRATEGY",
-        "HASHPHERE_STRATUM_HOST",
-        "HASHPHERE_STRATUM_PASSWORD",
-        "HASHPHERE_STRATUM_PORT",
-        "HASHPHERE_WORKER_NAME",
+        "HASHORB_BITCOIN_ADDRESS",
+        "HASHORB_SEARCH_STRATEGY",
+        "HASHORB_STRATUM_HOST",
+        "HASHORB_STRATUM_PASSWORD",
+        "HASHORB_STRATUM_PORT",
+        "HASHORB_WORKER_NAME",
     }
-    assert "HASHPHERE_COMPUTE_PROFILE=custom" in text
+    assert "HASHORB_COMPUTE_PROFILE=custom" in text
     assert "Lifecycle limits, liveness thresholds, reconnect policy" in text
     assert "YOUR_BITCOIN_ADDRESS" in text
-    assert len(re.findall(r"^HASHPHERE_COMPUTE_PROFILE=", text, flags=re.MULTILINE)) == 0
-    assert "# HASHPHERE_ENABLE_TRUE_SOLO_HASHING=1" in text
-    assert len(re.findall(r"^HASHPHERE_ENABLE_TRUE_SOLO_HASHING=", text, flags=re.MULTILINE)) == 0
+    assert len(re.findall(r"^HASHORB_COMPUTE_PROFILE=", text, flags=re.MULTILINE)) == 0
+    assert "# HASHORB_ENABLE_TRUE_SOLO_HASHING=1" in text
+    assert len(re.findall(r"^HASHORB_ENABLE_TRUE_SOLO_HASHING=", text, flags=re.MULTILINE)) == 0
 
 
 def test_bitcoin_core_documentation_preserves_three_command_boundaries() -> None:
@@ -261,7 +261,7 @@ def test_bitcoin_core_documentation_preserves_three_command_boundaries() -> None
         assert "solo-mine" in text
     assert "cannot earn a reward" in readme
     assert "no proposal callable" in architecture
-    assert "HASHPHERE_ENABLE_TRUE_SOLO_HASHING=1" in true_solo
+    assert "HASHORB_ENABLE_TRUE_SOLO_HASHING=1" in true_solo
 
 
 def test_platform_directories_contain_no_miner_copy() -> None:

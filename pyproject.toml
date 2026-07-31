@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hashphere"
+name = "hashorb"
 version = "0.1.0"
-description = "Experimental correctness-first Bitcoin mining client"
+description = "HashOrb: Distributed hashing as a coordinated swarm."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
@@ -18,8 +18,12 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 
+[project.urls]
+Homepage = "https://hashorb.com"
+Repository = "https://github.com/enzotrout/hashorb"
+
 [project.scripts]
-hashsphere = "hashphere.__main__:main"
+hashorb = "hashorb.__main__:main"
 
 [dependency-groups]
 dev = [

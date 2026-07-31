@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-import hashphere.config.bitcoin_rpc as rpc_settings_module
-from hashphere.bitcoin.rpc import (
+import hashorb.config.bitcoin_rpc as rpc_settings_module
+from hashorb.bitcoin.rpc import (
     BitcoinCoreRpcClient,
     BitcoinCoreTemplateClient,
     BitcoinRpcAuthenticationError,
@@ -21,8 +21,8 @@ from hashphere.bitcoin.rpc import (
     BitcoinRpcTransportError,
     HttpResponse,
 )
-from hashphere.config.bitcoin_rpc import BitcoinRpcSettings
-from hashphere.config.solo import SoloCommandSettings
+from hashorb.config.bitcoin_rpc import BitcoinRpcSettings
+from hashorb.config.solo import SoloCommandSettings
 
 
 class FakeTransport:
@@ -192,22 +192,44 @@ def test_cookie_authentication_rejects_malformed_contents(tmp_path: Path, conten
         BitcoinCoreRpcClient(_settings(username=None, password=None, cookie_file=cookie))
 
 
-def test_cookie_authentication_accepts_crlf_and_rejects_unsafe_files(tmp_path: Path) -> None:
+def test_cookie_authentication_accepts_crlf_line_endings(tmp_path: Path) -> None:
     cookie = tmp_path / ".cookie"
     cookie.write_bytes(b"__cookie__:synthetic-secret\r\n")
     cookie.chmod(0o600)
-    client = BitcoinCoreTemplateClient(
-        _settings(username=None, password=None, cookie_file=cookie),
-        FakeTransport(lambda request: _response(request, {})),
+    transport = FakeTransport(
+        lambda request: _response(
+            request,
+            {"chain": "regtest", "blocks": 1, "headers": 1, "initialblockdownload": False},
+        )
     )
-    client.close()
+    client = BitcoinCoreRpcClient(
+        _settings(username=None, password=None, cookie_file=cookie),
+        transport,
+    )
 
+    assert client.get_blockchain_info().chain == "regtest"
+    expected = base64.b64encode(b"__cookie__:synthetic-secret").decode()
+    assert transport.authorizations == [f"Basic {expected}"]
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="requires POSIX file mode semantics",
+)
+def test_cookie_authentication_rejects_unsafe_permissions_on_posix(tmp_path: Path) -> None:
+    cookie = tmp_path / ".cookie"
+    cookie.write_bytes(b"__cookie__:synthetic-secret\r\n")
     cookie.chmod(0o640)
+
     with pytest.raises(BitcoinRpcAuthenticationError, match="permissions"):
         BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=cookie))
 
 
-def test_cookie_authentication_rejects_symlinks_and_bounds_reads(tmp_path: Path) -> None:
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="requires POSIX symlink semantics",
+)
+def test_cookie_authentication_rejects_symlinks(tmp_path: Path) -> None:
     target = tmp_path / "target.cookie"
     target.write_text("__cookie__:synthetic-secret", encoding="utf-8")
     target.chmod(0o600)
@@ -216,6 +238,9 @@ def test_cookie_authentication_rejects_symlinks_and_bounds_reads(tmp_path: Path)
     with pytest.raises(BitcoinRpcAuthenticationError, match="could not be read"):
         BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=linked))
 
+
+def test_cookie_authentication_rejects_bounded_reads_and_malformed_contents(tmp_path: Path) -> None:
+    target = tmp_path / "target.cookie"
     target.write_bytes(b"a:" + b"x" * 4096)
     target.chmod(0o600)
     with pytest.raises(BitcoinRpcAuthenticationError, match="malformed"):
@@ -463,21 +488,21 @@ def test_rpc_objects_hide_credentials_paths_and_payloads(tmp_path: Path) -> None
 def test_rpc_environment_defaults_only_to_loopback_and_requires_authentication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(rpc_settings_module, "load_dotenv", lambda: False)
+    monkeypatch.setattr(rpc_settings_module, "load_hashorb_environment", lambda: False)
     for name in (
-        "HASHPHERE_BITCOIN_RPC_HOST",
-        "HASHPHERE_BITCOIN_RPC_PORT",
-        "HASHPHERE_BITCOIN_RPC_USER",
-        "HASHPHERE_BITCOIN_RPC_PASSWORD",
-        "HASHPHERE_BITCOIN_RPC_COOKIE_FILE",
-        "HASHPHERE_BITCOIN_RPC_TIMEOUT_SECONDS",
+        "HASHORB_BITCOIN_RPC_HOST",
+        "HASHORB_BITCOIN_RPC_PORT",
+        "HASHORB_BITCOIN_RPC_USER",
+        "HASHORB_BITCOIN_RPC_PASSWORD",
+        "HASHORB_BITCOIN_RPC_COOKIE_FILE",
+        "HASHORB_BITCOIN_RPC_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValueError, match="authentication"):
         BitcoinRpcSettings.from_env()
 
-    monkeypatch.setenv("HASHPHERE_BITCOIN_RPC_USER", "synthetic-user")
-    monkeypatch.setenv("HASHPHERE_BITCOIN_RPC_PASSWORD", "synthetic-password")
+    monkeypatch.setenv("HASHORB_BITCOIN_RPC_USER", "synthetic-user")
+    monkeypatch.setenv("HASHORB_BITCOIN_RPC_PASSWORD", "synthetic-password")
     settings = BitcoinRpcSettings.from_env()
     assert settings.host == "127.0.0.1"
     assert settings.port == 8332

@@ -53,7 +53,7 @@ if ((dry_run == 0)) && ! command -v uv >/dev/null 2>&1; then
 fi
 
 if [[ "$action" == "uninstall" ]]; then
-    run_visible uv tool uninstall hashphere
+    run_visible uv tool uninstall hashorb
     exit 0
 fi
 
@@ -70,4 +70,4 @@ fi
 install_arguments+=("$project_root")
 run_visible "${install_arguments[@]}"
 
-printf '%s\n' "Installation complete. Run 'hashsphere doctor' from your configuration directory."
+printf '%s\n' "Installation complete. Run 'hashorb doctor' from your configuration directory."

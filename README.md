@@ -1,6 +1,14 @@
-# Hashphere
+# HashOrb
 
-Hashphere is an experimental Python Bitcoin mining project. Live operations are
+**HashOrb: Distributed hashing as a coordinated swarm.**
+
+Project site: <https://hashorb.com>
+
+The project was renamed to HashOrb before its first public release. Distributed
+workers remain a future milestone; the tagline describes the project direction,
+not a claim that remote worker coordination is already implemented.
+
+HashOrb is an experimental Python Bitcoin mining project. Live operations are
 explicitly opt-in and include Stratum inspection, bounded mining, and a
 synchronous continuous lifecycle that searches one nonce chunk at a time.
 It also has separate Bitcoin Core readiness, submission-free hashing, and
@@ -21,13 +29,13 @@ again by the Python correctness primitives.
 
 ## Install and diagnose
 
-Hashphere currently requires CPython 3.13. Normal installation is CPU-only and
+HashOrb currently requires CPython 3.13. Normal installation is CPU-only and
 never invokes `nvcc`. From a reviewed checkout, Linux and macOS can use the
 shared user-local installer:
 
 ```bash
 scripts/install-unix.sh install
-hashsphere doctor
+hashorb doctor
 ```
 
 Windows uses the PowerShell boundary without administrator access, PATH edits,
@@ -35,15 +43,15 @@ or execution-policy changes:
 
 ```powershell
 & .\scripts\install-windows.ps1 install
-hashsphere doctor
+hashorb doctor
 ```
 
 Both scripts require uv and an existing Python 3.13 installation; automatic
 Python downloads are disabled. Use `upgrade` in place of `install`, or
-`uninstall` to remove the uv tool. Run Hashsphere from the directory containing
+`uninstall` to remove the uv tool. Run HashOrb from the directory containing
 your `.env`; relative log paths are resolved from that working directory.
 
-`hashsphere doctor` is offline by default. It reports sanitized package,
+`hashorb doctor` is offline by default. It reports sanitized package,
 platform, backend, profile, configuration-presence, and log-directory readiness
 without loading Stratum settings, connecting to a pool, showing paths, or
 probing CUDA hardware unless explicitly requested.
@@ -51,10 +59,10 @@ probing CUDA hardware unless explicitly requested.
 Build and inspect the CPU container with:
 
 ```bash
-docker build -t hashphere:cpu .
-docker run --rm hashphere:cpu
-docker run --rm hashphere:cpu profile-info --profile auto
-docker run --rm hashphere:cpu compute-benchmark --backend python --hash-count 100000
+docker build -t hashorb:cpu .
+docker run --rm hashorb:cpu
+docker run --rm hashorb:cpu profile-info --profile auto
+docker run --rm hashorb:cpu compute-benchmark --backend python --hash-count 100000
 ```
 
 The image starts with doctor rather than mining, runs as a non-root user, and
@@ -74,13 +82,13 @@ Copy the example configuration and edit the new `.env` file:
 cp .env.example .env
 ```
 
-Set `HASHPHERE_BITCOIN_ADDRESS` to a public Bitcoin receive address. The
+Set `HASHORB_BITCOIN_ADDRESS` to a public Bitcoin receive address. The
 default endpoint is Solo CKPool at `stratum.ckpool.org:3333`, the default
-password is CKPool's conventional `x`, and `HASHPHERE_WORKER_NAME=auto`
+password is CKPool's conventional `x`, and `HASHORB_WORKER_NAME=auto`
 derives a sanitized worker name from the hostname. No seed phrase, private key,
 or wallet password is needed or should be placed in `.env`.
 
-`HASHPHERE_COMPUTE_BACKEND` selects the nonce-search implementation. Its
+`HASHORB_COMPUTE_BACKEND` selects the nonce-search implementation. Its
 default, `auto`, deliberately continues to select `python`; native or CUDA
 availability does not change that choice. Exact selectors `python`, `native`,
 `native-parallel`, `cuda`, and `cuda-multi` are supported, and the earlier `cpu` value
@@ -89,31 +97,31 @@ optional C extension. CUDA additionally requires the explicitly enabled CUDA
 extension. `cuda` owns one selected device; `cuda-multi` owns an explicit set.
 There is no fallback after an explicit selection.
 
-`HASHPHERE_COMPUTE_WORKERS` configures only `native-parallel`. It is a strict
+`HASHORB_COMPUTE_WORKERS` configures only `native-parallel`. It is a strict
 unpadded ASCII decimal integer from `1` through `256` and defaults to `2`.
 Ranges shorter than the configured count create fewer nonempty assignments.
-`HASHPHERE_COMPUTE_PROFILE` optionally selects `lite`, `auto`, `max`, or
+`HASHORB_COMPUTE_PROFILE` optionally selects `lite`, `auto`, `max`, or
 `custom`. When omitted, legacy backend behavior is unchanged. A CLI `--profile`
 wins over the environment. Lite/Auto/Max reject ambiguous manual controls
 except that Auto and Max accept an explicit CUDA ordinal or exact ordinal list.
 Custom requires its critical controls explicitly. See
 [`docs/12-performance-profiles.md`](docs/12-performance-profiles.md).
 
-`HASHPHERE_CUDA_DEVICE` configures only an explicitly selected `cuda` backend.
+`HASHORB_CUDA_DEVICE` configures only an explicitly selected `cuda` backend.
 It defaults to ordinal `0` and must be an unpadded ASCII decimal integer from
 `0` through `2147483647`. Invalid CUDA device syntax or an unavailable device
 fails before live networking. The setting is ignored by CPU backends. UUIDs,
 serial numbers, PCI addresses, and driver paths are never included in normal
 console or JSONL output.
 
-`HASHPHERE_CUDA_DEVICES` is required only for `cuda-multi`, for example `0,1`.
+`HASHORB_CUDA_DEVICES` is required only for `cuda-multi`, for example `0,1`.
 It accepts one to 256 unique ordinals, tolerates surrounding element
-whitespace, and canonicalizes them into ascending order. Hashsphere never
+whitespace, and canonicalizes them into ascending order. HashOrb never
 selects all visible devices implicitly. One-device `cuda-multi` is allowed for
 integration testing but is not a multi-GPU performance claim.
 
-`HASHPHERE_SEARCH_STRATEGY` selects where mining looks next, while
-`HASHPHERE_COMPUTE_BACKEND` selects how that assigned range is hashed. The
+`HASHORB_SEARCH_STRATEGY` selects where mining looks next, while
+`HASHORB_COMPUTE_BACKEND` selects how that assigned range is hashed. The
 default strategy is the exact lowercase name `sequential`; experimental
 `orbiting-bit` is the alternative. `auto` is a static alias for `sequential`,
 not adaptive tuning.
@@ -126,7 +134,7 @@ mining obtain their parent ranges from the strategy.
 
 The backend is validated before a mining command opens a live connection,
 selected exactly once, and reused across every job, work variant, and Stratum
-reconnect in that invocation. An execution failure is terminal: Hashphere does
+reconnect in that invocation. An execution failure is terminal: HashOrb does
 not retry the range with another backend or silently fall back. The parallel
 backend creates contiguous, balanced, nonoverlapping assignments whose union is
 the exact parent range, then deterministically chooses the lowest qualifying
@@ -140,7 +148,7 @@ device-owned work/result buffers without changing the parent-range contract.
 
 ## Choose a search strategy
 
-**What:** `HASHPHERE_SEARCH_STRATEGY` controls the order of parent nonce ranges.
+**What:** `HASHORB_SEARCH_STRATEGY` controls the order of parent nonce ranges.
 The supported exact values are `sequential`, `orbiting-bit`, and the static
 `auto` alias for `sequential`.
 
@@ -175,7 +183,7 @@ privately partitions whichever parent range the strategy emits.
 Select it with:
 
 ```bash
-HASHPHERE_SEARCH_STRATEGY=orbiting-bit
+HASHORB_SEARCH_STRATEGY=orbiting-bit
 ```
 
 See [`docs/09-orbiting-bit.md`](docs/09-orbiting-bit.md) for the accessible
@@ -202,32 +210,32 @@ destination. Configure either the explicit user/password pair or one explicit
 cookie path, never both. Cookie contents, credentials, addresses, scripts,
 templates, headers, targets, nonce material, transactions, and serialized
 blocks are excluded from console and JSONL output. Ordinary Bitcoin Core RPC
-here is HTTP, not TLS, so Hashsphere resolves the configured endpoint once and
+here is HTTP, not TLS, so HashOrb resolves the configured endpoint once and
 requires every IPv4 or IPv6 result to be loopback. Use an operator-controlled
 local tunnel when the node is on another host; direct remote RPC is rejected.
 
 ```dotenv
-HASHPHERE_BITCOIN_RPC_HOST=127.0.0.1
-HASHPHERE_BITCOIN_RPC_PORT=8332
-HASHPHERE_BITCOIN_RPC_USER=YOUR_RPC_USER
-HASHPHERE_BITCOIN_RPC_PASSWORD=YOUR_RPC_PASSWORD
-HASHPHERE_SOLO_PAYOUT_ADDRESS=YOUR_ADDRESS_FOR_THE_CONNECTED_CHAIN
+HASHORB_BITCOIN_RPC_HOST=127.0.0.1
+HASHORB_BITCOIN_RPC_PORT=8332
+HASHORB_BITCOIN_RPC_USER=YOUR_RPC_USER
+HASHORB_BITCOIN_RPC_PASSWORD=YOUR_RPC_PASSWORD
+HASHORB_SOLO_PAYOUT_ADDRESS=YOUR_ADDRESS_FOR_THE_CONNECTED_CHAIN
 ```
 
 Cookie authentication replaces both user/password lines:
 
 ```dotenv
-HASHPHERE_BITCOIN_RPC_COOKIE_FILE=EXPLICIT_COOKIE_PATH
+HASHORB_BITCOIN_RPC_COOKIE_FILE=EXPLICIT_COOKIE_PATH
 ```
 
 The general, non-wallet `validateaddress` RPC supplies the exact payout
-`scriptPubKey` and enforces the connected chain's address rules. Hashphere does
+`scriptPubKey` and enforces the connected chain's address rules. HashOrb does
 not create, load, modify, or import into a wallet. The readiness command has a
 dedicated opt-in and never mines, proposes, or submits:
 
 ```bash
-HASHPHERE_ENABLE_BITCOIN_RPC_CHECK=1 \
-uv run hashphere bitcoin-core-check
+HASHORB_ENABLE_BITCOIN_RPC_CHECK=1 \
+uv run hashorb bitcoin-core-check
 ```
 
 Mining requires two distinct opt-ins and at least one finite chunk or runtime
@@ -236,9 +244,9 @@ rejected proposal prevents submission. The example below is intentionally
 short but can submit a valid block, so review the connected chain first:
 
 ```bash
-HASHPHERE_ENABLE_TRUE_SOLO=1 \
-HASHPHERE_ENABLE_BLOCK_SUBMISSION=1 \
-uv run hashphere solo-mine \
+HASHORB_ENABLE_TRUE_SOLO=1 \
+HASHORB_ENABLE_BLOCK_SUBMISSION=1 \
+uv run hashorb solo-mine \
   --profile auto \
   --max-chunks 1 \
   --max-runtime-seconds 30 \
@@ -250,8 +258,8 @@ submission opt-in is present elsewhere, this command receives neither proposal
 nor `submitblock` capability and cannot earn a reward because it cannot submit:
 
 ```bash
-HASHPHERE_ENABLE_TRUE_SOLO_HASHING=1 \
-uv run hashphere solo-hash \
+HASHORB_ENABLE_TRUE_SOLO_HASHING=1 \
+uv run hashorb solo-hash \
   --profile lite \
   --max-runtime-seconds 60 \
   --event-log logs/solo-hash.jsonl
@@ -263,7 +271,7 @@ retain their existing boundaries. Template polling is bounded and defaults to
 30 seconds; candidates force a freshness check before proposal and another
 after an accepted proposal. Long polling is deferred. No mainnet submission
 was executed during this milestone. The deterministic isolated regtest gate
-passed against Bitcoin Core v31.1: Core accepted one Hashsphere-built block and
+passed against Bitcoin Core v31.1: Core accepted one HashOrb-built block and
 the isolated chain advanced from height 0 to 1 without a wallet. Proposal
 rejections remain sanitized categories and always suppress submission.
 See [`docs/14-bitcoin-core-true-solo.md`](docs/14-bitcoin-core-true-solo.md).
@@ -273,7 +281,7 @@ steps are in [`docs/15-security-audit.md`](docs/15-security-audit.md).
 The read-only gate also passed against a synchronized loopback Bitcoin Core
 v31.1 mainnet node using cookie authentication. Its live template demonstrated
 that `transactions[].depends` is per input and may repeat one earlier 1-based
-index. Hashsphere preserves those repeats, treats documented fee/sigops
+index. HashOrb preserves those repeats, treats documented fee/sigops
 metadata as optional but strict when present, and reports parser failures only
 through allowlisted field/category enums. That gate performed no hashing,
 proposal, submission, wallet, or Stratum operation.
@@ -297,14 +305,14 @@ lifecycle limits, connection settings, Bitcoin work, or candidate correctness.
 Inspect a profile without Stratum configuration or mining:
 
 ```bash
-uv run python -m hashphere profile-info --profile auto
+uv run python -m hashorb profile-info --profile auto
 ```
 
 Use a profile for continuous mining by omitting the legacy required chunk size;
 the profile owns chunk sizing and pacing:
 
 ```bash
-uv run python -m hashphere stratum-mine \
+uv run python -m hashorb stratum-mine \
   --profile lite \
   --max-runtime-seconds 60 \
   --max-reconnect-attempts 5
@@ -340,17 +348,17 @@ architecture; the build never probes a GPU or accepts raw compiler flags. On
 the DGX Spark GB10 validation host use:
 
 ```bash
-HASHPHERE_BUILD_CUDA=1 \
-HASHPHERE_CUDA_ARCH=121 \
-uv sync --locked --reinstall-package hashphere
+HASHORB_BUILD_CUDA=1 \
+HASHORB_CUDA_ARCH=121 \
+uv sync --locked --reinstall-package hashorb
 ```
 
-Without `HASHPHERE_BUILD_CUDA=1`, `_cuda.cu` is included in source
+Without `HASHORB_BUILD_CUDA=1`, `_cuda.cu` is included in source
 distributions but is not compiled or imported. CPU-only packages continue to
 provide Python and optional native CPU operation. When the switch is set,
 missing `nvcc` or compilation failure stops the CUDA-enabled build instead of
 silently producing a package that appears CUDA-capable. Omitting
-`HASHPHERE_CUDA_ARCH`, or setting anything other than the currently tested
+`HASHORB_CUDA_ARCH`, or setting anything other than the currently tested
 numeric values `120` and `121`, stops the CUDA build. Future Windows and Linux
 hosts must select an explicitly supported architecture for their GPU and
 toolkit; normal package imports never probe hardware.
@@ -358,8 +366,8 @@ toolkit; normal package imports never probe hardware.
 CUDA remains explicit:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda
-HASHPHERE_CUDA_DEVICE=0
+HASHORB_COMPUTE_BACKEND=cuda
+HASHORB_CUDA_DEVICE=0
 ```
 
 `auto` and `cpu` still select Python. CUDA initialization occurs only during
@@ -372,33 +380,33 @@ After offline parity succeeds on the target device, the controlled sequential
 live command is:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda \
-HASHPHERE_CUDA_DEVICE=0 \
-HASHPHERE_SEARCH_STRATEGY=sequential \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine \
+HASHORB_COMPUTE_BACKEND=cuda \
+HASHORB_CUDA_DEVICE=0 \
+HASHORB_SEARCH_STRATEGY=sequential \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine \
   --start-nonce 0 \
   --chunk-size 1000000 \
   --max-chunks 3 \
   --max-reconnect-attempts 5 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 The controlled orbiting-bit form changes only the strategy:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda \
-HASHPHERE_CUDA_DEVICE=0 \
-HASHPHERE_SEARCH_STRATEGY=orbiting-bit \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine \
+HASHORB_COMPUTE_BACKEND=cuda \
+HASHORB_CUDA_DEVICE=0 \
+HASHORB_SEARCH_STRATEGY=orbiting-bit \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine \
   --start-nonce 0 \
   --chunk-size 1000000 \
   --max-chunks 3 \
   --max-reconnect-attempts 5 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 These commands are documentation only and are not executed automatically.
@@ -430,19 +438,19 @@ connection, or event log. It searches fixed public synthetic work that is not
 valid pool work:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend python \
   --hash-count 100000
 ```
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend native \
   --hash-count 100000
 ```
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend native-parallel \
   --workers 4 \
   --hash-count 1000000
@@ -451,7 +459,7 @@ uv run python -m hashphere compute-benchmark \
 After an explicit CUDA build, benchmark one selected device offline with:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend cuda \
   --device 0 \
   --hash-count 1000000
@@ -460,7 +468,7 @@ uv run python -m hashphere compute-benchmark \
 Benchmark an explicit device set with:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend cuda-multi \
   --devices 0,1 \
   --hash-count 500000000
@@ -469,7 +477,7 @@ uv run python -m hashphere compute-benchmark \
 Profiles can resolve that same offline benchmark before backend construction:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --profile auto \
   --hash-count 500000000 \
   --warmup-runs 1 \
@@ -501,7 +509,7 @@ The ordinary command remains one-shot. Explicit repeated tuning adds a separate
 first launch, optional warmups, and bounded repetitions:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend cuda \
   --device 0 \
   --hash-count 100000000 \
@@ -522,8 +530,8 @@ into a general speedup claim without controlled evidence.
 Hardware parity tests remain separately gated and never run in default pytest:
 
 ```bash
-HASHPHERE_ENABLE_CUDA_TESTS=1 \
-HASHPHERE_CUDA_DEVICE=0 \
+HASHORB_ENABLE_CUDA_TESTS=1 \
+HASHORB_CUDA_DEVICE=0 \
 uv run pytest -q tests/test_cuda_hardware.py
 ```
 
@@ -532,9 +540,9 @@ uv run pytest -q tests/test_cuda_hardware.py
 Live network access is opt-in. Run exactly:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-uv run python -m hashphere stratum-handshake \
-  --log-file logs/hashphere.jsonl
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+uv run python -m hashorb stratum-handshake \
+  --log-file logs/hashorb.jsonl
 ```
 
 The command loads `.env` through `Settings.from_env()`, connects to the
@@ -558,7 +566,7 @@ async behavior.
 
 The live command is the manual integration check. It is not invoked by the
 default pytest suite and cannot contact CKPool unless
-`HASHPHERE_ENABLE_LIVE_STRATUM=1` is explicitly set.
+`HASHORB_ENABLE_LIVE_STRATUM=1` is explicitly set.
 
 ## Observe live Stratum notifications
 
@@ -566,9 +574,9 @@ To complete a handshake and wait for both supported mining notification types,
 run exactly:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-uv run python -m hashphere stratum-observe \
-  --log-file logs/hashphere.jsonl
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+uv run python -m hashorb stratum-observe \
+  --log-file logs/hashorb.jsonl
 ```
 
 The observer consumes parsed notifications through `StratumClient` until it
@@ -614,12 +622,12 @@ This command performs real hashing and is permitted to send `mining.submit`.
 It therefore requires two exact opt-ins. Run:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine-once \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine-once \
   --start-nonce 0 \
   --hash-count 100000 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 `--hash-count` is required and must be a positive ASCII decimal integer no
@@ -691,13 +699,13 @@ sequential searches and checks for immediately available Stratum notifications
 between them:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine-chunks \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine-chunks \
   --start-nonce 0 \
   --chunk-size 100000 \
   --max-hashes 1000000 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 Both opt-ins are required. `--chunk-size` and `--max-hashes` are required
@@ -712,7 +720,7 @@ After each exhausted nonfinal chunk, the client performs nonblocking polls and
 drains every immediately available notification in arrival order. Difficulty
 changes apply only to jobs announced after them; they never rebuild the current
 job retroactively. A newly announced job replaces current work before the next
-chunk. Hashphere deliberately switches to the newest announced job for both
+chunk. HashOrb deliberately switches to the newest announced job for both
 `clean_jobs=true` and `clean_jobs=false` as a freshness policy. If several jobs
 arrive together, only the final newest job is searched.
 
@@ -735,13 +743,13 @@ optional internal monotonic runtime limit. It requires the same two exact
 live-mining opt-ins:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine \
   --start-nonce 0 \
   --chunk-size 100000 \
   --max-reconnect-attempts 5 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 `--chunk-size` is required. `--start-nonce` defaults to `0`. Both use strict,
@@ -780,7 +788,7 @@ universally invalid; an operator must deliberately enable the applicable
 policy for the selected server. Completed ranges update a separate work clock
 and never masquerade as server activity.
 
-At an exact configured boundary Hashsphere accounts for the current completed
+At an exact configured boundary HashOrb accounts for the current completed
 range, suppresses any candidate returned from the newly stale session, closes
 that session, and enters the existing reconnect policy. Fresh subscribe,
 authorization, difficulty, job, and session-specific extra-nonce state are
@@ -790,16 +798,16 @@ during recovery, and no reconnect begins after a stop request.
 For a controlled live validation, cap the number of actual searches:
 
 ```bash
-HASHPHERE_SEARCH_STRATEGY=sequential \
-HASHPHERE_COMPUTE_BACKEND=python \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine \
+HASHORB_SEARCH_STRATEGY=sequential \
+HASHORB_COMPUTE_BACKEND=python \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine \
   --start-nonce 0 \
   --chunk-size 100000 \
   --max-chunks 3 \
   --max-reconnect-attempts 5 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 `--max-chunks` is an optional positive, unpadded ASCII decimal integer. Idle
@@ -811,21 +819,21 @@ To validate progression without a large hash run, search the final nonce of
 three consecutive work variants:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine \
   --start-nonce 4294967295 \
   --chunk-size 1 \
   --max-chunks 3 \
   --max-reconnect-attempts 5 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 Chunks for unchanged work are adjacent half-open ranges with no skipped or
 repeated nonce. Difficulty notifications affect later jobs only. When several
 jobs are available between chunks, only the final newest job is prepared and
 searched. Both `clean_jobs=true` and `clean_jobs=false` select the newest job
-under Hashphere's freshness policy, and replacement work restarts at the
+under HashOrb's freshness policy, and replacement work restarts at the
 configured start nonce without resetting cumulative counters.
 
 The first Ctrl-C/SIGINT or SIGTERM requests cooperative shutdown, and repeated
@@ -839,15 +847,15 @@ synthetic range measured about 0.20 seconds locally; a later human-controlled
 live gate must establish the corresponding pool workload behavior.
 
 For an external-signal check, invoke the project interpreter directly rather
-than placing `uv` between the signal sender and Hashphere:
+than placing `uv` between the signal sender and HashOrb:
 
 ```bash
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-./.venv/bin/python -m hashphere stratum-mine \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+./.venv/bin/python -m hashorb stratum-mine \
   --chunk-size 500000000 \
   --max-runtime-seconds 60 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 A graceful signal writes `command_completed` with `stopped_by_user`. SIGKILL
@@ -865,11 +873,11 @@ safe proof of suspend.
 The five-minute manually authorized liveness gate used this conservative form:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda \
-HASHPHERE_CUDA_DEVICE=0 \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-./.venv/bin/python -m hashphere stratum-mine \
+HASHORB_COMPUTE_BACKEND=cuda \
+HASHORB_CUDA_DEVICE=0 \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+./.venv/bin/python -m hashorb stratum-mine \
   --chunk-size 500000000 \
   --max-runtime-seconds 300 \
   --max-server-silence-seconds 120 \
@@ -899,11 +907,11 @@ jq 'select(.event | startswith("stratum_liveness") or contains("stale"))' \
   logs/liveness-check.jsonl
 ```
 
-If one prepared variant exhausts the remaining 32-bit nonce space, Hashphere
+If one prepared variant exhausts the remaining 32-bit nonce space, HashOrb
 does not wrap or repeat its nonce ranges. It first drains queued pool
 notifications. A genuinely newer selected job takes priority and restarts at
 the configured nonce with the current session's original extra-nonce seed.
-Otherwise, Hashphere advances `extra_nonce_2` by one modulo its negotiated
+Otherwise, HashOrb advances `extra_nonce_2` by one modulo its negotiated
 fixed-width space, rebuilds the coinbase-derived work once, and restarts the
 nonce position. One random seed is generated only after each successful
 session authorization, using that session's negotiated width; all later values
@@ -921,7 +929,7 @@ reannouncement does not restart already searched work.
 
 On a genuine connection or transport-availability failure during handshake,
 initial work acquisition, between-chunk polling, or terminal replacement wait,
-Hashphere closes the failed client best-effort and creates a new client for the
+HashOrb closes the failed client best-effort and creates a new client for the
 same configured endpoint. It requires a fresh subscription, authorization,
 difficulty, and later usable job before resuming. Old notifications, assembler
 state, prepared work, request IDs, local extra-nonce progress, and rolled time
@@ -940,15 +948,15 @@ multi-GPU hardware validation remain deferred.
 To validate explicit native selection with a bounded live gate, use:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=native \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine \
+HASHORB_COMPUTE_BACKEND=native \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine \
   --start-nonce 0 \
   --chunk-size 100000 \
   --max-chunks 3 \
   --max-reconnect-attempts 5 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 This command is documented for an explicitly authorized manual gate and is not
@@ -957,17 +965,17 @@ run by automated tests.
 To validate the parallel backend under the same controlled gate, use:
 
 ```bash
-HASHPHERE_SEARCH_STRATEGY=sequential \
-HASHPHERE_COMPUTE_BACKEND=native-parallel \
-HASHPHERE_COMPUTE_WORKERS=4 \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine \
+HASHORB_SEARCH_STRATEGY=sequential \
+HASHORB_COMPUTE_BACKEND=native-parallel \
+HASHORB_COMPUTE_WORKERS=4 \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine \
   --start-nonce 0 \
   --chunk-size 1000000 \
   --max-chunks 3 \
   --max-reconnect-attempts 5 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 The executor is reused through chunks, work changes, and reconnects, then
@@ -978,17 +986,17 @@ cooperatively interrupted.
 To validate experimental orbiting-bit ordering with the same bounded gate, use:
 
 ```bash
-HASHPHERE_SEARCH_STRATEGY=orbiting-bit \
-HASHPHERE_COMPUTE_BACKEND=native-parallel \
-HASHPHERE_COMPUTE_WORKERS=4 \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-uv run python -m hashphere stratum-mine \
+HASHORB_SEARCH_STRATEGY=orbiting-bit \
+HASHORB_COMPUTE_BACKEND=native-parallel \
+HASHORB_COMPUTE_WORKERS=4 \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+uv run python -m hashorb stratum-mine \
   --start-nonce 0 \
   --chunk-size 1000000 \
   --max-chunks 3 \
   --max-reconnect-attempts 5 \
-  --log-file logs/hashphere.jsonl
+  --log-file logs/hashorb.jsonl
 ```
 
 This command is documented for an explicitly authorized manual gate and is not
@@ -1018,7 +1026,7 @@ The `--log-file PATH` option is available on `stratum-handshake`,
 `stratum-mine`. It is optional: when omitted, no log file is created and the
 existing console output is unchanged.
 
-When requested, Hashphere creates missing parent directories and appends
+When requested, HashOrb creates missing parent directories and appends
 sanitized events to the UTF-8 file without truncating existing records. Each
 event is one compact JSON object on one line and is flushed immediately, so the
 file can be tailed while a command runs. Separate command invocations receive
@@ -1033,17 +1041,17 @@ primary interactive output; JSONL provides stable machine-readable events.
 On macOS and Linux:
 
 ```bash
-tail -f logs/hashphere.jsonl
-jq . logs/hashphere.jsonl
-jq 'select(.level == "ERROR")' logs/hashphere.jsonl
-jq 'select(.event == "nonce_range_completed")' logs/hashphere.jsonl
+tail -f logs/hashorb.jsonl
+jq . logs/hashorb.jsonl
+jq 'select(.level == "ERROR")' logs/hashorb.jsonl
+jq 'select(.event == "nonce_range_completed")' logs/hashorb.jsonl
 ```
 
 On Windows PowerShell:
 
 ```powershell
-Get-Content .\logs\hashphere.jsonl -Wait
-Get-Content .\logs\hashphere.jsonl |
+Get-Content .\logs\hashorb.jsonl -Wait
+Get-Content .\logs\hashorb.jsonl |
   ForEach-Object { $_ | ConvertFrom-Json }
 ```
 
@@ -1052,12 +1060,12 @@ reported with a nonzero exit status; logging is never silently disabled.
 
 ## Summarize structured logs locally
 
-Hashphere can validate and summarize an existing schema-version-1 event log
+HashOrb can validate and summarize an existing schema-version-1 event log
 without `jq` or a network connection:
 
 ```bash
-uv run python -m hashphere logs-summary \
-  --log-file logs/hashphere.jsonl
+uv run python -m hashorb logs-summary \
+  --log-file logs/hashorb.jsonl
 ```
 
 `logs-summary` is read-only. It does not require either live-network opt-in,
@@ -1069,8 +1077,8 @@ whole analysis instead of being silently skipped.
 Example sanitized output:
 
 ```text
-Hashphere log summary.
-Log file: logs/hashphere.jsonl
+HashOrb log summary.
+Log file: logs/hashorb.jsonl
 Records: 6
 Runs: 2
 Completed runs: 2

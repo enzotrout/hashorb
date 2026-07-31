@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from hashphere.observability import EventLogError, JsonlEventSink, NullEventSink
+from hashorb.observability import EventLogError, JsonlEventSink, NullEventSink
 
 FIXED_TIME = datetime(2026, 7, 27, 12, 34, 56, 123456, tzinfo=UTC)
 

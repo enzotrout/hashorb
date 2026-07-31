@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from hashphere.compute import (
+from hashorb.compute import (
     MAX_COMPUTE_WORKERS,
     ComputeBackendValidationError,
     NonceRangeAssignment,

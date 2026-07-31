@@ -9,8 +9,8 @@ from threading import Barrier, Event, Lock
 
 import pytest
 
-import hashphere.compute.native as native_module
-from hashphere.compute import (
+import hashorb.compute.native as native_module
+from hashorb.compute import (
     ComputeBackendExecutionError,
     ComputeBackendValidationError,
     MiningComputeBackend,
@@ -18,7 +18,7 @@ from hashphere.compute import (
     NativeSequentialBackend,
     PythonSequentialBackend,
 )
-from hashphere.mining import (
+from hashorb.mining import (
     NonceSearchResult,
     OrbitingBitSearchCursor,
     PreparedMiningWork,

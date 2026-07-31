@@ -1,4 +1,4 @@
-"""Build Hashphere's optional native CPU and explicitly enabled CUDA extensions."""
+"""Build HashOrb's optional native CPU and explicitly enabled CUDA extensions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
-_CUDA_BUILD_FLAG = "HASHPHERE_BUILD_CUDA"
+_CUDA_BUILD_FLAG = "HASHORB_BUILD_CUDA"
 
 
 def _reproducible_compile_flags() -> list[str]:
@@ -33,9 +33,9 @@ def _reproducible_compile_flags() -> list[str]:
 def _cuda_arch_flags(arch: str | None = None) -> list[str]:
     """Return nvcc architecture flags for the configured CUDA target."""
 
-    requested = arch if arch is not None else os.getenv("HASHPHERE_CUDA_ARCH")
+    requested = arch if arch is not None else os.getenv("HASHORB_CUDA_ARCH")
     if requested not in {"120", "121"}:
-        raise RuntimeError("HASHPHERE_CUDA_ARCH is required for CUDA builds and must be 120 or 121")
+        raise RuntimeError("HASHORB_CUDA_ARCH is required for CUDA builds and must be 120 or 121")
     return ["-gencode", f"arch=compute_{requested},code=sm_{requested}"]
 
 
@@ -95,7 +95,7 @@ class CudaBuildExt(build_ext):
             return
         nvcc = shutil.which("nvcc")
         if nvcc is None:
-            raise RuntimeError("HASHPHERE_BUILD_CUDA=1 requires nvcc")
+            raise RuntimeError("HASHORB_BUILD_CUDA=1 requires nvcc")
         compiler = self.compiler
         if compiler is None:
             raise RuntimeError("CUDA build compiler is unavailable")
@@ -151,7 +151,7 @@ def cuda_extension() -> Extension:
 
     nvcc = shutil.which("nvcc")
     if nvcc is None:
-        raise RuntimeError("HASHPHERE_BUILD_CUDA=1 requires nvcc")
+        raise RuntimeError("HASHORB_BUILD_CUDA=1 requires nvcc")
     cuda_home = os.getenv("CUDA_HOME") or os.getenv("CUDA_PATH")
     cuda_root = Path(cuda_home).resolve() if cuda_home else Path(nvcc).resolve().parent.parent
     library_dirs = _discover_cuda_library_dirs(cuda_root)
@@ -161,8 +161,8 @@ def cuda_extension() -> Extension:
         )
     runtime_library_dirs = library_dirs if sys.platform != "win32" else []
     return Extension(
-        "hashphere.compute._cuda",
-        sources=["src/hashphere/compute/_cuda.cu"],
+        "hashorb.compute._cuda",
+        sources=["src/hashorb/compute/_cuda.cu"],
         include_dirs=[
             sysconfig.get_paths()["include"],
             str(cuda_root / "include"),
@@ -177,8 +177,8 @@ def cuda_extension() -> Extension:
 
 extensions = [
     Extension(
-        "hashphere.compute._native",
-        sources=["src/hashphere/compute/_native.c"],
+        "hashorb.compute._native",
+        sources=["src/hashorb/compute/_native.c"],
         extra_compile_args=_reproducible_compile_flags(),
         optional=True,
     )

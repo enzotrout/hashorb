@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hashphere.mining import (
+from hashorb.mining import (
     MiningJob,
     TargetValidationError,
     decode_compact_target,

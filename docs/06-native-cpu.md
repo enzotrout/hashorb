@@ -2,7 +2,7 @@
 
 ## Decision
 
-Hashphere uses a small CPython C extension for its first optimized backend.
+HashOrb uses a small CPython C extension for its first optimized backend.
 Rust with PyO3 and maturin was considered and remains a sound future option,
 but it would add a second language package manager, extension framework, and
 build backend to a repository that previously had only Python packaging. The C
@@ -19,7 +19,7 @@ correctness implementation.
 
 ```text
 setup.py
-src/hashphere/compute/
+src/hashorb/compute/
 ├── _native.c
 ├── backend.py
 ├── benchmark.py
@@ -90,14 +90,14 @@ workflow. From a clean checkout:
 
 ```bash
 uv sync --locked
-uv run python -c "from hashphere.compute import list_compute_backends; print(list_compute_backends())"
+uv run python -c "from hashorb.compute import list_compute_backends; print(list_compute_backends())"
 uv build
 ```
 
 For an editable rebuild after C changes:
 
 ```bash
-uv sync --reinstall-package hashphere
+uv sync --reinstall-package hashorb
 ```
 
 Generated shared libraries, build directories, distributions, and egg metadata
@@ -154,7 +154,7 @@ include_dir=$(uv run python -c \
   'import sysconfig; print(sysconfig.get_config_var("INCLUDEPY"))')
 cc -std=c11 -Wall -Wextra -Werror \
   -I"$include_dir" \
-  -fsyntax-only src/hashphere/compute/_native.c
+  -fsyntax-only src/hashorb/compute/_native.c
 ```
 
 When `clang-format` becomes part of the locked development toolchain, its style
@@ -168,15 +168,15 @@ address, session nonce, or protocol payload and is unsuitable for submission.
 All benchmark commands search the same fixture and requested range:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend python \
   --hash-count 100000
 
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend native \
   --hash-count 100000
 
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend native-parallel \
   --workers 4 \
   --hash-count 1000000

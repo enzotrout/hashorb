@@ -8,7 +8,7 @@ search, then visits those range indexes in fixed-width bit-reversal order.
 
 ## Why
 
-The strategy proves Hashphere can change global search order without changing
+The strategy proves HashOrb can change global search order without changing
 Bitcoin correctness, hashing, compute backends, native worker partitioning,
 Stratum, progression, recovery, or submission. It is a clean architecture and
 testing milestone, not a probability optimization.

@@ -6,13 +6,13 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from hashphere.mining import (
+from hashorb.mining import (
     MiningJob,
     MiningJobAssembler,
     MiningJobStateError,
     MiningJobValidationError,
 )
-from hashphere.network.stratum import (
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     SubscribeResult,

@@ -28,7 +28,7 @@ if (-not $DryRun -and $null -eq (Get-Command uv -ErrorAction SilentlyContinue)) 
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ($Action -eq "uninstall") {
-    Invoke-Visible -Command @("uv", "tool", "uninstall", "hashphere")
+    Invoke-Visible -Command @("uv", "tool", "uninstall", "hashorb")
     exit 0
 }
 
@@ -42,4 +42,4 @@ if ($Action -eq "upgrade") {
 $InstallCommand += $ProjectRoot
 Invoke-Visible -Command $InstallCommand
 
-Write-Host "Installation complete. Run 'hashsphere doctor' from your configuration directory."
+Write-Host "Installation complete. Run 'hashorb doctor' from your configuration directory."

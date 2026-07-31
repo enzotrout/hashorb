@@ -106,8 +106,8 @@ range retry, or compute-triggered Stratum reconnect.
 Select the backend explicitly:
 
 ```text
-HASHPHERE_COMPUTE_BACKEND=native-parallel
-HASHPHERE_COMPUTE_WORKERS=4
+HASHORB_COMPUTE_BACKEND=native-parallel
+HASHORB_COMPUTE_WORKERS=4
 ```
 
 The worker value is strict unpadded ASCII decimal from 1 through 256 and
@@ -126,7 +126,7 @@ when CUDA device 0 is unavailable.
 Use the same public synthetic non-pool fixture as the sequential backends:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend native-parallel \
   --workers 4 \
   --hash-count 1000000

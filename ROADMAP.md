@@ -1,4 +1,9 @@
-# Hashphere
+# HashOrb
+
+**HashOrb: Distributed hashing as a coordinated swarm.**
+
+The project was renamed to HashOrb before its first public release. Coordinated
+distributed workers remain planned work rather than a current capability.
 
 **Project:** Bitcoin CPU Miner and Learning Platform
 
@@ -10,7 +15,7 @@
 
 # Vision
 
-Hashphere is an educational Bitcoin mining project whose goals are:
+HashOrb is an educational Bitcoin mining project whose goals are:
 
 - Teach how Bitcoin mining actually works.
 - Produce a real Bitcoin miner with no stubbed components.
@@ -186,7 +191,7 @@ Planned:
 
 Objective:
 
-One versioned shared package now supplies the `hashsphere` console command,
+One versioned shared package now supplies the `hashorb` console command,
 offline doctor, CPU source and wheel builds, user-local installers, a non-root
 Docker CPU image, archive privacy checks, clean-installed smokes, and a
 Linux/macOS/Windows CPU CI matrix. The Linux CUDA build stays explicit and
@@ -223,7 +228,7 @@ partitioned-global, and probabilistic search orders remain a later experimental
 strategy-expansion point.
 
 The isolated wallet-free Bitcoin Core v31.1 regtest gate now accepts one
-Hashsphere-constructed block and advances the private chain from height 0 to 1.
+HashOrb-constructed block and advances the private chain from height 0 to 1.
 The gate exposed and corrected Core's consensus `CScript` integer encoding for
 BIP34 heights 1 through 16; proposal rejection categories remain sanitized and
 proposal-rejected blocks are never submitted.

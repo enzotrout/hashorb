@@ -1,4 +1,4 @@
-"""Tests for the opt-in Hashphere command-line handshake."""
+"""Tests for the opt-in HashOrb command-line handshake."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-import hashphere.__main__ as cli_module
-from hashphere.config import Settings
-from hashphere.network.stratum import (
+import hashorb.__main__ as cli_module
+from hashorb.config import Settings
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumAuthorizationError,
@@ -22,7 +22,7 @@ from hashphere.network.stratum import (
     StratumProtocolError,
     SubscribeResult,
 )
-from hashphere.observability import EventLogError
+from hashorb.observability import EventLogError
 
 
 def make_settings() -> Settings:
@@ -123,7 +123,7 @@ def configure_command(
         return client
 
     monkeypatch.setattr(cli_module, "StratumClient", client_factory)
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
     return created_with
 
 
@@ -154,7 +154,7 @@ def test_success_prints_sanitized_summary_and_closes(
     assert settings.bitcoin_address not in captured.out
     assert settings.stratum_username not in captured.out
     assert settings.stratum_password not in captured.out
-    assert created_with == [(settings, "Hashphere/0.1")]
+    assert created_with == [(settings, "HashOrb/0.1")]
     assert client.close_calls == 1
 
 
@@ -212,7 +212,7 @@ def test_non_mining_log_file_argument_errors_are_rejected(
 ) -> None:
     assert cli_module.main(arguments) == 2
     assert capsys.readouterr().err == (
-        "Usage: hashphere "
+        "Usage: hashorb "
         "{bitcoin-core-check,solo-hash,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
         "stratum-mine-chunks,stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} "
         "[options]\n"
@@ -325,12 +325,12 @@ def test_live_handshake_requires_explicit_environment_flag(
 ) -> None:
     client = FakeClient()
     configure_command(monkeypatch, client)
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_STRATUM")
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_STRATUM")
 
     assert cli_module.main(["stratum-handshake"]) == 2
 
     captured = capsys.readouterr()
-    assert "HASHPHERE_ENABLE_LIVE_STRATUM=1" in captured.err
+    assert "HASHORB_ENABLE_LIVE_STRATUM=1" in captured.err
     assert client.close_calls == 0
 
 
@@ -340,12 +340,12 @@ def test_live_observer_requires_explicit_environment_flag(
 ) -> None:
     client = FakeClient()
     configure_command(monkeypatch, client)
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_STRATUM")
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_STRATUM")
 
     assert cli_module.main(["stratum-observe"]) == 2
 
     captured = capsys.readouterr()
-    assert "HASHPHERE_ENABLE_LIVE_STRATUM=1" in captured.err
+    assert "HASHORB_ENABLE_LIVE_STRATUM=1" in captured.err
     assert client.close_calls == 0
 
 
@@ -713,7 +713,7 @@ def test_unknown_command_prints_usage(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.strip() == (
-        "Usage: hashphere "
+        "Usage: hashorb "
         "{bitcoin-core-check,solo-hash,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
         "stratum-mine-chunks,stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} "
         "[options]"

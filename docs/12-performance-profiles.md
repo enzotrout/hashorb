@@ -13,7 +13,7 @@ while advanced operators still need a fully explicit and reproducible mode.
 
 **Plain talk:** Lite is gentle, Auto is sensible, Max uses the highest capacity
 allowed by the safe device policy, and Custom exposes the approved controls.
-Profiles choose how intensely Hashsphere attempts hashes; they do not change
+Profiles choose how intensely HashOrb attempts hashes; they do not change
 which hashes are valid or the probability of success for a fixed number of
 unique hashes.
 
@@ -22,13 +22,13 @@ unique hashes.
 The stable environment setting is:
 
 ```bash
-HASHPHERE_COMPUTE_PROFILE=lite
+HASHORB_COMPUTE_PROFILE=lite
 ```
 
 The CLI form is:
 
 ```bash
-uv run python -m hashphere profile-info --profile auto
+uv run python -m hashorb profile-info --profile auto
 ```
 
 An explicit CLI profile wins over the environment profile. An environment
@@ -109,10 +109,10 @@ Inspect a decision without loading Stratum settings, opening a socket, or
 mining:
 
 ```bash
-uv run python -m hashphere profile-info --profile lite
-uv run python -m hashphere profile-info --profile auto --device 0
-uv run python -m hashphere profile-info --profile max --devices 0,1
-uv run python -m hashphere profile-info \
+uv run python -m hashorb profile-info --profile lite
+uv run python -m hashorb profile-info --profile auto --device 0
+uv run python -m hashorb profile-info --profile max --devices 0,1
+uv run python -m hashorb profile-info \
   --profile custom --backend cuda --device 0 \
   --threads-per-block 256 --chunk-size 500000000
 ```
@@ -120,7 +120,7 @@ uv run python -m hashphere profile-info \
 Benchmark the resolved backend on public synthetic work:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --profile auto --hash-count 500000000 --warmup-runs 1 --repetitions 5
 ```
 

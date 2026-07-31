@@ -1,29 +1,29 @@
-"""Tests for Hashphere runtime configuration."""
+"""Tests for HashOrb runtime configuration."""
 
 import pytest
 
-import hashphere.config.settings as settings_module
-from hashphere.config.settings import (
+import hashorb.config.settings as settings_module
+from hashorb.config.settings import (
     Settings,
     resolve_worker_name,
     sanitize_worker_name,
 )
 
 _ENVIRONMENT_VARIABLES = (
-    "HASHPHERE_STRATUM_HOST",
-    "HASHPHERE_STRATUM_PORT",
-    "HASHPHERE_BITCOIN_ADDRESS",
-    "HASHPHERE_WORKER_NAME",
-    "HASHPHERE_STRATUM_PASSWORD",
-    "HASHPHERE_COMPUTE_BACKEND",
-    "HASHPHERE_COMPUTE_PROFILE",
-    "HASHPHERE_COMPUTE_WORKERS",
-    "HASHPHERE_SEARCH_STRATEGY",
-    "HASHPHERE_CUDA_DEVICE",
-    "HASHPHERE_CUDA_DEVICES",
-    "HASHPHERE_CUDA_THREADS_PER_BLOCK",
-    "HASHPHERE_CHUNK_SIZE",
-    "HASHPHERE_INTER_RANGE_DELAY_SECONDS",
+    "HASHORB_STRATUM_HOST",
+    "HASHORB_STRATUM_PORT",
+    "HASHORB_BITCOIN_ADDRESS",
+    "HASHORB_WORKER_NAME",
+    "HASHORB_STRATUM_PASSWORD",
+    "HASHORB_COMPUTE_BACKEND",
+    "HASHORB_COMPUTE_PROFILE",
+    "HASHORB_COMPUTE_WORKERS",
+    "HASHORB_SEARCH_STRATEGY",
+    "HASHORB_CUDA_DEVICE",
+    "HASHORB_CUDA_DEVICES",
+    "HASHORB_CUDA_THREADS_PER_BLOCK",
+    "HASHORB_CHUNK_SIZE",
+    "HASHORB_INTER_RANGE_DELAY_SECONDS",
 )
 
 
@@ -31,7 +31,7 @@ _ENVIRONMENT_VARIABLES = (
 def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent the developer's real .env file from affecting tests."""
 
-    monkeypatch.setattr(settings_module, "load_dotenv", lambda: False)
+    monkeypatch.setattr(settings_module, "load_hashorb_environment", lambda: False)
 
     for variable in _ENVIRONMENT_VARIABLES:
         monkeypatch.delenv(variable, raising=False)
@@ -44,8 +44,8 @@ def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         ("Example Node.local", "example-node-local"),
         ("  worker_01  ", "worker_01"),
         ("worker@home!", "worker-home"),
-        ("---", "hashphere"),
-        ("", "hashphere"),
+        ("---", "hashorb"),
+        ("", "hashorb"),
     ],
 )
 def test_sanitize_worker_name(raw_name: str, expected: str) -> None:
@@ -70,13 +70,13 @@ def test_resolve_worker_name_accepts_explicit_name() -> None:
 
 def test_settings_load_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
-        "HASHPHERE_BITCOIN_ADDRESS",
+        "HASHORB_BITCOIN_ADDRESS",
         "bc1qexampleaddress",
     )
     monkeypatch.setattr(
         settings_module.socket,
         "gethostname",
-        lambda: "hashphere-test",
+        lambda: "hashorb-test",
     )
 
     settings = Settings.from_env()
@@ -84,8 +84,8 @@ def test_settings_load_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.stratum_host == "stratum.ckpool.org"
     assert settings.stratum_port == 3333
     assert settings.bitcoin_address == "bc1qexampleaddress"
-    assert settings.worker_name == "hashphere-test"
-    assert settings.stratum_username == ("bc1qexampleaddress.hashphere-test")
+    assert settings.worker_name == "hashorb-test"
+    assert settings.stratum_username == ("bc1qexampleaddress.hashorb-test")
     assert settings.stratum_password == "x"
     assert settings.compute_backend == "auto"
     assert settings.compute_profile is None
@@ -102,8 +102,8 @@ def test_profile_environment_rejects_empty_padded_or_unknown_names(
     monkeypatch: pytest.MonkeyPatch,
     profile: str,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", profile)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_PROFILE", profile)
 
     with pytest.raises(ValueError, match="compute profile"):
         Settings.from_env()
@@ -112,13 +112,13 @@ def test_profile_environment_rejects_empty_padded_or_unknown_names(
 def test_profile_environment_captures_only_explicit_compute_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", "custom")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICE", "0")
-    monkeypatch.setenv("HASHPHERE_CUDA_THREADS_PER_BLOCK", "128")
-    monkeypatch.setenv("HASHPHERE_CHUNK_SIZE", "123")
-    monkeypatch.setenv("HASHPHERE_INTER_RANGE_DELAY_SECONDS", "0.25")
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_PROFILE", "custom")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "cuda")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICE", "0")
+    monkeypatch.setenv("HASHORB_CUDA_THREADS_PER_BLOCK", "128")
+    monkeypatch.setenv("HASHORB_CHUNK_SIZE", "123")
+    monkeypatch.setenv("HASHORB_INTER_RANGE_DELAY_SECONDS", "0.25")
 
     settings = Settings.from_env()
 
@@ -134,19 +134,19 @@ def test_profile_environment_captures_only_explicit_compute_controls(
 def test_settings_load_explicit_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_STRATUM_HOST", "pool.example.com")
-    monkeypatch.setenv("HASHPHERE_STRATUM_PORT", "4444")
+    monkeypatch.setenv("HASHORB_STRATUM_HOST", "pool.example.com")
+    monkeypatch.setenv("HASHORB_STRATUM_PORT", "4444")
     monkeypatch.setenv(
-        "HASHPHERE_BITCOIN_ADDRESS",
+        "HASHORB_BITCOIN_ADDRESS",
         "bc1qexampleaddress",
     )
-    monkeypatch.setenv("HASHPHERE_WORKER_NAME", "worker-02")
-    monkeypatch.setenv("HASHPHERE_STRATUM_PASSWORD", "test-password")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "GPU")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_PROFILE", "MAX")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_WORKERS", "256")
-    monkeypatch.setenv("HASHPHERE_SEARCH_STRATEGY", "auto")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICE", "17")
+    monkeypatch.setenv("HASHORB_WORKER_NAME", "worker-02")
+    monkeypatch.setenv("HASHORB_STRATUM_PASSWORD", "test-password")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "GPU")
+    monkeypatch.setenv("HASHORB_COMPUTE_PROFILE", "MAX")
+    monkeypatch.setenv("HASHORB_COMPUTE_WORKERS", "256")
+    monkeypatch.setenv("HASHORB_SEARCH_STRATEGY", "auto")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICE", "17")
 
     settings = Settings.from_env()
 
@@ -166,9 +166,9 @@ def test_cuda_device_accepts_strict_values_only_when_cuda_is_selected(
     monkeypatch: pytest.MonkeyPatch,
     device: str,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICE", device)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "cuda")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICE", device)
 
     assert Settings.from_env().cuda_device == int(device)
 
@@ -181,20 +181,20 @@ def test_cuda_device_rejects_malformed_values_before_cuda_selection(
     monkeypatch: pytest.MonkeyPatch,
     device: str,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICE", device)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "cuda")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICE", device)
 
-    with pytest.raises(ValueError, match="HASHPHERE_CUDA_DEVICE"):
+    with pytest.raises(ValueError, match="HASHORB_CUDA_DEVICE"):
         Settings.from_env()
 
 
 def test_cuda_device_environment_does_not_affect_cpu_backends(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "native")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICE", "not-a-device")
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "native")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICE", "not-a-device")
 
     settings = Settings.from_env()
 
@@ -211,9 +211,9 @@ def test_cuda_devices_are_explicit_canonical_and_whitespace_tolerant(
     devices: str,
     expected: tuple[int, ...],
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda-multi")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", devices)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "cuda-multi")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICES", devices)
 
     settings = Settings.from_env()
 
@@ -224,10 +224,10 @@ def test_cuda_devices_are_explicit_canonical_and_whitespace_tolerant(
 def test_cuda_multi_requires_explicit_device_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda-multi")
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "cuda-multi")
 
-    with pytest.raises(ValueError, match="HASHPHERE_CUDA_DEVICES is required"):
+    with pytest.raises(ValueError, match="HASHORB_CUDA_DEVICES is required"):
         Settings.from_env()
 
 
@@ -239,20 +239,20 @@ def test_cuda_devices_reject_malformed_empty_duplicate_and_out_of_range_values(
     monkeypatch: pytest.MonkeyPatch,
     devices: str,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda-multi")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", devices)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "cuda-multi")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICES", devices)
 
-    with pytest.raises(ValueError, match="HASHPHERE_CUDA_DEVICES"):
+    with pytest.raises(ValueError, match="HASHORB_CUDA_DEVICES"):
         Settings.from_env()
 
 
 def test_cuda_devices_reject_an_excessive_device_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "cuda-multi")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", ",".join(str(item) for item in range(257)))
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "cuda-multi")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICES", ",".join(str(item) for item in range(257)))
 
     with pytest.raises(ValueError, match="at most 256"):
         Settings.from_env()
@@ -261,9 +261,9 @@ def test_cuda_devices_reject_an_excessive_device_count(
 def test_cuda_devices_environment_does_not_affect_other_backends(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "native")
-    monkeypatch.setenv("HASHPHERE_CUDA_DEVICES", "not-a-device")
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "native")
+    monkeypatch.setenv("HASHORB_CUDA_DEVICES", "not-a-device")
 
     assert Settings.from_env().cuda_devices == (0,)
 
@@ -271,9 +271,9 @@ def test_cuda_devices_environment_does_not_affect_other_backends(
 def test_cuda_threads_environment_does_not_affect_cpu_legacy_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_BACKEND", "native")
-    monkeypatch.setenv("HASHPHERE_CUDA_THREADS_PER_BLOCK", "not-a-launch-size")
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_BACKEND", "native")
+    monkeypatch.setenv("HASHORB_CUDA_THREADS_PER_BLOCK", "not-a-launch-size")
 
     assert Settings.from_env().cuda_threads_per_block == 256
 
@@ -281,7 +281,7 @@ def test_cuda_threads_environment_does_not_affect_cpu_legacy_backend(
 def test_missing_bitcoin_address_is_rejected() -> None:
     with pytest.raises(
         ValueError,
-        match="HASHPHERE_BITCOIN_ADDRESS is required",
+        match="HASHORB_BITCOIN_ADDRESS is required",
     ):
         Settings.from_env()
 
@@ -290,14 +290,14 @@ def test_non_integer_port_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
-        "HASHPHERE_BITCOIN_ADDRESS",
+        "HASHORB_BITCOIN_ADDRESS",
         "bc1qexampleaddress",
     )
-    monkeypatch.setenv("HASHPHERE_STRATUM_PORT", "not-a-port")
+    monkeypatch.setenv("HASHORB_STRATUM_PORT", "not-a-port")
 
     with pytest.raises(
         ValueError,
-        match="HASHPHERE_STRATUM_PORT must be an integer",
+        match="HASHORB_STRATUM_PORT must be an integer",
     ):
         Settings.from_env()
 
@@ -308,14 +308,14 @@ def test_out_of_range_port_is_rejected(
     port: str,
 ) -> None:
     monkeypatch.setenv(
-        "HASHPHERE_BITCOIN_ADDRESS",
+        "HASHORB_BITCOIN_ADDRESS",
         "bc1qexampleaddress",
     )
-    monkeypatch.setenv("HASHPHERE_STRATUM_PORT", port)
+    monkeypatch.setenv("HASHORB_STRATUM_PORT", port)
 
     with pytest.raises(
         ValueError,
-        match="HASHPHERE_STRATUM_PORT must be between 1 and 65535",
+        match="HASHORB_STRATUM_PORT must be between 1 and 65535",
     ):
         Settings.from_env()
 
@@ -325,8 +325,8 @@ def test_compute_workers_accept_strict_supported_values(
     monkeypatch: pytest.MonkeyPatch,
     workers: str,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_WORKERS", workers)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_WORKERS", workers)
 
     assert Settings.from_env().compute_workers == int(workers)
 
@@ -339,10 +339,10 @@ def test_compute_workers_reject_malformed_or_out_of_range_values(
     monkeypatch: pytest.MonkeyPatch,
     workers: str,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_COMPUTE_WORKERS", workers)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_COMPUTE_WORKERS", workers)
 
-    with pytest.raises(ValueError, match="HASHPHERE_COMPUTE_WORKERS"):
+    with pytest.raises(ValueError, match="HASHORB_COMPUTE_WORKERS"):
         Settings.from_env()
 
 
@@ -354,8 +354,8 @@ def test_search_strategy_accepts_exact_identifiers(
     monkeypatch: pytest.MonkeyPatch,
     strategy: str,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_SEARCH_STRATEGY", strategy)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_SEARCH_STRATEGY", strategy)
 
     assert Settings.from_env().search_strategy == strategy
 
@@ -368,8 +368,8 @@ def test_search_strategy_rejects_malformed_values(
     monkeypatch: pytest.MonkeyPatch,
     strategy: str,
 ) -> None:
-    monkeypatch.setenv("HASHPHERE_BITCOIN_ADDRESS", "bc1qexampleaddress")
-    monkeypatch.setenv("HASHPHERE_SEARCH_STRATEGY", strategy)
+    monkeypatch.setenv("HASHORB_BITCOIN_ADDRESS", "bc1qexampleaddress")
+    monkeypatch.setenv("HASHORB_SEARCH_STRATEGY", strategy)
 
-    with pytest.raises(ValueError, match="HASHPHERE_SEARCH_STRATEGY"):
+    with pytest.raises(ValueError, match="HASHORB_SEARCH_STRATEGY"):
         Settings.from_env()

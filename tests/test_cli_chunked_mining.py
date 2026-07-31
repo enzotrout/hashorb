@@ -10,17 +10,17 @@ from pathlib import Path
 
 import pytest
 
-import hashphere.__main__ as cli_module
-from hashphere.compute import ComputeBackendCapabilities
-from hashphere.config import Settings
-from hashphere.mining import (
+import hashorb.__main__ as cli_module
+from hashorb.compute import ComputeBackendCapabilities
+from hashorb.config import Settings
+from hashorb.mining import (
     ChunkedMiningPlan,
     MiningJob,
     NonceSearchMatch,
     NonceSearchResult,
     PreparedMiningWork,
 )
-from hashphere.network.stratum import (
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumClientError,
@@ -28,7 +28,7 @@ from hashphere.network.stratum import (
     StratumConnectionError,
     SubscribeResult,
 )
-from hashphere.observability import JsonlEventSink, summarize_jsonl
+from hashorb.observability import JsonlEventSink, summarize_jsonl
 
 
 def make_settings() -> Settings:
@@ -184,7 +184,7 @@ def install_fakes(
 
     def client_factory(received_settings: Settings, user_agent: str) -> FakeClient:
         assert received_settings is selected_settings
-        assert user_agent == "Hashphere/0.1"
+        assert user_agent == "HashOrb/0.1"
         return client
 
     def generate(byte_size: int) -> str:
@@ -243,8 +243,8 @@ def install_fakes(
         return original_selector(received_settings)
 
     monkeypatch.setattr(cli_module, "_select_configured_compute_backend", select_backend)
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_MINING", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_MINING", "1")
 
     if deterministic_log:
         fixed_time = datetime(2026, 7, 27, 12, 0, 0, tzinfo=UTC)
@@ -442,16 +442,16 @@ def test_both_live_opt_ins_are_required(
 ) -> None:
     client = FakeClient()
     install_fakes(monkeypatch, client)
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_STRATUM")
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_STRATUM")
 
     assert cli_module.main(arguments()) == 2
-    assert "HASHPHERE_ENABLE_LIVE_STRATUM=1" in capsys.readouterr().err
+    assert "HASHORB_ENABLE_LIVE_STRATUM=1" in capsys.readouterr().err
     assert client.handshake_calls == 0
 
-    monkeypatch.setenv("HASHPHERE_ENABLE_LIVE_STRATUM", "1")
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_MINING")
+    monkeypatch.setenv("HASHORB_ENABLE_LIVE_STRATUM", "1")
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_MINING")
     assert cli_module.main(arguments()) == 2
-    assert "HASHPHERE_ENABLE_LIVE_MINING=1" in capsys.readouterr().err
+    assert "HASHORB_ENABLE_LIVE_MINING=1" in capsys.readouterr().err
     assert client.handshake_calls == 0
 
 

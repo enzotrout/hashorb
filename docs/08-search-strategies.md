@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A search strategy decides which parent nonce interval Hashphere should search
+A search strategy decides which parent nonce interval HashOrb should search
 next. A compute backend decides how to hash that already selected interval.
 Keeping those policies separate lets future search orders reuse Python, native,
 and native-parallel execution without moving Bitcoin, Stratum, progression, or
@@ -198,7 +198,7 @@ no automatic strategy or compute fallback.
 
 ## Registry and Configuration
 
-`HASHPHERE_SEARCH_STRATEGY` defaults to `sequential`. Exact built-in names are
+`HASHORB_SEARCH_STRATEGY` defaults to `sequential`. Exact built-in names are
 `sequential` and `orbiting-bit`; `auto` is a deterministic alias for
 `sequential` and does not benchmark, probe hardware, or adapt at runtime.
 Unknown selectors fail as configuration errors before networking.
@@ -207,8 +207,8 @@ The built-in registry snapshots its definitions into isolated instance state,
 rejects duplicate names, lists capabilities in sorted name order, performs
 exact-name selection, and rejects unknown or unavailable entries. It performs
 no plugin discovery, entry-point loading, dynamic imports, or hardware probing.
-`HASHPHERE_COMPUTE_BACKEND`, `HASHPHERE_COMPUTE_WORKERS`, and
-`HASHPHERE_COMPUTE_PROFILE` retain their separate meanings.
+`HASHORB_COMPUTE_BACKEND`, `HASHORB_COMPUTE_WORKERS`, and
+`HASHORB_COMPUTE_PROFILE` retain their separate meanings.
 
 ## Duplicate Prevention
 

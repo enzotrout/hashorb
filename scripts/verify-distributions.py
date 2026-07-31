@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 
 _FORBIDDEN_PARTS = frozenset({".git", ".venv", "credentials", "logs", "secrets"})
 _CUDA_BINARY = re.compile(
-    rb"(?:^|/)hashphere/compute/_cuda[^/]*\.(?:dll|dylib|pyd|so)$",
+    rb"(?:^|/)hashorb/compute/_cuda[^/]*\.(?:dll|dylib|pyd|so)$",
     re.IGNORECASE,
 )
 _LOCAL_DATA_MARKERS = (
@@ -21,6 +21,7 @@ _LOCAL_DATA_MARKERS = (
     b"\\" + b"Users" + b"\\",
     b"C:/" + b"Users" + b"/",
 )
+_LEGACY_PACKAGE_PARTS = frozenset({"hashphere", "hashsphere"})
 
 
 class DistributionVerificationError(ValueError):
@@ -48,6 +49,11 @@ def _members(path: Path) -> Iterator[tuple[str, bytes]]:
 def verify_distribution(path: Path) -> None:
     """Verify one wheel or sdist without extracting or executing it."""
 
+    if path.suffix == ".whl":
+        if not path.name.startswith("hashorb-0.1.0-"):
+            raise DistributionVerificationError("wheel filename does not match HashOrb 0.1.0")
+    elif path.name != "hashorb-0.1.0.tar.gz":
+        raise DistributionVerificationError("sdist filename does not match HashOrb 0.1.0")
     members = list(_members(path))
     if not members:
         raise DistributionVerificationError(f"empty distribution: {path.name}")
@@ -57,7 +63,7 @@ def verify_distribution(path: Path) -> None:
     if path.suffix == ".whl":
         _verify_wheel_metadata(members)
     else:
-        _verify_sdist_contents(names)
+        _verify_sdist_contents(members)
 
 
 def _verify_member_names(names: Iterable[str]) -> None:
@@ -69,6 +75,8 @@ def _verify_member_names(names: Iterable[str]) -> None:
             raise DistributionVerificationError("archive contains local runtime data")
         if normalized.name == ".env":
             raise DistributionVerificationError("archive contains a private environment file")
+        if any(part.lower() in _LEGACY_PACKAGE_PARTS for part in normalized.parts):
+            raise DistributionVerificationError("archive contains a legacy package path")
         if _CUDA_BINARY.search(name.encode("utf-8", errors="ignore")):
             raise DistributionVerificationError("CPU archive contains a CUDA binary")
 
@@ -88,17 +96,19 @@ def _verify_wheel_metadata(members: Iterable[tuple[str, bytes]]) -> None:
     metadata_text = content_by_name[metadata_names[0]].decode("utf-8")
     entry_text = content_by_name[entry_names[0]].decode("utf-8")
     required = (
-        "Name: hashphere\n",
+        "Name: hashorb\n",
         "Version: 0.1.0\n",
         "Requires-Python: <3.14,>=3.13\n",
     )
     if not all(item in metadata_text for item in required):
         raise DistributionVerificationError("wheel release metadata does not match the contract")
-    if "hashsphere = hashphere.__main__:main" not in entry_text:
+    if "hashorb = hashorb.__main__:main" not in entry_text:
         raise DistributionVerificationError("wheel console entry point is missing")
 
 
-def _verify_sdist_contents(names: Iterable[str]) -> None:
+def _verify_sdist_contents(members: Iterable[tuple[str, bytes]]) -> None:
+    content_by_name = dict(members)
+    names = list(content_by_name)
     basenames = {PurePosixPath(name).name for name in names}
     required = {
         ".env.example",
@@ -111,6 +121,17 @@ def _verify_sdist_contents(names: Iterable[str]) -> None:
     }
     if not required <= basenames:
         raise DistributionVerificationError("sdist is missing required source metadata")
+    metadata_names = [
+        name
+        for name in names
+        if PurePosixPath(name).name == "PKG-INFO" and len(PurePosixPath(name).parts) == 2
+    ]
+    package_initializers = [name for name in names if name.endswith("/src/hashorb/__init__.py")]
+    if len(metadata_names) != 1 or len(package_initializers) != 1:
+        raise DistributionVerificationError("sdist project metadata or package root is ambiguous")
+    metadata_text = content_by_name[metadata_names[0]].decode("utf-8")
+    if "Name: hashorb\n" not in metadata_text or "Version: 0.1.0\n" not in metadata_text:
+        raise DistributionVerificationError("sdist release metadata does not match the contract")
 
 
 def main(argv: list[str] | None = None) -> int:

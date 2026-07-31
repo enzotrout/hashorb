@@ -33,18 +33,18 @@ def test_cpu_ci_covers_three_os_families_and_release_gates() -> None:
 def test_ci_is_cpu_only_private_and_never_runs_live_commands() -> None:
     text = (_ROOT / ".github" / "workflows" / "packaging.yml").read_text(encoding="utf-8")
 
-    assert 'HASHPHERE_BUILD_CUDA: "0"' in text
+    assert 'HASHORB_BUILD_CUDA: "0"' in text
     assert "stratum-mine" not in text
     assert "stratum-handshake" not in text
-    assert "HASHPHERE_BITCOIN_ADDRESS:" not in text
-    assert "HASHPHERE_STRATUM_PASSWORD:" not in text
+    assert "HASHORB_BITCOIN_ADDRESS:" not in text
+    assert "HASHORB_STRATUM_PASSWORD:" not in text
     assert "secrets." not in text
 
 
 def test_docker_ci_validates_default_doctor_argument_forwarding_and_nonroot() -> None:
     text = (_ROOT / ".github" / "workflows" / "packaging.yml").read_text(encoding="utf-8")
 
-    assert "docker build --tag hashphere:ci ." in text
-    assert "docker run --rm hashphere:ci\n" in text
-    assert "docker run --rm hashphere:ci --help" in text
+    assert "docker build --tag hashorb:ci ." in text
+    assert "docker run --rm hashorb:ci\n" in text
+    assert "docker run --rm hashorb:ci --help" in text
     assert "--entrypoint id" in text

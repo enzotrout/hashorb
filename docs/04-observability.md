@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Hashphere preserves concise human-readable console output while optionally
+HashOrb preserves concise human-readable console output while optionally
 writing sanitized, machine-readable events for live Stratum commands. The
 logging boundary is synchronous and local. It opens no network connections and
 creates no threads or background queues.

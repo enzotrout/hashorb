@@ -8,8 +8,8 @@ from types import GeneratorType
 
 import pytest
 
-import hashphere.mining.merkle as merkle_module
-from hashphere.mining import (
+import hashorb.mining.merkle as merkle_module
+from hashorb.mining import (
     MerkleValidationError,
     MiningJob,
     build_coinbase_transaction,

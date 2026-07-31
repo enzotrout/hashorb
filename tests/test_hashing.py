@@ -7,9 +7,9 @@ from dataclasses import replace
 
 import pytest
 
-import hashphere.mining.coinbase as coinbase_module
-from hashphere.crypto import HashingValidationError, double_sha256
-from hashphere.mining import (
+import hashorb.mining.coinbase as coinbase_module
+from hashorb.crypto import HashingValidationError, double_sha256
+from hashorb.mining import (
     CoinbaseValidationError,
     MiningJob,
     build_coinbase_transaction,
@@ -63,7 +63,7 @@ def test_double_sha256_known_vectors(data: bytes, expected_hex: str) -> None:
 
 
 def test_double_sha256_matches_manual_two_stage_hashlib() -> None:
-    data = b"Hashphere deterministic hashing"
+    data = b"HashOrb deterministic hashing"
 
     digest = double_sha256(data)
     manual = hashlib.sha256(hashlib.sha256(data).digest()).digest()

@@ -6,14 +6,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
-import hashphere.bitcoin.solo as solo_module
-from hashphere.bitcoin.rpc import (
+import hashorb.bitcoin.solo as solo_module
+from hashorb.bitcoin.rpc import (
     BitcoinRpcRemoteError,
     BitcoinRpcTransportError,
     ProposalOutcome,
     SubmissionOutcome,
 )
-from hashphere.bitcoin.solo import (
+from hashorb.bitcoin.solo import (
     HashOnlyCandidatePolicy,
     ProposalSubmissionCandidatePolicy,
     SoloMiningError,
@@ -23,21 +23,21 @@ from hashphere.bitcoin.solo import (
     SoloMiningValidationError,
     run_solo_mining,
 )
-from hashphere.bitcoin.template import (
+from hashorb.bitcoin.template import (
     BlockTemplate,
     calculate_hash_merkle_root,
     parse_block_template,
 )
-from hashphere.compute.python import PythonSequentialBackend
-from hashphere.crypto import double_sha256
-from hashphere.mining import (
+from hashorb.compute.python import PythonSequentialBackend
+from hashorb.crypto import double_sha256
+from hashorb.mining import (
     NonceSearchMatch,
     NonceSearchResult,
     StopController,
     search_nonce_range,
     select_search_strategy,
 )
-from hashphere.mining.target import decode_compact_target
+from hashorb.mining.target import decode_compact_target
 
 _PAYOUT_SCRIPT = bytes.fromhex("0014" + "51" * 20)
 _COMMITMENT_PREFIX = bytes.fromhex("6a24aa21a9ed")

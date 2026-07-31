@@ -9,8 +9,8 @@ from threading import Barrier, Lock
 
 import pytest
 
-import hashphere.__main__ as cli_module
-from hashphere.compute import (
+import hashorb.__main__ as cli_module
+from hashorb.compute import (
     ComputeBackendCapabilities,
     ComputeBackendExecutionError,
     ComputeBackendValidationError,
@@ -20,7 +20,7 @@ from hashphere.compute import (
     compute_backend_device_ordinals,
     validate_cuda_device_ordinals,
 )
-from hashphere.mining import NonceSearchMatch, NonceSearchResult, PreparedMiningWork
+from hashorb.mining import NonceSearchMatch, NonceSearchResult, PreparedMiningWork
 
 
 def prepared_work() -> PreparedMiningWork:

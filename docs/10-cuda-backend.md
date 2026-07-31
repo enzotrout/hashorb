@@ -2,7 +2,7 @@
 
 ## What
 
-Hashphere has one optional `cuda` compute backend implementing the existing
+HashOrb has one optional `cuda` compute backend implementing the existing
 `MiningComputeBackend` contract. It accepts validated `PreparedMiningWork` and
 one ordinary half-open parent nonce range, evaluates that complete range on one
 explicitly selected NVIDIA device, and returns the existing immutable
@@ -34,8 +34,8 @@ than submitting it or trying a CPU fallback.
 ```text
 setup.py                         explicit optional-build integration
 MANIFEST.in                     CUDA source retained in source distributions
-src/hashphere/compute/_cuda.cu  Python extension and CUDA kernel
-src/hashphere/compute/cuda.py   availability, validation, timing, verification
+src/hashorb/compute/_cuda.cu  Python extension and CUDA kernel
+src/hashorb/compute/cuda.py   availability, validation, timing, verification
 tests/test_cuda_backend.py      host-only fake-runtime and mapping tests
 tests/test_cuda_hardware.py     explicitly gated real-device parity tests
 ```
@@ -48,15 +48,15 @@ toolkit and driver are external prerequisites owned by the operator.
 Normal installation does not invoke `nvcc`:
 
 ```bash
-uv sync --locked --reinstall-package hashphere
+uv sync --locked --reinstall-package hashorb
 ```
 
 CUDA source is included in the sdist but the extension is built only with:
 
 ```bash
-HASHPHERE_BUILD_CUDA=1 \
-HASHPHERE_CUDA_ARCH=121 \
-uv sync --locked --reinstall-package hashphere
+HASHORB_BUILD_CUDA=1 \
+HASHORB_CUDA_ARCH=121 \
+uv sync --locked --reinstall-package hashorb
 ```
 
 Prerequisites are:
@@ -69,8 +69,8 @@ Prerequisites are:
 
 The explicit build adds `_cuda` and links it with the toolkit's CUDA runtime.
 On the DGX Spark GB10 validation host, the supported target is `sm_121`
-through `HASHPHERE_CUDA_ARCH=121`. Every CUDA build must provide
-`HASHPHERE_CUDA_ARCH` explicitly; omission fails, and the only currently tested
+through `HASHORB_CUDA_ARCH=121`. Every CUDA build must provide
+`HASHORB_CUDA_ARCH` explicitly; omission fails, and the only currently tested
 numeric values are `120` and `121`. Prefixes, lists, arbitrary compiler flags,
 and untested architectures are rejected. The build does not probe an installed
 GPU, and CPU-only builds and normal imports ignore this setting.
@@ -81,7 +81,7 @@ then each sorted `CUDA_HOME/targets/<platform>/lib` and `lib64`. `CUDA_HOME` or 
 when set; otherwise the toolkit root is derived from `nvcc`. This supports the
 Spark ARM64 toolkit without assuming `/usr/local/cuda` and supplies the same
 explicit mechanism for future Windows and other Linux validation. If
-`HASHPHERE_BUILD_CUDA=1` is set and `nvcc` is missing or compilation fails,
+`HASHORB_BUILD_CUDA=1` is set and `nvcc` is missing or compilation fails,
 the build fails. It does not silently publish a CPU package that claims CUDA
 availability. Normal CPU builds and forced native-C compiler-failure builds do
 not attempt CUDA compilation. CUDA wheel publication is deferred.
@@ -103,15 +103,15 @@ or home-directory path.
 Select CUDA and one ordinal through:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda
-HASHPHERE_CUDA_DEVICE=0
+HASHORB_COMPUTE_BACKEND=cuda
+HASHORB_CUDA_DEVICE=0
 ```
 
 The ordinal is a strict unpadded ASCII decimal integer from `0` through
 `2147483647`. CPU backends ignore the CUDA setting. `auto` and the compatibility
 alias `cpu` remain static aliases for Python.
 
-Importing the general Hashphere package or selecting a CPU backend does not
+Importing the general HashOrb package or selecting a CPU backend does not
 initialize CUDA. Initialization is limited to CUDA capability listing or
 explicit CUDA selection. Operational availability requires:
 
@@ -284,7 +284,7 @@ allowing `cuda-multi` to execute independent contexts concurrently. See
 The benchmark requires no `.env`, credentials, live opt-in, or networking:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend cuda \
   --device 0 \
   --hash-count 1000000
@@ -293,7 +293,7 @@ uv run python -m hashphere compute-benchmark \
 The one-shot command remains unchanged. Explicit repeated measurements use:
 
 ```bash
-uv run python -m hashphere compute-benchmark \
+uv run python -m hashorb compute-benchmark \
   --backend cuda \
   --device 0 \
   --hash-count 100000000 \
@@ -344,11 +344,11 @@ No command in this section was executed during tuning. A manually authorized
 60-second gate is:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda \
-HASHPHERE_CUDA_DEVICE=0 \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-./.venv/bin/python -m hashphere stratum-mine \
+HASHORB_COMPUTE_BACKEND=cuda \
+HASHORB_CUDA_DEVICE=0 \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+./.venv/bin/python -m hashorb stratum-mine \
   --chunk-size 500000000 \
   --max-runtime-seconds 60 \
   --max-server-silence-seconds 120 \
@@ -360,11 +360,11 @@ HASHPHERE_ENABLE_LIVE_MINING=1 \
 The five-minute form changes only duration and output file:
 
 ```bash
-HASHPHERE_COMPUTE_BACKEND=cuda \
-HASHPHERE_CUDA_DEVICE=0 \
-HASHPHERE_ENABLE_LIVE_STRATUM=1 \
-HASHPHERE_ENABLE_LIVE_MINING=1 \
-./.venv/bin/python -m hashphere stratum-mine \
+HASHORB_COMPUTE_BACKEND=cuda \
+HASHORB_CUDA_DEVICE=0 \
+HASHORB_ENABLE_LIVE_STRATUM=1 \
+HASHORB_ENABLE_LIVE_MINING=1 \
+./.venv/bin/python -m hashorb stratum-mine \
   --chunk-size 500000000 \
   --max-runtime-seconds 300 \
   --max-server-silence-seconds 120 \
@@ -377,9 +377,9 @@ Compare only sanitized summaries from separately retained logs:
 
 ```bash
 diff -u \
-  <(./.venv/bin/python -m hashphere logs-summary \
+  <(./.venv/bin/python -m hashorb logs-summary \
       --log-file logs/cuda-pre-tuning.jsonl) \
-  <(./.venv/bin/python -m hashphere logs-summary \
+  <(./.venv/bin/python -m hashorb logs-summary \
       --log-file logs/cuda-post-tuning-5m.jsonl)
 ```
 
@@ -388,8 +388,8 @@ diff -u \
 Default pytest never initializes CUDA. After an explicit CUDA build, run:
 
 ```bash
-HASHPHERE_ENABLE_CUDA_TESTS=1 \
-HASHPHERE_CUDA_DEVICE=0 \
+HASHORB_ENABLE_CUDA_TESTS=1 \
+HASHORB_CUDA_DEVICE=0 \
 uv run pytest -q tests/test_cuda_hardware.py
 ```
 

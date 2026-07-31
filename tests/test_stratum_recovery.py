@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from hashphere.mining import (
+from hashorb.mining import (
     ReconnectPolicy,
     SessionRecoveryError,
     SessionRecoveryExhaustedError,
@@ -21,7 +21,7 @@ from hashphere.mining import (
     is_recoverable_stratum_error,
     wait_for_reconnect_delay,
 )
-from hashphere.network.stratum import (
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     StratumAuthorizationError,

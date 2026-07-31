@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError, dataclass, field
 
 import pytest
 
-from hashphere.mining import (
+from hashorb.mining import (
     ChunkedMiningError,
     ChunkedMiningPlan,
     ChunkedMiningResult,
@@ -23,8 +23,8 @@ from hashphere.mining import (
     SequentialSearchStrategy,
     run_chunked_mining,
 )
-from hashphere.mining.chunks import MiningNotification
-from hashphere.network.stratum import (
+from hashorb.mining.chunks import MiningNotification
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     SubscribeResult,

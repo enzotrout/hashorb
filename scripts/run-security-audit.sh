@@ -158,8 +158,8 @@ run_artifact_audit() {
     uvx --from 'pip-audit==2.10.1' pip-audit \
         --requirement "$temporary_directory/runtime-requirements.txt" \
         --no-deps --disable-pip \
-        --format cyclonedx-json --output "$temporary_directory/hashsphere.cdx.json"
-    if ! python3 - "$temporary_directory/hashsphere.cdx.json" <<'PY'
+        --format cyclonedx-json --output "$temporary_directory/hashorb.cdx.json"
+    if ! python3 - "$temporary_directory/hashorb.cdx.json" <<'PY'
 import sys
 from pathlib import Path
 

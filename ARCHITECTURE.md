@@ -1,8 +1,14 @@
-# Hashphere Architecture
+# HashOrb Architecture
+
+**HashOrb: Distributed hashing as a coordinated swarm.**
+
+The project was renamed to HashOrb before its first public release. The current
+architecture provides local backend orchestration; distributed worker
+coordination remains a future boundary.
 
 # Overview
 
-Hashphere is an experimental Bitcoin mining project designed around one shared,
+HashOrb is an experimental Bitcoin mining project designed around one shared,
 cross-platform core. A license has not yet been selected, so release publication
 and claims of open-source licensing remain blocked.
 
@@ -20,9 +26,9 @@ Platform-specific code should remain minimal and primarily handle installation, 
 
 # Repository Layout
 
-## `src/hashphere/`
+## `src/hashorb/`
 
-Contains the reusable Hashphere Python package.
+Contains the reusable HashOrb Python package.
 
 The project follows the Python `src` layout to clearly separate the reusable package from repository tooling and to prevent accidental imports from the project root.
 
@@ -57,16 +63,16 @@ The platform layer should remain thin. It should launch and configure the applic
 Normal builds are CPU-only: Python is always present, the native C extension is
 optional, and CUDA is neither compiled nor linked. Linux CUDA builds are a
 local, explicit derivative of the same source package, gated by
-`HASHPHERE_BUILD_CUDA=1` and an explicit supported architecture.
+`HASHORB_BUILD_CUDA=1` and an explicit supported architecture.
 
 The CPU Dockerfile builds a wheel in a compiler stage and installs it into a
-non-root, compiler-free runtime. Its exec-form `hashsphere` entry point makes
+non-root, compiler-free runtime. Its exec-form `hashorb` entry point makes
 the Python CLI PID 1, so the continuous miner's signal handlers receive stop
 signals directly. Platform install scripts only call user-local `uv tool`
 operations; they contain no mining implementation or privileged setup.
 
 Future thin platform repositories may depend on a tagged core package or
-release artifact. They must not copy `src/hashphere`, native sources, Stratum,
+release artifact. They must not copy `src/hashorb`, native sources, Stratum,
 mining, lifecycle, profile, or observability code. Separate repositories remain
 optional organizational wrappers, not a technical requirement.
 
@@ -76,7 +82,7 @@ Long-form project documentation.
 
 ## `examples/`
 
-Small example programs demonstrating how to use individual Hashphere components.
+Small example programs demonstrating how to use individual HashOrb components.
 
 ## `scripts/`
 
@@ -86,7 +92,7 @@ Developer utilities, benchmarking tools, release helpers, and project automation
 
 # Design Principles
 
-Hashphere is built around the following engineering principles:
+HashOrb is built around the following engineering principles:
 
 - Shared code first
 - Platform independence
@@ -99,14 +105,14 @@ Hashphere is built around the following engineering principles:
 
 # Stratum Transport and Client Boundary
 
-`hashphere.network.stratum.transport` owns the single synchronous TCP socket,
+`hashorb.network.stratum.transport` owns the single synchronous TCP socket,
 newline-delimited JSON framing, and raw receive buffering. A bounded receive
 temporarily changes the socket timeout, restores the prior timeout on every
 outcome, and retains incomplete or additional framed data for later calls. A
 normal receive timeout is distinct from connection closure, I/O failure, and
 malformed protocol data.
 
-`hashphere.network.stratum.client` owns connection state, request identifiers,
+`hashorb.network.stratum.client` owns connection state, request identifiers,
 request-response routing, notification parsing, and the ordered notification
 queue. In the authorized state, bounded polling returns queued notifications
 before touching the transport and maps only a normal receive timeout to
@@ -121,7 +127,7 @@ small injectable boundaries for deterministic tests.
 
 # Bitcoin Core True-Solo Boundary
 
-True solo is not a Stratum mode. `hashphere.bitcoin.rpc` owns one allowlisted,
+True solo is not a Stratum mode. `hashorb.bitcoin.rpc` owns one allowlisted,
 synchronous JSON-RPC-over-HTTP client for `getblockchaininfo`,
 `validateaddress`, `getblocktemplate` proposal/template modes, and
 `submitblock`. It has deterministic request identifiers, one-shot bounded HTTP
@@ -131,7 +137,7 @@ Malformed or unknown rejection content cannot enter normal output; an unknown
 safe token becomes one generic category. No generic RPC CLI, connection pool,
 retry loop, package-import connection, or TLS claim exists.
 
-`hashphere.bitcoin.template` and `transaction` strictly parse the exact modern
+`hashorb.bitcoin.template` and `transaction` strictly parse the exact modern
 template subset. They independently derive txid, wtxid, stripped size, and
 weight from preserved transaction bytes; verify compact bits against the
 optional numeric target; preserve ordering and dependencies; reject duplicates
@@ -146,17 +152,17 @@ when present. Parser failures carry only allowlisted category, field-path,
 expectation, and condition enums; values and arbitrary keys never cross the
 diagnostic boundary.
 
-`hashphere.bitcoin.coinbase` owns the version-2, one-input, two-output SegWit
+`hashorb.bitcoin.coinbase` owns the version-2, one-input, two-output SegWit
 coinbase. It encodes BIP34 height with Core's exact `CScript` integer rule,
 including `OP_1` through `OP_16` at the early heights used by regtest, then
-appends Core's auxiliary flags, a fixed neutral Hashsphere marker, and an
+appends Core's auxiliary flags, a fixed neutral HashOrb marker, and an
 internal bounded 64-bit extra nonce.
 The exact template coinbase value goes to the Core-validated payout script;
 the only other output is the zero-valued witness commitment. No wallet, fee
 selection, alternate spendable output, or configurable arbitrary message is
 involved.
 
-`hashphere.bitcoin.block` computes the ordinary txid merkle tree with coinbase
+`hashorb.bitcoin.block` computes the ordinary txid merkle tree with coinbase
 first and odd-node duplication, serializes the exact Core-display header into
 Bitcoin internal byte order, and adapts its 76-byte prefix to the existing
 `PreparedMiningWork` backend contract with network target equal to the backend's
@@ -165,7 +171,7 @@ model has no pool share, difficulty, or public Stratum extra-nonce concept.
 Complete-block assembly reparses every transaction, recomputes the header
 merkle root, and checks template size and weight limits before RPC use.
 
-`hashphere.bitcoin.solo` owns one finite synchronous lifecycle. A selected
+`hashorb.bitcoin.solo` owns one finite synchronous lifecycle. A selected
 existing strategy schedules parent ranges and one selected existing backend
 hashes them. Exhausting the nonce domain advances the coinbase extra nonce;
 exact wrap may roll time only when the template permits it, only up to local
@@ -196,7 +202,7 @@ before strict parsing, but only the terminal `ready` event denotes success.
 
 # Search Strategy Boundary
 
-`hashphere.mining.strategy` owns the deterministic policy for selecting the
+`hashorb.mining.strategy` owns the deterministic policy for selecting the
 next parent half-open nonce assignment. A strategy definition exposes immutable
 low-cardinality capabilities and creates one narrowly controlled cursor for
 each effective prepared-work variant. The cursor owns assignment order,
@@ -267,7 +273,7 @@ defaults only; portable suspend inference remains deferred.
 
 # Compute Backend Boundary
 
-`hashphere.compute` owns nonce-search execution contracts, immutable
+`hashorb.compute` owns nonce-search execution contracts, immutable
 low-cardinality capabilities, deterministic built-in registration and
 selection, and translation of backend-local failures into controlled compute
 errors. A backend receives one validated `PreparedMiningWork` plus an exact
@@ -319,7 +325,7 @@ and recovered Stratum sessions, and is closed once by caller-owned backend
 cleanup. It never owns settings loading, job state, reconnect, submission,
 events, signals, or client cleanup. Running native calls cannot yet be
 cooperatively interrupted; a stop prevents the next chunk after the current
-parallel call finishes. `HASHPHERE_COMPUTE_WORKERS` is validated by
+parallel call finishes. `HASHORB_COMPUTE_WORKERS` is validated by
 configuration and passed into backend construction without being interpreted
 by mining orchestration.
 
@@ -355,8 +361,8 @@ concurrently. Any child failure cancels pending work, waits for active kernels,
 closes every context, and permanently fails the logical backend without
 fallback or Stratum reconnect.
 
-CUDA compilation is deliberately gated by `HASHPHERE_BUILD_CUDA=1` and requires
-one narrowly validated numeric `HASHPHERE_CUDA_ARCH`; it neither guesses from
+CUDA compilation is deliberately gated by `HASHORB_BUILD_CUDA=1` and requires
+one narrowly validated numeric `HASHORB_CUDA_ARCH`; it neither guesses from
 the host nor accepts raw compiler flags. Normal source and wheel builds do not
 invoke `nvcc`, while source distributions retain the CUDA source. The default
 test suite uses an injected extension-shaped fake and never initializes CUDA.
@@ -383,7 +389,7 @@ orchestration in [`docs/11-multi-gpu.md`](docs/11-multi-gpu.md).
 
 # Chunked Mining Application Boundary
 
-`hashphere.mining.chunks` owns finite chunk budgeting, invocation-wide hash
+`hashorb.mining.chunks` owns finite chunk budgeting, invocation-wide hash
 accounting, ordered between-chunk notification processing, job
 replacement, replacement-work preparation, and stopping after budget
 exhaustion or the first candidate. Its per-work strategy cursor supplies each
@@ -409,7 +415,7 @@ control mining progress.
 
 # Continuous Mining Application Boundary
 
-`hashphere.mining.continuous` owns repeated half-open chunk scheduling, the
+`hashorb.mining.continuous` owns repeated half-open chunk scheduling, the
 current per-job nonce position, cumulative session accounting, ordered
 notification draining, newest-job replacement, deterministic work-space
 advancement, terminal exhaustion waits, cooperative stop checks, and the one
@@ -433,7 +439,7 @@ waits for a newer job.
 
 ## Stratum Session-Recovery Boundary
 
-`hashphere.mining.recovery` owns the immutable reconnect policy, deterministic
+`hashorb.mining.recovery` owns the immutable reconnect policy, deterministic
 delay calculation, interruptible backoff, injectable client factory, and the
 currently usable `StratumMiningSession`. A session groups exactly one fresh
 client, subscription, assembler, usable difficulty-snapshotted job, negotiated
@@ -462,7 +468,7 @@ deferred.
 
 ## Mining Work-Space Progression Boundary
 
-`hashphere.mining.progression` owns a compact immutable cursor over the search
+`hashorb.mining.progression` owns a compact immutable cursor over the search
 hierarchy: pool job, effective network time, fixed-width `extra_nonce_2`, then
 the nonce range scheduled by continuous orchestration. One caller-generated
 extra-nonce seed initializes the cursor. Successors are arithmetic modulo the
@@ -495,7 +501,7 @@ primitives.
 
 # Observability Boundary
 
-`hashphere.observability` owns structured event validation, persistent JSON
+`hashorb.observability` owns structured event validation, persistent JSON
 Lines storage, and read-only log analysis. An `EventSink` abstraction lets CLI
 orchestration emit the same sanitized event catalog whether persistence is
 enabled or disabled. The no-op sink avoids conditional logging branches
@@ -522,12 +528,12 @@ separate future components.
 
 # Compute Profile Boundary
 
-`hashphere.config.profile` owns immutable policy inputs and deterministic
+`hashorb.config.profile` owns immutable policy inputs and deterministic
 resolution. It depends only on a narrow capability protocol and produces a
 sanitized `ResolvedComputeProfile`; it does not construct a selected backend,
 open a socket, read credentials, build Bitcoin work, or verify candidates.
 Tests supply fake capabilities. The command-time local provider in
-`hashphere.compute.profile` may check native availability and explicitly
+`hashorb.compute.profile` may check native availability and explicitly
 permitted CUDA ordinals, closing every probe before final backend construction.
 
 The CLI owns precedence, resolves the profile once, applies the effective
@@ -549,7 +555,7 @@ execution-time fallback. See
 
 # Architectural Goals
 
-Hashphere is designed around a simple principle:
+HashOrb is designed around a simple principle:
 
 > **Write the mining engine once and run it everywhere.**
 

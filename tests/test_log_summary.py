@@ -1,4 +1,4 @@
-"""Tests for strict read-only Hashphere JSONL log aggregation."""
+"""Tests for strict read-only HashOrb JSONL log aggregation."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import hashphere.__main__ as cli_module
-from hashphere.observability import LogSummary, LogSummaryError, summarize_jsonl
+import hashorb.__main__ as cli_module
+from hashorb.observability import LogSummary, LogSummaryError, summarize_jsonl
 
 FIRST_TIME = "2026-07-27T12:15:31.632625Z"
 SECOND_TIME = "2026-07-27T12:16:17.817473Z"
@@ -1081,8 +1081,8 @@ def test_cli_empty_summary_requires_no_live_dependencies(
     def forbidden(*args: object, **kwargs: object) -> object:
         raise AssertionError("live or writer dependency was accessed")
 
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_STRATUM", raising=False)
-    monkeypatch.delenv("HASHPHERE_ENABLE_LIVE_MINING", raising=False)
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_STRATUM", raising=False)
+    monkeypatch.delenv("HASHORB_ENABLE_LIVE_MINING", raising=False)
     monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(forbidden))
     monkeypatch.setattr(cli_module, "StratumClient", forbidden)
     monkeypatch.setattr(cli_module, "JsonlEventSink", forbidden)

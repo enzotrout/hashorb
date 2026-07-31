@@ -6,10 +6,10 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-import hashphere.__main__ as cli_module
-import hashphere.diagnostics as diagnostics
-from hashphere.config import ResolvedComputeProfile
-from hashphere.diagnostics import DoctorStatus, build_doctor_report, format_doctor_report
+import hashorb.__main__ as cli_module
+import hashorb.diagnostics as diagnostics
+from hashorb.config import ResolvedComputeProfile
+from hashorb.diagnostics import DoctorStatus, build_doctor_report, format_doctor_report
 
 
 class FakeCapabilities:
@@ -56,8 +56,8 @@ def test_cpu_only_doctor_is_successful_private_and_does_not_probe_cuda(
     report = build_doctor_report(
         log_directory=tmp_path / "logs",
         environment={
-            "HASHPHERE_BITCOIN_ADDRESS": secret,
-            "HASHPHERE_STRATUM_PASSWORD": secret,
+            "HASHORB_BITCOIN_ADDRESS": secret,
+            "HASHORB_STRATUM_PASSWORD": secret,
         },
         environment_file_present=True,
         capabilities=capabilities,
@@ -143,8 +143,8 @@ def test_doctor_cli_is_offline_and_uses_no_stratum_settings(
     capsys: pytest.CaptureFixture[str],
     tmp_path,
 ) -> None:
-    monkeypatch.setattr(cli_module, "load_dotenv", lambda: False)
-    monkeypatch.delenv("HASHPHERE_COMPUTE_PROFILE", raising=False)
+    monkeypatch.setattr(cli_module, "load_hashorb_environment", lambda: False)
+    monkeypatch.delenv("HASHORB_COMPUTE_PROFILE", raising=False)
     monkeypatch.setattr(
         cli_module.Settings,
         "from_env",
@@ -155,7 +155,7 @@ def test_doctor_cli_is_offline_and_uses_no_stratum_settings(
 
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert captured.out.startswith("Hashphere doctor.\n")
+    assert captured.out.startswith("HashOrb doctor.\n")
     assert "stratum-configuration" in captured.out
 
 
@@ -164,8 +164,8 @@ def test_doctor_profile_error_is_sanitized_and_nonzero(
     capsys: pytest.CaptureFixture[str],
     tmp_path,
 ) -> None:
-    monkeypatch.setattr(cli_module, "load_dotenv", lambda: False)
-    monkeypatch.delenv("HASHPHERE_COMPUTE_PROFILE", raising=False)
+    monkeypatch.setattr(cli_module, "load_hashorb_environment", lambda: False)
+    monkeypatch.delenv("HASHORB_COMPUTE_PROFILE", raising=False)
 
     assert (
         cli_module.main(

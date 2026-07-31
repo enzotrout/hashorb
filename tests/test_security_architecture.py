@@ -44,13 +44,13 @@ def test_security_workflow_is_scheduled_bounded_and_submission_free() -> None:
     for scanner in ("run-security-audit.sh source", "run-security-audit.sh image"):
         assert scanner in text
     for forbidden in (
-        "HASHPHERE_BITCOIN_RPC",
-        "HASHPHERE_STRATUM",
-        "HASHPHERE_ENABLE_TRUE_SOLO",
+        "HASHORB_BITCOIN_RPC",
+        "HASHORB_STRATUM",
+        "HASHORB_ENABLE_TRUE_SOLO",
         "solo-mine",
         "submitblock",
         "proposal",
-        "HASHPHERE_BUILD_CUDA=1",
+        "HASHORB_BUILD_CUDA=1",
     ):
         assert forbidden not in text
     assert text.count("timeout-minutes:") == 2
@@ -89,9 +89,9 @@ def test_docker_bases_are_digest_pinned_and_runtime_is_nonroot() -> None:
     from_lines = [line for line in text.splitlines() if line.startswith("FROM ")]
     assert len(from_lines) == 2
     assert all(re.search(r"@sha256:[0-9a-f]{64}\s+AS\s+", line) for line in from_lines)
-    assert "USER hashphere" in text
+    assert "USER hashorb" in text
     assert "HEALTHCHECK" in text
-    for forbidden in ("HASHPHERE_BITCOIN_RPC_PASSWORD", "HASHPHERE_STRATUM_PASSWORD"):
+    for forbidden in ("HASHORB_BITCOIN_RPC_PASSWORD", "HASHORB_STRATUM_PASSWORD"):
         assert forbidden not in text
 
 
@@ -101,7 +101,7 @@ def test_container_vulnerability_exceptions_are_narrow_reviewed_and_expiring() -
     assert entries
     assert all(re.match(r"CVE-\d{4}-\d+\n", entry) for entry in entries)
     assert all("expired_at: 2026-10-31" in entry for entry in entries)
-    assert all("statement: Hashsphere does not" in entry for entry in entries)
+    assert all("statement: HashOrb does not" in entry for entry in entries)
     assert "secrets:" not in ignore
     script = (_ROOT / "scripts" / "run-security-audit.sh").read_text(encoding="utf-8")
     assert script.count("--ignorefile") == 1
@@ -118,5 +118,5 @@ def test_installers_remain_platform_scoped_dry_run_only_and_do_not_mine() -> Non
     for text in (unix, windows):
         assert "solo-mine" not in text
         assert "stratum-mine" not in text
-        assert "HASHPHERE_BITCOIN_RPC_PASSWORD" not in text
-        assert "HASHPHERE_STRATUM_PASSWORD" not in text
+        assert "HASHORB_BITCOIN_RPC_PASSWORD" not in text
+        assert "HASHORB_STRATUM_PASSWORD" not in text

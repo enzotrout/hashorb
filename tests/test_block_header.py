@@ -6,8 +6,8 @@ from dataclasses import replace
 
 import pytest
 
-from hashphere.crypto import double_sha256
-from hashphere.mining import (
+from hashorb.crypto import double_sha256
+from hashorb.mining import (
     BlockHeaderValidationError,
     MiningJob,
     serialize_block_header,

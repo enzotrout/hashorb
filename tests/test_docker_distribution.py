@@ -13,23 +13,23 @@ def test_dockerfile_builds_cpu_wheel_and_has_a_minimal_nonroot_runtime() -> None
     assert "ARG PYTHON_VERSION=3.13.14" in text
     assert "-bookworm@sha256:" in text
     assert "-slim-bookworm@sha256:" in text
-    assert "HASHPHERE_BUILD_CUDA=0" in text
+    assert "HASHORB_BUILD_CUDA=0" in text
     assert "python -m pip wheel" in text
-    assert "USER hashphere" in text
-    assert 'ENTRYPOINT ["hashsphere"]' in text
+    assert "USER hashorb" in text
+    assert 'ENTRYPOINT ["hashorb"]' in text
     assert 'CMD ["doctor", "--log-dir", "/app/logs"]' in text
-    assert 'CMD ["hashsphere", "doctor", "--log-dir", "/app/logs"]' in text
+    assert 'CMD ["hashorb", "doctor", "--log-dir", "/app/logs"]' in text
     assert "uv run" not in text
     assert "stratum-mine" not in text
-    assert "HASHPHERE_BITCOIN_ADDRESS" not in text
-    assert "HASHPHERE_STRATUM_PASSWORD" not in text
+    assert "HASHORB_BITCOIN_ADDRESS" not in text
+    assert "HASHORB_STRATUM_PASSWORD" not in text
 
 
 def test_docker_exec_entrypoint_forwards_arguments_and_owns_signals() -> None:
     lines = (_ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
     entrypoint = next(line for line in lines if line.startswith("ENTRYPOINT"))
 
-    assert entrypoint == 'ENTRYPOINT ["hashsphere"]'
+    assert entrypoint == 'ENTRYPOINT ["hashorb"]'
     assert "sh -c" not in entrypoint
     assert "bash -c" not in entrypoint
 

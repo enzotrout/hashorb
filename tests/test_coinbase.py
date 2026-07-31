@@ -6,13 +6,13 @@ from dataclasses import replace
 
 import pytest
 
-from hashphere.mining import (
+from hashorb.mining import (
     CoinbaseValidationError,
     MiningJob,
     MiningJobAssembler,
     build_coinbase_transaction,
 )
-from hashphere.network.stratum import (
+from hashorb.network.stratum import (
     MiningNotifyNotification,
     SetDifficultyNotification,
     SubscribeResult,

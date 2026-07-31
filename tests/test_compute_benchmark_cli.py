@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 import pytest
 
-import hashphere.__main__ as cli_module
-from hashphere.compute import (
+import hashorb.__main__ as cli_module
+from hashorb.compute import (
     ComputeBackendCapabilities,
     ComputeBackendExecutionError,
     ComputeBackendSelectionError,
@@ -15,23 +15,23 @@ from hashphere.compute import (
     builtin_compute_backend_registry,
     deterministic_benchmark_work,
 )
-from hashphere.mining import NonceSearchMatch, NonceSearchResult, PreparedMiningWork
+from hashorb.mining import NonceSearchMatch, NonceSearchResult, PreparedMiningWork
 
 
 @pytest.fixture(autouse=True)
 def isolated_benchmark_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep offline CLI tests independent of an operator's local profile."""
 
-    monkeypatch.setattr(cli_module, "load_dotenv", lambda: False)
+    monkeypatch.setattr(cli_module, "load_hashorb_environment", lambda: False)
     for name in (
-        "HASHPHERE_COMPUTE_PROFILE",
-        "HASHPHERE_COMPUTE_BACKEND",
-        "HASHPHERE_COMPUTE_WORKERS",
-        "HASHPHERE_CUDA_DEVICE",
-        "HASHPHERE_CUDA_DEVICES",
-        "HASHPHERE_CUDA_THREADS_PER_BLOCK",
-        "HASHPHERE_CHUNK_SIZE",
-        "HASHPHERE_INTER_RANGE_DELAY_SECONDS",
+        "HASHORB_COMPUTE_PROFILE",
+        "HASHORB_COMPUTE_BACKEND",
+        "HASHORB_COMPUTE_WORKERS",
+        "HASHORB_CUDA_DEVICE",
+        "HASHORB_CUDA_DEVICES",
+        "HASHORB_CUDA_THREADS_PER_BLOCK",
+        "HASHORB_CHUNK_SIZE",
+        "HASHORB_INTER_RANGE_DELAY_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -181,7 +181,7 @@ def test_valid_benchmark_is_offline_sanitized_and_deterministic(
     workers_line = "Workers: 4\n" if backend_name == "native-parallel" else ""
     device_line = "CUDA device: 3\n" if backend_name == "cuda" else ""
     assert captured.out == (
-        "Hashphere compute benchmark completed.\n"
+        "HashOrb compute benchmark completed.\n"
         f"Backend: {backend_name}\n"
         f"Implementation: {implementation}\n"
         f"{workers_line}"
@@ -299,7 +299,7 @@ def test_repeated_benchmark_separates_first_warmup_and_measured_runs(
     )
 
     output = capsys.readouterr().out
-    assert "Hashphere repeated compute benchmark completed." in output
+    assert "HashOrb repeated compute benchmark completed." in output
     assert "First launch: 10 ns" in output
     assert "Warmup runs: 2" in output
     assert "Measured repetitions: 3" in output
