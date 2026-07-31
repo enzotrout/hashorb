@@ -13,7 +13,9 @@ from hashorb.bitcoin.block import (
     serialize_solo_header,
 )
 from hashorb.bitcoin.coinbase import (
+    COINBASE_EXTRA_NONCE_BYTES,
     HASHORB_COINBASE_MARKER,
+    MAX_COINBASE_SCRIPT_BYTES,
     MAX_COINBASE_EXTRA_NONCE,
     WITNESS_RESERVED_VALUE,
     CoinbaseConstructionError,
@@ -175,7 +177,15 @@ def test_coinbase_auxiliary_flags_and_script_length_limits() -> None:
     coinbase = build_solo_coinbase(_template(flags=flags), _PAYOUT_SCRIPT, 0)
     assert coinbase.script_sig.startswith(bytes.fromhex("028000") + flags)
 
-    oversized_flags = bytes(range(80))
+    height_prefix = bytes.fromhex("028000")
+    oversized_length = (
+        MAX_COINBASE_SCRIPT_BYTES
+        - len(height_prefix)
+        - len(HASHORB_COINBASE_MARKER)
+        - COINBASE_EXTRA_NONCE_BYTES
+        + 1
+    )
+    oversized_flags = bytes(range(oversized_length))
     with pytest.raises(CoinbaseConstructionError, match="script length"):
         build_solo_coinbase(_template(flags=oversized_flags), _PAYOUT_SCRIPT, 0)
 

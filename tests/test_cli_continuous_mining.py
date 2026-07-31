@@ -228,6 +228,7 @@ def install_fakes(
 
     configured = search_harness if search_harness is not None else SearchHarness()
     selected_settings = make_settings() if settings is None else settings
+    monkeypatch.setattr(cli_module, "load_hashorb_environment", lambda: None)
     monkeypatch.setattr(
         cli_module.Settings,
         "from_env",
