@@ -1,0 +1,48 @@
+# Reviewed 2026-07-31 against the digest-pinned CPU runtime image. These
+# suppressions expire quickly and apply only to the image scan. Hashsphere does
+# not invoke the affected utilities/libraries or accept their vulnerable input
+# classes; the container runs non-root without capabilities and with a
+# read-only root filesystem in the hardened deployment contract.
+vulnerabilities:
+  - id: CVE-2023-45853
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke minizip or process ZIP archives at runtime.
+  - id: CVE-2025-7458
+    expired_at: 2026-10-31
+    statement: Hashsphere does not import SQLite or execute attacker-controlled SQL.
+  - id: CVE-2025-69720
+    expired_at: 2026-10-31
+    statement: Hashsphere does not use ncurses or parse attacker-controlled terminal databases.
+  - id: CVE-2026-13221
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke the Perl interpreter.
+  - id: CVE-2026-41992
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke gzip or process gzip input at runtime.
+  - id: CVE-2026-42496
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke the Perl interpreter.
+  - id: CVE-2026-42497
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke the Perl interpreter.
+  - id: CVE-2026-48962
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke the Perl interpreter.
+  - id: CVE-2026-53615
+    expired_at: 2026-10-31
+    statement: Hashsphere does not probe block devices; the container receives no devices or capabilities.
+  - id: CVE-2026-54369
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke ACL tooling or process ACL input.
+  - id: CVE-2026-57432
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke the Perl interpreter.
+  - id: CVE-2026-57433
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke the Perl interpreter.
+  - id: CVE-2026-8376
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke the Perl interpreter.
+  - id: CVE-2026-9538
+    expired_at: 2026-10-31
+    statement: Hashsphere does not invoke the Perl interpreter.

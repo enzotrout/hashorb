@@ -1,0 +1,71 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    name: Source, dependencies, workflows, and artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          version: "0.12.0"
+      - name: Sync locked development environment
+        run: uv sync --locked --no-python-downloads
+      - name: Check security regression contracts
+        run: uv run pytest -q tests/test_security_architecture.py tests/test_bitcoin_rpc.py tests/test_bitcoin_cli.py tests/test_event_logging.py tests/test_docker_distribution.py
+      - name: Check source quality
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src
+          uv lock --check
+      - name: Scan source, dependencies, history, and workflows
+        run: scripts/run-security-audit.sh source
+      - name: Build and inspect private artifacts and ephemeral SBOM
+        run: scripts/run-security-audit.sh artifacts
+
+  container:
+    name: CPU container security
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build CPU image
+        run: docker build --tag hashphere:security .
+      - name: Run hardened offline container smoke
+        run: |
+          docker run --rm --read-only --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 --cap-drop=ALL --security-opt=no-new-privileges hashphere:security
+          test "$(docker run --rm --entrypoint id hashphere:security -u)" = "10001"
+      - name: Check image history privacy
+        run: |
+          if docker history --no-trunc hashphere:security | grep -qE -i 'bitcoin_address|stratum_password|YOUR_BITCOIN_ADDRESS'; then
+            echo "Image history contains a forbidden configuration marker."
+            exit 1
+          fi
+      - name: Scan CPU runtime image
+        run: scripts/run-security-audit.sh image hashphere:security
