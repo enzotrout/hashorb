@@ -100,7 +100,15 @@ def _verify_wheel_metadata(members: Iterable[tuple[str, bytes]]) -> None:
 
 def _verify_sdist_contents(names: Iterable[str]) -> None:
     basenames = {PurePosixPath(name).name for name in names}
-    required = {".env.example", "MANIFEST.in", "README.md", "pyproject.toml", "setup.py"}
+    required = {
+        ".env.example",
+        "15-security-audit.md",
+        "MANIFEST.in",
+        "README.md",
+        "SECURITY.md",
+        "pyproject.toml",
+        "setup.py",
+    }
     if not required <= basenames:
         raise DistributionVerificationError("sdist is missing required source metadata")
 
