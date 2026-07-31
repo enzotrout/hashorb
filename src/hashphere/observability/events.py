@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import stat
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -271,11 +273,31 @@ def _open_event_stream(path: str | Path) -> TextIO:
     else:
         raise TypeError("event log path must be a string or Path")
 
+    descriptor = -1
     try:
         event_path.parent.mkdir(parents=True, exist_ok=True)
-        return event_path.open("a", encoding="utf-8", newline="\n")
+        if not getattr(os, "O_NOFOLLOW", 0) and event_path.is_symlink():
+            raise OSError("event log symlinks are unsupported")
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(event_path, flags, 0o600)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("event log must be a regular file")
+        if os.name == "posix":
+            if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+                raise OSError("event log permissions are unsafe")
+        stream = open(descriptor, "a", encoding="utf-8", newline="\n", closefd=True)
+        descriptor = -1
+        return stream
     except (OSError, ValueError) as exc:
         raise EventLogError("could not initialize structured event log") from exc
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def _utc_now() -> datetime:

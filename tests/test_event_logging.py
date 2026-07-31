@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import stat
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -79,6 +81,7 @@ def test_jsonl_sink_creates_parents_and_writes_one_utf8_line_per_event(
 def test_existing_log_is_appended_without_truncation(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     path.write_text('{"existing":true}\n', encoding="utf-8")
+    path.chmod(0o600)
 
     sink = make_sink(path)
     sink.emit("command_started")
@@ -87,6 +90,28 @@ def test_existing_log_is_appended_without_truncation(tmp_path: Path) -> None:
     lines = path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == '{"existing":true}'
     assert json.loads(lines[1])["event"] == "command_started"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and mode boundary")
+def test_event_log_is_private_and_rejects_symlink_or_insecure_existing_file(
+    tmp_path: Path,
+) -> None:
+    private_log = tmp_path / "private.jsonl"
+    sink = make_sink(private_log)
+    sink.close()
+    assert stat.S_IMODE(private_log.stat().st_mode) == 0o600
+
+    target = tmp_path / "target.jsonl"
+    target.write_text("", encoding="utf-8")
+    target.chmod(0o600)
+    linked = tmp_path / "linked.jsonl"
+    linked.symlink_to(target)
+    with pytest.raises(EventLogError, match="initialize"):
+        make_sink(linked)
+
+    target.chmod(0o640)
+    with pytest.raises(EventLogError, match="initialize"):
+        make_sink(target)
 
 
 def test_separate_invocations_have_separate_run_ids_and_restart_sequence(

@@ -31,10 +31,12 @@ validate and accept a winner.
 
 ## RPC trust and authentication
 
-The endpoint defaults only to `127.0.0.1:8332`. A remote host must be explicit.
-This client implements ordinary bounded HTTP and HTTP Basic authentication; it
-does not implement TLS. Keep it on a trusted local host or trusted private
-network boundary and do not weaken Core's authentication or RPC allowlist.
+The endpoint defaults only to `127.0.0.1:8332`. The client resolves a configured
+hostname once, requires every IPv4 or IPv6 result to be loopback, and connects
+to that selected numeric address. It implements ordinary bounded HTTP and HTTP
+Basic authentication, not TLS, so direct remote RPC is rejected. A node on
+another host requires an operator-controlled local tunnel that presents a
+loopback endpoint; do not weaken Core's authentication or RPC allowlist.
 
 Configure exactly one authentication method:
 
@@ -55,7 +57,10 @@ HASHPHERE_BITCOIN_RPC_COOKIE_FILE=EXPLICIT_COOKIE_PATH
 Cookie paths are explicit on Linux, macOS, and Windows. Hashsphere never
 searches default data directories or reads another file. Cookie data must be a
 small UTF-8 `username:password` record with only one optional final newline.
-Credentials never enter a URL, console result, event, or raw exception.
+The file must be regular and not a symlink; POSIX files must be owned by the
+effective user with no group or other permissions. Reads stop at the record
+limit before parsing. Credentials never enter a URL, console result, event, or
+raw exception.
 
 ## Chain and payout boundary
 
@@ -156,9 +161,10 @@ retry.
 ## Proposal and submission semantics
 
 `solo-hash` injects a stateless candidate policy with no RPC callables. The
-command uses a template-only adapter exposing chain state, address validation,
-and template retrieval; proposal, `submitblock`, and generic arbitrary RPC are
-not exposed to its lifecycle. A candidate is independently reconstructed and
+command constructs an independent template-only client exposing chain state,
+address validation, and template retrieval; it never constructs or retains the
+submission-capable client. Proposal, `submitblock`, and generic arbitrary RPC
+are rejected at that client's dispatch boundary. A candidate is independently reconstructed and
 double-hashed, checked against the network target, refreshed against current
 work, recorded as `candidate_found_submission_disabled`, and stopped. It is not
 assembled into a complete block, written to disk, proposed, submitted, or
@@ -208,8 +214,10 @@ not count as a successful check: only terminal outcome `ready` does.
 The RPC client uses only the Python standard library and adds no package or
 Bitcoin Core dependency. Normal import, help, doctor, CPU wheel/sdist, Docker
 CPU, macOS, Windows, and Linux behavior remains offline. `bitcoind` and wallets
-are not bundled. Docker may reach an explicitly operated node through explicit
-networking, but no node orchestration is included.
+are not bundled. Docker can reach an explicitly operated host node only when
+the operator provides networking that presents it on container loopback (for
+example, an appropriate local tunnel or reviewed host-network arrangement); no
+node orchestration is included.
 
 Deterministic fakes cover authentication, transport, strict templates,
 transaction parsing, SegWit, coinbase, merkle/header byte order, block

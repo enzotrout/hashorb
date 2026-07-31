@@ -202,8 +202,9 @@ destination. Configure either the explicit user/password pair or one explicit
 cookie path, never both. Cookie contents, credentials, addresses, scripts,
 templates, headers, targets, nonce material, transactions, and serialized
 blocks are excluded from console and JSONL output. Ordinary Bitcoin Core RPC
-here is HTTP, not TLS, and should remain on a trusted local networking boundary;
-a remote host is possible only through explicit operator configuration.
+here is HTTP, not TLS, so Hashsphere resolves the configured endpoint once and
+requires every IPv4 or IPv6 result to be loopback. Use an operator-controlled
+local tunnel when the node is on another host; direct remote RPC is rejected.
 
 ```dotenv
 HASHPHERE_BITCOIN_RPC_HOST=127.0.0.1
@@ -266,6 +267,8 @@ passed against Bitcoin Core v31.1: Core accepted one Hashsphere-built block and
 the isolated chain advanced from height 0 to 1 without a wallet. Proposal
 rejections remain sanitized categories and always suppress submission.
 See [`docs/14-bitcoin-core-true-solo.md`](docs/14-bitcoin-core-true-solo.md).
+The audited trust boundaries, findings, scanner policy, and GitHub operator
+steps are in [`docs/15-security-audit.md`](docs/15-security-audit.md).
 
 The read-only gate also passed against a synchronized loopback Bitcoin Core
 v31.1 mainnet node using cookie authentication. Its live template demonstrated

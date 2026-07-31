@@ -13,6 +13,12 @@ missing parent directories and appends UTF-8 JSON Lines records. CLI
 orchestration emits through the common `EventSink` interface, so networking,
 cryptographic, and mining-domain modules never write files directly.
 
+The final log target must be a regular file and not a symlink. On POSIX, a new
+file is created as mode `0600`; an existing file must be owned by the effective
+user and have no group or other permissions. Windows confidentiality depends
+on the containing directory ACL. Initialization fails safely when these
+conditions, the path, or the filesystem are unsuitable.
+
 ## Event Envelope
 
 Every record contains:
@@ -376,4 +382,5 @@ user-supplied path may be displayed.
 Long continuous runs can grow append-only JSONL files substantially. File
 rotation and retention, machine-readable summary output, compression, remote
 export, background delivery, and Prometheus/Grafana-compatible metrics remain
-deferred.
+deferred. Operators should use bounded invocations plus filesystem quotas or a
+reviewed rotation policy.

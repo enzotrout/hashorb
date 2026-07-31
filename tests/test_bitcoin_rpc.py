@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import socket
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +14,7 @@ import pytest
 import hashphere.config.bitcoin_rpc as rpc_settings_module
 from hashphere.bitcoin.rpc import (
     BitcoinCoreRpcClient,
+    BitcoinCoreTemplateClient,
     BitcoinRpcAuthenticationError,
     BitcoinRpcProtocolError,
     BitcoinRpcRemoteError,
@@ -29,6 +32,7 @@ class FakeTransport:
         self.responder = responder
         self.requests: list[dict[str, object]] = []
         self.authorizations: list[str] = []
+        self.hosts: list[str] = []
         self.closed = False
 
     def request(
@@ -41,11 +45,12 @@ class FakeTransport:
         body: bytes,
         maximum_response_bytes: int,
     ) -> HttpResponse:
-        del host, port, timeout_seconds, maximum_response_bytes
+        del port, timeout_seconds, maximum_response_bytes
         request = json.loads(body)
         assert isinstance(request, dict)
         self.requests.append(request)
         self.authorizations.append(authorization)
+        self.hosts.append(host)
         return self.responder(request)
 
     def close(self) -> None:
@@ -97,9 +102,68 @@ def test_rpc_uses_deterministic_ids_basic_auth_and_allowlisted_params() -> None:
     assert transport.authorizations == [f"Basic {expected}", f"Basic {expected}"]
 
 
+def test_read_only_client_has_no_proposal_submission_or_generic_rpc_capability() -> None:
+    transport = FakeTransport(lambda request: _response(request, {}))
+    client = BitcoinCoreTemplateClient(_settings(), transport)
+
+    assert not hasattr(client, "propose_block")
+    assert not hasattr(client, "submit_block")
+    assert not hasattr(client, "call")
+    with pytest.raises(BitcoinRpcProtocolError, match="not available"):
+        client._exchange("submitblock", ["synthetic-block"])
+    assert transport.requests == []
+
+
+def test_rpc_resolves_once_and_accepts_only_loopback_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = FakeTransport(
+        lambda request: _response(
+            request,
+            {"chain": "regtest", "blocks": 1, "headers": 1, "initialblockdownload": False},
+        )
+    )
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", 18443, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 18443)),
+        ],
+    )
+    client = BitcoinCoreTemplateClient(_settings(host="localhost"), transport)
+    client.get_blockchain_info()
+    assert transport.hosts == ["127.0.0.1"]
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 18443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.10", 18443)),
+        ],
+    )
+    with pytest.raises(BitcoinRpcTransportError, match="only to loopback"):
+        BitcoinCoreTemplateClient(_settings(host="mixed.invalid"), transport)
+
+
+@pytest.mark.parametrize("host", ["192.0.2.10", "2001:db8::10"])
+def test_rpc_rejects_accidental_remote_literal_hosts(host: str) -> None:
+    with pytest.raises(BitcoinRpcTransportError, match="loopback"):
+        BitcoinCoreTemplateClient(_settings(host=host))
+
+
+def test_rpc_accepts_ipv6_loopback_without_second_resolution() -> None:
+    transport = FakeTransport(lambda request: _response(request, {}))
+    client = BitcoinCoreTemplateClient(_settings(host="::1"), transport)
+    client.get_block_template()
+    assert transport.hosts == ["::1"]
+
+
 def test_cookie_authentication_accepts_one_strict_trailing_newline(tmp_path: Path) -> None:
     cookie = tmp_path / ".cookie"
     cookie.write_text("__cookie__:synthetic-secret\n", encoding="utf-8")
+    cookie.chmod(0o600)
     transport = FakeTransport(
         lambda request: _response(
             request,
@@ -122,9 +186,56 @@ def test_cookie_authentication_accepts_one_strict_trailing_newline(tmp_path: Pat
 def test_cookie_authentication_rejects_malformed_contents(tmp_path: Path, contents: bytes) -> None:
     cookie = tmp_path / ".cookie"
     cookie.write_bytes(contents)
+    cookie.chmod(0o600)
 
     with pytest.raises(BitcoinRpcAuthenticationError, match="cookie"):
         BitcoinCoreRpcClient(_settings(username=None, password=None, cookie_file=cookie))
+
+
+def test_cookie_authentication_accepts_crlf_and_rejects_unsafe_files(tmp_path: Path) -> None:
+    cookie = tmp_path / ".cookie"
+    cookie.write_bytes(b"__cookie__:synthetic-secret\r\n")
+    cookie.chmod(0o600)
+    client = BitcoinCoreTemplateClient(
+        _settings(username=None, password=None, cookie_file=cookie),
+        FakeTransport(lambda request: _response(request, {})),
+    )
+    client.close()
+
+    cookie.chmod(0o640)
+    with pytest.raises(BitcoinRpcAuthenticationError, match="permissions"):
+        BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=cookie))
+
+
+def test_cookie_authentication_rejects_symlinks_and_bounds_reads(tmp_path: Path) -> None:
+    target = tmp_path / "target.cookie"
+    target.write_text("__cookie__:synthetic-secret", encoding="utf-8")
+    target.chmod(0o600)
+    linked = tmp_path / "linked.cookie"
+    linked.symlink_to(target)
+    with pytest.raises(BitcoinRpcAuthenticationError, match="could not be read"):
+        BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=linked))
+
+    target.write_bytes(b"a:" + b"x" * 4096)
+    target.chmod(0o600)
+    with pytest.raises(BitcoinRpcAuthenticationError, match="malformed"):
+        BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=target))
+
+
+def test_cookie_authentication_rejects_unreadable_and_non_utf8_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cookie = tmp_path / ".cookie"
+    cookie.write_bytes(b"user:\xff")
+    cookie.chmod(0o600)
+    with pytest.raises(BitcoinRpcAuthenticationError, match="malformed"):
+        BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=cookie))
+
+    monkeypatch.setattr(
+        os, "open", lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError())
+    )
+    with pytest.raises(BitcoinRpcAuthenticationError, match="could not be read"):
+        BitcoinCoreTemplateClient(_settings(username=None, password=None, cookie_file=cookie))
 
 
 @pytest.mark.parametrize(
@@ -288,6 +399,23 @@ def test_protocol_failures_are_strict_and_sanitized(
     message = str(caught.value)
     assert "rpc-password" not in message
     assert "payload" not in message
+
+
+def test_protocol_rejects_excessive_json_nesting_before_decoding() -> None:
+    private_value = "private-nested-value"
+    payload = (
+        b'{"id":1,"result":'
+        + b"[" * 65
+        + json.dumps(private_value).encode()
+        + b"]" * 65
+        + b',"error":null}'
+    )
+    transport = FakeTransport(lambda request: HttpResponse(status=200, body=payload))
+
+    with pytest.raises(BitcoinRpcProtocolError, match="nested") as caught:
+        BitcoinCoreTemplateClient(_settings(), transport).get_block_template()
+
+    assert private_value not in str(caught.value)
 
 
 def test_http_and_transport_failures_are_categorized_without_details() -> None:

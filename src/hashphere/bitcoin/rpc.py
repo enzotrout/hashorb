@@ -5,8 +5,12 @@ from __future__ import annotations
 import base64
 import binascii
 import http.client
+import ipaddress
 import json
+import os
 import re
+import socket
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
@@ -16,6 +20,7 @@ from hashphere.config.bitcoin_rpc import BitcoinRpcSettings
 
 DEFAULT_MAX_RPC_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_COOKIE_BYTES = 4096
+MAX_JSON_NESTING_DEPTH = 64
 _SUPPORTED_CHAINS = frozenset({"main", "test", "testnet4", "signet", "regtest"})
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
@@ -201,8 +206,8 @@ class SubmissionOutcome:
     category: str
 
 
-class BitcoinCoreRpcClient:
-    """Allowlisted Bitcoin Core RPC operations with deterministic request IDs."""
+class BitcoinCoreTemplateClient:
+    """Read-only Bitcoin Core template operations with no submission methods."""
 
     def __init__(
         self,
@@ -218,7 +223,9 @@ class BitcoinCoreRpcClient:
         selected_transport = UrllibBitcoinRpcTransport() if transport is None else transport
         if not isinstance(selected_transport, BitcoinRpcTransport):
             raise TypeError("transport must implement BitcoinRpcTransport")
-        self._settings = settings
+        self._host = _resolve_loopback_host(settings.host, settings.port)
+        self._port = settings.port
+        self._timeout_seconds = settings.timeout_seconds
         self._transport = selected_transport
         self._maximum_response_bytes = maximum_response_bytes
         self._authorization = _authorization_header(settings)
@@ -251,7 +258,7 @@ class BitcoinCoreRpcClient:
     def get_blockchain_info(self) -> BlockchainInfo:
         """Return strict network identity and synchronization state."""
 
-        result = self._call("getblockchaininfo", [])
+        result = self._call_read_only("getblockchaininfo")
         value = _require_object(result, "getblockchaininfo result")
         chain = _required_string(value, "chain")
         if chain not in _SUPPORTED_CHAINS:
@@ -267,7 +274,7 @@ class BitcoinCoreRpcClient:
         """Ask Core's non-wallet utility RPC for the exact destination script."""
 
         _validate_secret_text(address, "payout address", maximum_length=128)
-        result = self._call("validateaddress", [address])
+        result = self._call_validate_address(address)
         value = _require_object(result, "validateaddress result")
         if not _required_boolean(value, "isvalid"):
             raise BitcoinRpcProtocolError("payout destination is invalid for the connected chain")
@@ -278,40 +285,28 @@ class BitcoinCoreRpcClient:
     def get_block_template(self) -> dict[str, object]:
         """Request a SegWit-aware template for strict model parsing by the caller."""
 
-        result = self._call("getblocktemplate", [{"rules": ["segwit"]}])
+        result = self._call_read_only("getblocktemplate")
         return dict(_require_object(result, "getblocktemplate result"))
 
-    def propose_block(self, serialized_block: bytes) -> ProposalOutcome:
-        """Locally validate one complete block through GBT proposal mode."""
+    def _call_read_only(self, method: str) -> object:
+        parameters: dict[str, list[object]] = {
+            "getblockchaininfo": [],
+            "validateaddress": [],
+            "getblocktemplate": [{"rules": ["segwit"]}],
+        }
+        if method not in parameters:
+            raise BitcoinRpcProtocolError("Bitcoin RPC method is not available")
+        params = parameters[method]
+        if method == "validateaddress":
+            raise BitcoinRpcProtocolError("validateaddress requires its fixed argument boundary")
+        return self._exchange(method, params)
 
-        block_hex = _serialized_block_hex(serialized_block)
-        result = self._call(
-            "getblocktemplate",
-            [{"mode": "proposal", "data": block_hex, "rules": ["segwit"]}],
-        )
-        if result is None:
-            return ProposalOutcome(accepted=True, category="accepted")
-        if not isinstance(result, str) or not result:
-            raise BitcoinRpcProtocolError("Bitcoin Core returned an invalid proposal result")
-        return ProposalOutcome(
-            accepted=False,
-            category=_proposal_rejection_category(result),
-        )
+    def _call_validate_address(self, address: str) -> object:
+        return self._exchange("validateaddress", [address])
 
-    def submit_block(self, serialized_block: bytes) -> SubmissionOutcome:
-        """Submit one locally and proposal-validated complete block exactly once."""
-
-        result = self._call("submitblock", [_serialized_block_hex(serialized_block)])
-        if result is None:
-            return SubmissionOutcome(accepted=True, category="accepted")
-        if not isinstance(result, str) or not result:
-            raise BitcoinRpcProtocolError("Bitcoin Core returned an invalid submission result")
-        return SubmissionOutcome(
-            accepted=False,
-            category=_submission_rejection_category(result),
-        )
-
-    def _call(self, method: str, params: list[object]) -> object:
+    def _exchange(self, method: str, params: list[object]) -> object:
+        if type(self) is BitcoinCoreTemplateClient and not _is_read_only_request(method, params):
+            raise BitcoinRpcProtocolError("Bitcoin RPC method is not available")
         if self._closed:
             raise BitcoinRpcTransportError("Bitcoin RPC client is closed")
         request_id = self._next_request_id
@@ -320,9 +315,9 @@ class BitcoinCoreRpcClient:
         try:
             body = json.dumps(request, separators=(",", ":"), allow_nan=False).encode("utf-8")
             response = self._transport.request(
-                host=self._settings.host,
-                port=self._settings.port,
-                timeout_seconds=self._settings.timeout_seconds,
+                host=self._host,
+                port=self._port,
+                timeout_seconds=self._timeout_seconds,
                 authorization=self._authorization,
                 body=body,
                 maximum_response_bytes=self._maximum_response_bytes,
@@ -339,6 +334,7 @@ class BitcoinCoreRpcClient:
             raise BitcoinRpcTransportError("Bitcoin Core returned an unexpected HTTP status")
         if len(response.body) > self._maximum_response_bytes:
             raise BitcoinRpcTransportError("Bitcoin RPC response exceeded the size limit")
+        _validate_json_nesting(response.body)
         try:
             decoded = json.loads(
                 response.body,
@@ -350,6 +346,7 @@ class BitcoinCoreRpcClient:
             json.JSONDecodeError,
             _DuplicateJsonKeyError,
             _NonFiniteJsonNumberError,
+            RecursionError,
         ) as exc:
             raise BitcoinRpcProtocolError("Bitcoin Core returned malformed JSON") from exc
         envelope = _require_object(decoded, "JSON-RPC response")
@@ -372,6 +369,40 @@ class BitcoinCoreRpcClient:
         return envelope["result"]
 
 
+class BitcoinCoreRpcClient(BitcoinCoreTemplateClient):
+    """Submission-capable client used only by the explicitly armed solo-mine command."""
+
+    def propose_block(self, serialized_block: bytes) -> ProposalOutcome:
+        """Locally validate one complete block through GBT proposal mode."""
+
+        block_hex = _serialized_block_hex(serialized_block)
+        result = self._exchange(
+            "getblocktemplate",
+            [{"mode": "proposal", "data": block_hex, "rules": ["segwit"]}],
+        )
+        if result is None:
+            return ProposalOutcome(accepted=True, category="accepted")
+        if not isinstance(result, str) or not result:
+            raise BitcoinRpcProtocolError("Bitcoin Core returned an invalid proposal result")
+        return ProposalOutcome(
+            accepted=False,
+            category=_proposal_rejection_category(result),
+        )
+
+    def submit_block(self, serialized_block: bytes) -> SubmissionOutcome:
+        """Submit one locally and proposal-validated complete block exactly once."""
+
+        result = self._exchange("submitblock", [_serialized_block_hex(serialized_block)])
+        if result is None:
+            return SubmissionOutcome(accepted=True, category="accepted")
+        if not isinstance(result, str) or not result:
+            raise BitcoinRpcProtocolError("Bitcoin Core returned an invalid submission result")
+        return SubmissionOutcome(
+            accepted=False,
+            category=_submission_rejection_category(result),
+        )
+
+
 def _authorization_header(settings: BitcoinRpcSettings) -> str:
     if settings.cookie_file is not None:
         username, password = _read_cookie(settings.cookie_file)
@@ -386,11 +417,76 @@ def _authorization_header(settings: BitcoinRpcSettings) -> str:
     return f"Basic {token.decode('ascii')}"
 
 
-def _read_cookie(path: Path) -> tuple[str, str]:
+def _is_read_only_request(method: str, params: list[object]) -> bool:
+    if method == "getblockchaininfo":
+        return params == []
+    if method == "validateaddress":
+        return len(params) == 1 and isinstance(params[0], str)
+    return method == "getblocktemplate" and params == [{"rules": ["segwit"]}]
+
+
+def _resolve_loopback_host(host: str, port: int) -> str:
+    """Resolve once and require every address to remain on the local host."""
+
     try:
-        cookie = path.read_bytes()
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise BitcoinRpcTransportError("Bitcoin RPC host could not be resolved") from exc
+        addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+        try:
+            for record in records:
+                addresses.add(ipaddress.ip_address(record[4][0]))
+        except (IndexError, TypeError, ValueError) as exc:
+            raise BitcoinRpcTransportError("Bitcoin RPC host resolution was invalid") from exc
+        if not addresses or any(not address.is_loopback for address in addresses):
+            raise BitcoinRpcTransportError(
+                "Bitcoin RPC host must resolve only to loopback"
+            ) from None
+        return str(sorted(addresses, key=lambda address: (address.version, int(address)))[0])
+    else:
+        if not literal.is_loopback:
+            raise BitcoinRpcTransportError("Bitcoin RPC host must be loopback")
+        return str(literal)
+
+
+def _read_cookie(path: Path) -> tuple[str, str]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+    elif path.is_symlink():
+        raise BitcoinRpcAuthenticationError("Bitcoin RPC cookie could not be read")
+    descriptor = -1
+    try:
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise BitcoinRpcAuthenticationError("Bitcoin RPC cookie could not be read")
+        if os.name == "posix":
+            if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+                raise BitcoinRpcAuthenticationError("Bitcoin RPC cookie permissions are unsafe")
+        chunks: list[bytes] = []
+        remaining = MAX_COOKIE_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        cookie = b"".join(chunks)
+    except BitcoinRpcAuthenticationError:
+        raise
     except OSError as exc:
         raise BitcoinRpcAuthenticationError("Bitcoin RPC cookie could not be read") from exc
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
     if not cookie or len(cookie) > MAX_COOKIE_BYTES:
         raise BitcoinRpcAuthenticationError("Bitcoin RPC cookie is malformed")
     try:
@@ -412,6 +508,33 @@ def _read_cookie(path: Path) -> tuple[str, str]:
     except ValueError as exc:
         raise BitcoinRpcAuthenticationError("Bitcoin RPC cookie is malformed") from exc
     return username, password
+
+
+def _validate_json_nesting(payload: bytes) -> None:
+    """Reject deeply nested JSON before the recursive decoder allocates its tree."""
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for value in payload:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif value == 0x5C:
+                escaped = True
+            elif value == 0x22:
+                in_string = False
+            continue
+        if value == 0x22:
+            in_string = True
+        elif value in {0x5B, 0x7B}:
+            depth += 1
+            if depth > MAX_JSON_NESTING_DEPTH:
+                raise BitcoinRpcProtocolError("Bitcoin Core returned excessively nested JSON")
+        elif value in {0x5D, 0x7D}:
+            depth -= 1
+            if depth < 0:
+                return
 
 
 def _require_object(value: object, name: str) -> dict[str, object]:

@@ -18,7 +18,8 @@ from hashphere.config.profile import (
 
 DEFAULT_STRATUM_HOST = "stratum.ckpool.org"
 DEFAULT_STRATUM_PORT = 3333
-DEFAULT_STRATUM_PASSWORD = "x"
+# Conventional public Stratum placeholder; never treated as a secret.
+DEFAULT_STRATUM_PASSWORD = "x"  # nosec B105
 DEFAULT_WORKER_NAME = "auto"
 DEFAULT_COMPUTE_WORKERS = 2
 MAX_COMPUTE_WORKERS = 256

@@ -18,6 +18,7 @@ from hashphere.bitcoin.coinbase import (
 )
 from hashphere.bitcoin.rpc import (
     BitcoinCoreRpcClient,
+    BitcoinCoreTemplateClient,
     BitcoinRpcAuthenticationError,
     BitcoinRpcError,
     BitcoinRpcProtocolError,
@@ -60,6 +61,7 @@ from hashphere.bitcoin.transaction import (
 
 __all__ = [
     "BitcoinCoreRpcClient",
+    "BitcoinCoreTemplateClient",
     "BitcoinSerializationError",
     "BitcoinTransactionError",
     "BitcoinRpcAuthenticationError",

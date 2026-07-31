@@ -10,19 +10,23 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from types import FrameType
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from dotenv import load_dotenv
 
 from hashphere.bitcoin.rpc import (
     BitcoinCoreRpcClient,
+    BitcoinCoreTemplateClient,
     BitcoinRpcError,
     BlockchainInfo,
     PayoutDestination,
+    ProposalOutcome,
+    SubmissionOutcome,
 )
 from hashphere.bitcoin.solo import (
     HashOnlyCandidatePolicy,
     ProposalSubmissionCandidatePolicy,
+    SoloCandidatePolicy,
     SoloMiningOutcome,
     SoloMiningPlan,
     SoloMiningResult,
@@ -75,26 +79,32 @@ _SUCCESSFUL_SOLO_OUTCOMES = frozenset(
     }
 )
 
-type RpcClientFactory = Callable[[BitcoinRpcSettings], BitcoinCoreRpcClient]
+
+@runtime_checkable
+class TemplateRpcClient(Protocol):
+    """Exact read-only operations accepted at non-submission command boundaries."""
+
+    def get_blockchain_info(self) -> BlockchainInfo: ...
+
+    def validate_address(self, address: str) -> PayoutDestination: ...
+
+    def get_block_template(self) -> dict[str, object]: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class SubmissionRpcClient(TemplateRpcClient, Protocol):
+    """Explicit proposal and submission operations accepted only by solo-mine."""
+
+    def propose_block(self, serialized_block: bytes) -> ProposalOutcome: ...
+
+    def submit_block(self, serialized_block: bytes) -> SubmissionOutcome: ...
+
+
+type RpcClientFactory = Callable[[BitcoinRpcSettings], SubmissionRpcClient]
+type TemplateClientFactory = Callable[[BitcoinRpcSettings], TemplateRpcClient]
 type BackendSelector = Callable[..., MiningComputeBackend]
-
-
-class _HashOnlyTemplateSource:
-    """Expose only read-only template operations to the hash-only command."""
-
-    __slots__ = ("__client",)
-
-    def __init__(self, client: BitcoinCoreRpcClient) -> None:
-        self.__client = client
-
-    def get_blockchain_info(self) -> BlockchainInfo:
-        return self.__client.get_blockchain_info()
-
-    def validate_address(self, address: str) -> PayoutDestination:
-        return self.__client.validate_address(address)
-
-    def get_block_template(self) -> dict[str, object]:
-        return self.__client.get_block_template()
 
 
 class _SignalError(RuntimeError):
@@ -260,6 +270,7 @@ def run_bitcoin_command(
     arguments: Sequence[str],
     *,
     rpc_client_factory: RpcClientFactory = BitcoinCoreRpcClient,
+    template_client_factory: TemplateClientFactory = BitcoinCoreTemplateClient,
     backend_selector: BackendSelector | None = None,
 ) -> int:
     """Parse and run one Bitcoin command without affecting ordinary CLI paths."""
@@ -275,7 +286,7 @@ def run_bitcoin_command(
     if parsed.command == "bitcoin-core-check":
         return _with_events(
             parsed,
-            lambda events: _run_readiness_check(events, rpc_client_factory),
+            lambda events: _run_readiness_check(events, template_client_factory),
         )
     if parsed.command in {"solo-hash", "solo-mine"}:
         return _with_events(
@@ -285,6 +296,7 @@ def run_bitcoin_command(
                 events,
                 hash_only=parsed.command == "solo-hash",
                 rpc_client_factory=rpc_client_factory,
+                template_client_factory=template_client_factory,
                 backend_selector=(
                     _default_backend_selector if backend_selector is None else backend_selector
                 ),
@@ -348,13 +360,13 @@ def _with_events(arguments: _Arguments, operation: Callable[[EventSink], int]) -
     return status
 
 
-def _run_readiness_check(events: EventSink, client_factory: RpcClientFactory) -> int:
-    client: BitcoinCoreRpcClient | None = None
+def _run_readiness_check(events: EventSink, client_factory: TemplateClientFactory) -> int:
+    client: TemplateRpcClient | None = None
     try:
         load_dotenv()
         require_exact_opt_in(BITCOIN_RPC_CHECK_FLAG)
         command_settings = SoloCommandSettings.from_env()
-        client = client_factory(BitcoinRpcSettings.from_env())
+        client = _require_template_only_client(client_factory(BitcoinRpcSettings.from_env()))
         chain_info = client.get_blockchain_info()
         events.emit(
             "bitcoin_rpc_connected",
@@ -379,7 +391,7 @@ def _run_readiness_check(events: EventSink, client_factory: RpcClientFactory) ->
         client.close()
         client = None
         events.emit("command_completed", fields={"outcome": "ready"})
-    except (BitcoinRpcError, ValueError) as exc:
+    except (BitcoinRpcError, TypeError, ValueError) as exc:
         category = _error_category(exc)
         _emit_command_failed(events, "readiness", category, error=exc)
         print(f"Bitcoin Core readiness check failed ({category}).", file=sys.stderr)
@@ -407,15 +419,18 @@ def _run_solo_command(
     *,
     hash_only: bool,
     rpc_client_factory: RpcClientFactory,
+    template_client_factory: TemplateClientFactory,
     backend_selector: BackendSelector,
 ) -> int:
-    client: BitcoinCoreRpcClient | None = None
+    template_source: TemplateRpcClient | None = None
+    submission_client: SubmissionRpcClient | None = None
     backend: MiningComputeBackend | None = None
     signal_scope: _SoloSignalScope | None = None
     result: SoloMiningResult | None = None
     cleanup_failed = False
     try:
         load_dotenv()
+        candidate_policy: SoloCandidatePolicy
         if hash_only:
             require_exact_opt_in(TRUE_SOLO_HASHING_FLAG)
         else:
@@ -423,8 +438,14 @@ def _run_solo_command(
             require_exact_opt_in(BLOCK_SUBMISSION_FLAG)
         command_settings = SoloCommandSettings.from_env()
         plan, profile, strategy = _resolve_solo_policy(arguments)
-        client = rpc_client_factory(BitcoinRpcSettings.from_env())
-        template_source = _HashOnlyTemplateSource(client) if hash_only else client
+        rpc_settings = BitcoinRpcSettings.from_env()
+        if hash_only:
+            template_source = _require_template_only_client(template_client_factory(rpc_settings))
+        else:
+            submission_client = rpc_client_factory(rpc_settings)
+            if not isinstance(submission_client, SubmissionRpcClient):
+                raise TypeError("submission RPC client does not implement its fixed capability")
+            template_source = submission_client
         chain_info = template_source.get_blockchain_info()
         if chain_info.initial_block_download:
             raise ValueError("Bitcoin Core initial block download is active")
@@ -468,14 +489,15 @@ def _run_solo_command(
         _emit_backend(events, backend)
         _emit_strategy(events, strategy)
         observer = _SoloEventObserver(events)
-        candidate_policy = (
-            HashOnlyCandidatePolicy()
-            if hash_only
-            else ProposalSubmissionCandidatePolicy(
-                client.propose_block,
-                client.submit_block,
+        if hash_only:
+            candidate_policy = HashOnlyCandidatePolicy()
+        else:
+            if submission_client is None:
+                raise RuntimeError("submission-capable RPC client is unavailable")
+            candidate_policy = ProposalSubmissionCandidatePolicy(
+                submission_client.propose_block,
+                submission_client.submit_block,
             )
-        )
         result = run_solo_mining(
             plan,
             chain=chain_info.chain,
@@ -488,7 +510,7 @@ def _run_solo_command(
             candidate_policy=candidate_policy,
             observer=observer,
         )
-    except (BitcoinRpcError, RuntimeError, ValueError) as exc:
+    except (BitcoinRpcError, RuntimeError, TypeError, ValueError) as exc:
         category = _error_category(exc)
         stage = "solo_hashing" if hash_only else "solo_mining"
         _emit_command_failed(events, stage, category, error=exc)
@@ -506,9 +528,9 @@ def _run_solo_command(
                 close_compute_backend(backend)
             except RuntimeError:
                 cleanup_failed = True
-        if client is not None:
+        if template_source is not None:
             try:
-                client.close()
+                template_source.close()
             except BitcoinRpcError:
                 cleanup_failed = True
         if cleanup_failed and result is None:
@@ -692,6 +714,19 @@ def _error_category(error: BaseException) -> str:
     if "Template" in name or "Coinbase" in name or "SoloBlock" in name:
         return "block_construction_failure"
     return "configuration_failure"
+
+
+def _require_template_only_client(value: object) -> TemplateRpcClient:
+    if not isinstance(value, TemplateRpcClient):
+        raise TypeError("template RPC client does not implement its fixed capability")
+    for forbidden in ("propose_block", "submit_block", "call", "_call"):
+        if hasattr(value, forbidden):
+            try:
+                value.close()
+            except Exception as exc:
+                raise TypeError("forbidden template RPC client cleanup failed") from exc
+            raise TypeError("template RPC client exposes a forbidden capability")
+    return value
 
 
 def _positive_integer(value: str) -> int:

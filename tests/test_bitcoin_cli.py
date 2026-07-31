@@ -31,16 +31,14 @@ _SCRIPT = bytes.fromhex("0014" + "61" * 20)
 _COMMITMENT_PREFIX = bytes.fromhex("6a24aa21a9ed")
 
 
-class FakeClient:
-    """Strict command fake with no socket, wallet, or node dependency."""
+class FakeTemplateClient:
+    """Strict read-only command fake with no submission-shaped methods."""
 
     def __init__(self, template: dict[str, object] | None = None) -> None:
         self.template = _raw_template() if template is None else template
         self.blockchain_calls = 0
         self.addresses: list[str] = []
         self.template_calls = 0
-        self.proposals: list[bytes] = []
-        self.submissions: list[bytes] = []
         self.closed = False
 
     def get_blockchain_info(self) -> BlockchainInfo:
@@ -55,6 +53,18 @@ class FakeClient:
         self.template_calls += 1
         return dict(self.template)
 
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeClient(FakeTemplateClient):
+    """Submission-capable fake used only by solo-mine tests."""
+
+    def __init__(self, template: dict[str, object] | None = None) -> None:
+        super().__init__(template)
+        self.proposals: list[bytes] = []
+        self.submissions: list[bytes] = []
+
     def propose_block(self, block: bytes) -> ProposalOutcome:
         self.proposals.append(block)
         return ProposalOutcome(True, "accepted")
@@ -62,9 +72,6 @@ class FakeClient:
     def submit_block(self, block: bytes) -> SubmissionOutcome:
         self.submissions.append(block)
         return SubmissionOutcome(True, "accepted")
-
-    def close(self) -> None:
-        self.closed = True
 
 
 def _raw_template() -> dict[str, object]:
@@ -180,7 +187,7 @@ def test_solo_hash_requires_its_distinct_opt_in_before_rpc(
 
     status = run_bitcoin_command(
         _solo_hash_arguments(),
-        rpc_client_factory=factory,  # type: ignore[arg-type]
+        template_client_factory=factory,  # type: ignore[arg-type]
     )
 
     assert status == 1
@@ -193,7 +200,7 @@ def test_solo_hash_constructs_backend_only_after_template_readiness(
 ) -> None:
     _rpc_environment(monkeypatch)
     monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
-    client = FakeClient()
+    client = FakeTemplateClient()
     client.template["version"] = "private-invalid-template-value"
     backend_calls = 0
 
@@ -205,14 +212,13 @@ def test_solo_hash_constructs_backend_only_after_template_readiness(
 
     status = run_bitcoin_command(
         _solo_hash_arguments(),
-        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        template_client_factory=lambda settings: client,  # type: ignore[arg-type]
         backend_selector=backend,
     )
 
     assert status == 1
     assert client.template_calls == 1
     assert backend_calls == 0
-    assert client.proposals == client.submissions == []
     assert client.closed
 
 
@@ -225,20 +231,19 @@ def test_solo_hash_has_no_proposal_or_submission_capability_even_when_armed(
     monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
     monkeypatch.setenv("HASHPHERE_ENABLE_BLOCK_SUBMISSION", "1")
     monkeypatch.setenv("HASHPHERE_STRATUM_HOST", "invalid\nstratum")
-    client = FakeClient()
+    client = FakeTemplateClient()
     log = tmp_path / "solo-hash.jsonl"
 
     status = run_bitcoin_command(
         _solo_hash_arguments("--event-log", str(log)),
-        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        template_client_factory=lambda settings: client,  # type: ignore[arg-type]
         backend_selector=lambda name, **options: PythonSequentialBackend(),
     )
 
     assert status == 0
-    assert client.proposals == client.submissions == []
     assert client.closed
-    assert not hasattr(command_module._HashOnlyTemplateSource(client), "propose_block")
-    assert not hasattr(command_module._HashOnlyTemplateSource(client), "submit_block")
+    assert not hasattr(client, "propose_block")
+    assert not hasattr(client, "submit_block")
     records = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert [record["event"] for record in records].count("command_completed") == 1
     candidate = next(record for record in records if record["event"] == "solo_candidate_found")
@@ -259,12 +264,39 @@ def test_solo_hash_has_no_proposal_or_submission_capability_even_when_armed(
         assert private_value not in contents
 
 
-def test_solo_hash_chunk_limit_completes_without_candidate_or_submission(
+def test_solo_hash_rejects_accidentally_injected_submission_client_before_compute(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _rpc_environment(monkeypatch)
     monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
     client = FakeClient()
+    backend_calls = 0
+
+    def backend(name: str, **options: object) -> PythonSequentialBackend:
+        nonlocal backend_calls
+        del name, options
+        backend_calls += 1
+        return PythonSequentialBackend()
+
+    status = run_bitcoin_command(
+        _solo_hash_arguments(),
+        template_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        backend_selector=backend,
+    )
+
+    assert status == 1
+    assert backend_calls == 0
+    assert client.blockchain_calls == 0
+    assert client.proposals == client.submissions == []
+    assert client.closed
+
+
+def test_solo_hash_chunk_limit_completes_without_candidate_or_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _rpc_environment(monkeypatch)
+    monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO_HASHING", "1")
+    client = FakeTemplateClient()
 
     def exhausted(work: object, start: int, stop: int) -> NonceSearchResult:
         del work
@@ -272,12 +304,13 @@ def test_solo_hash_chunk_limit_completes_without_candidate_or_submission(
 
     status = run_bitcoin_command(
         _solo_hash_arguments(),
-        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        template_client_factory=lambda settings: client,  # type: ignore[arg-type]
         backend_selector=lambda name, **options: PythonSequentialBackend(exhausted),
     )
 
     assert status == 0
-    assert client.proposals == client.submissions == []
+    assert not hasattr(client, "propose_block")
+    assert not hasattr(client, "submit_block")
 
 
 def test_readiness_requires_its_own_opt_in_before_rpc(
@@ -292,7 +325,10 @@ def test_readiness_requires_its_own_opt_in_before_rpc(
         calls += 1
         return FakeClient()
 
-    status = run_bitcoin_command(["bitcoin-core-check"], rpc_client_factory=factory)  # type: ignore[arg-type]
+    status = run_bitcoin_command(
+        ["bitcoin-core-check"],
+        template_client_factory=factory,  # type: ignore[arg-type]
+    )
 
     assert status == 1
     assert calls == 0
@@ -309,19 +345,20 @@ def test_readiness_is_read_only_sanitized_and_closes_rpc(
 ) -> None:
     _rpc_environment(monkeypatch)
     monkeypatch.setenv("HASHPHERE_ENABLE_BITCOIN_RPC_CHECK", "1")
-    client = FakeClient()
+    client = FakeTemplateClient()
     log = tmp_path / "readiness.jsonl"
 
     status = run_bitcoin_command(
         ["bitcoin-core-check", "--event-log", str(log)],
-        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        template_client_factory=lambda settings: client,  # type: ignore[arg-type]
     )
 
     assert status == 0
     assert client.blockchain_calls == 1
     assert client.template_calls == 1
     assert client.addresses == [_PAYOUT]
-    assert client.proposals == client.submissions == []
+    assert not hasattr(client, "propose_block")
+    assert not hasattr(client, "submit_block")
     assert client.closed
     output = capsys.readouterr().out
     assert "Chain: regtest" in output
@@ -364,17 +401,18 @@ def test_readiness_template_failure_emits_only_sanitized_diagnostic_stages(
     template = _raw_template()
     private_value = "private-template-value"
     template["version"] = private_value
-    client = FakeClient(template)
+    client = FakeTemplateClient(template)
     log = tmp_path / "readiness-failure.jsonl"
 
     status = run_bitcoin_command(
         ["bitcoin-core-check", "--event-log", str(log)],
-        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        template_client_factory=lambda settings: client,  # type: ignore[arg-type]
     )
 
     assert status == 1
     assert client.template_calls == 1
-    assert client.proposals == client.submissions == []
+    assert not hasattr(client, "propose_block")
+    assert not hasattr(client, "submit_block")
     assert client.closed
     output = capsys.readouterr()
     contents = log.read_text(encoding="utf-8")
@@ -607,6 +645,7 @@ def test_all_profiles_drive_the_same_solo_lifecycle(
     status = run_bitcoin_command(
         [command, "--profile", profile, *extra, "--max-chunks", "1"],
         rpc_client_factory=lambda settings: FakeClient(),  # type: ignore[arg-type]
+        template_client_factory=lambda settings: FakeTemplateClient(),  # type: ignore[arg-type]
         backend_selector=backend,
     )
 
@@ -667,6 +706,7 @@ def test_mocked_cuda_profile_selection_reaches_existing_backend_boundary(
             "1",
         ],
         rpc_client_factory=lambda settings: FakeClient(),  # type: ignore[arg-type]
+        template_client_factory=lambda settings: FakeTemplateClient(),  # type: ignore[arg-type]
         backend_selector=backend,
     )
 
@@ -711,7 +751,7 @@ def test_solo_hash_reaches_every_existing_backend_boundary_without_submission(
 
     monkeypatch.setattr(command_module, "LocalComputeProfileCapabilities", AllCapabilities)
     selected: list[str] = []
-    client = FakeClient()
+    client = FakeTemplateClient()
 
     def backend(name: str, **options: object) -> PythonSequentialBackend:
         del options
@@ -731,13 +771,14 @@ def test_solo_hash_reaches_every_existing_backend_boundary_without_submission(
             "--max-chunks",
             "1",
         ],
-        rpc_client_factory=lambda settings: client,  # type: ignore[arg-type]
+        template_client_factory=lambda settings: client,  # type: ignore[arg-type]
         backend_selector=backend,
     )
 
     assert status == 0
     assert selected == [backend_name]
-    assert client.proposals == client.submissions == []
+    assert not hasattr(client, "propose_block")
+    assert not hasattr(client, "submit_block")
 
 
 def test_solo_signal_scope_translates_and_restores_portable_handlers(

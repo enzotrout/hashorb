@@ -233,14 +233,14 @@ class CudaBackend:
         except Exception:
             try:
                 selected_closer()
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                del cleanup_error
             return "DeviceUnavailable"
         if initialized is not None:
             try:
                 selected_closer()
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                del cleanup_error
             return "ExtensionInvalid"
         self._searcher = cast(CudaSearcher, searcher)
         self._closer = selected_closer
