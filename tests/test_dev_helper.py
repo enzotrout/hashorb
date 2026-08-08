@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import subprocess
 import sys
@@ -8,10 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from scripts import dev_helper
-from scripts.dev_helper import CommandResult, DevError, DevHelper
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+dev_helper = importlib.import_module("scripts.dev_helper")
+CommandResult = dev_helper.CommandResult
+DevError = dev_helper.DevError
+DevHelper = dev_helper.DevHelper
 
 
 class RecordingRunner:
