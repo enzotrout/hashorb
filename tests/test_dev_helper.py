@@ -139,6 +139,19 @@ def test_status_reports_dirty_tree(tmp_path: Path, capsys: pytest.CaptureFixture
     assert "working tree: dirty" in capsys.readouterr().out
 
 
+def test_status_reports_detached_head(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "repo"
+    responses = repository_responses(root, branch="")
+    responses[("uv", "--version")] = result(("uv", "--version"), "uv 0.12.0")
+    probe = ("uv", "run", "--no-sync", "python", "-c", dev_helper._BACKEND_PROBE)
+    responses[probe] = result(probe, probe_json())
+    runner = RecordingRunner(responses)
+
+    assert DevHelper(root=root, runner=runner, which=tools).status() == 0
+
+    assert "branch: (detached)" in capsys.readouterr().out
+
+
 def test_status_propagates_git_failure(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     command = ("git", "rev-parse", "--show-toplevel")
