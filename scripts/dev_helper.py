@@ -131,8 +131,7 @@ class DevHelper:
             raise DevError("detect repository root returned no path")
         repository = Path(root_text).resolve()
         branch = self._git("branch", "--show-current", operation="detect current branch")
-        if not branch:
-            raise DevError("detached HEAD is not supported by the development helper")
+        branch = branch or "(detached)"
         status_text = self._git("status", "--short", operation="read working tree")
         status_lines = tuple(line for line in status_text.splitlines() if line)
         return repository, branch, status_lines
