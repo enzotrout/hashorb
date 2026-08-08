@@ -34,6 +34,15 @@ jobs:
           version: "0.12.0"
       - name: Sync locked development environment
         run: uv sync --locked --no-python-downloads
+      - name: Smoke development helper through Python
+        run: |
+          python dev --help
+          python dev help
+      - name: Smoke executable development helper
+        if: runner.os != 'Windows'
+        run: |
+          ./dev --help
+          ./dev help
       - name: Test shared CPU core
         run: uv run pytest -q
       - name: Smoke Windows installer dry-run
