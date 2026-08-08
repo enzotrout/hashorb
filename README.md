@@ -74,6 +74,24 @@ execute those remote runners. See
 for exact platform boundaries, Docker live-operation examples, upgrades,
 uninstall, signals, privacy, and validation status.
 
+### Develop from a checkout
+
+Contributors can use the repository-local development helper as the single
+front door for setup, validation, diagnostics, and review preparation:
+
+```bash
+./dev start
+./dev check
+./dev full
+./dev review
+```
+
+On Windows use `python .\dev <command>`. `dev status`, `dev sync`, and
+`dev doctor` provide inspection, safe synchronization, and environment
+diagnostics. Commands fail nonzero rather than hiding Git, uv, test, typing, or
+backend-probe failures. See [`docs/development.md`](docs/development.md) for the
+complete command contract and recommended human and coding-agent workflows.
+
 ## Configure the environment
 
 Copy the example configuration and edit the new `.env` file:
