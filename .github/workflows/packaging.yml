@@ -38,11 +38,15 @@ jobs:
         run: |
           python dev --help
           python dev help
+          python dev status
+          python dev doctor
       - name: Smoke executable development helper
         if: runner.os != 'Windows'
         run: |
           ./dev --help
           ./dev help
+      - name: Test development helper
+        run: uv run pytest -q tests/test_dev_helper.py
       - name: Test shared CPU core
         run: uv run pytest -q
       - name: Smoke Windows installer dry-run
