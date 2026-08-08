@@ -27,7 +27,7 @@ Remaining:
 ## 2026-08-06 — Agent workflow foundation
 
 Branch: `local/agent-workflow-foundation`
-Commit: `pending`
+Commit: `a27404f`
 
 Changed:
 - Added a repository-owned development contract for coding agents.
@@ -36,10 +36,11 @@ Changed:
 - Added this development activity log.
 
 Validation:
-- Pending branch review and CI.
+- Packaging #25 passed on Windows / Python 3.13, Ubuntu / Python 3.13, macOS / Python 3.13, and Docker CPU / Ubuntu.
+- PR #4 was reviewed and found mergeable; stale activity status was corrected before merge.
 
 Documentation:
 - Added `AGENTS.md`, `.continue/rules/hashorb.md`, `tasks/TEMPLATE.md`, and `docs/activity.md`.
 
 Remaining:
-- Review the foundation branch and confirm Continue loads the repository rule.
+- None.
