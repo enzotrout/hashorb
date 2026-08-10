@@ -162,6 +162,7 @@ def test_lite_rejects_manual_compute_controls(overrides: ComputeProfileOverrides
 
 def test_auto_and_max_reject_non_device_manual_controls() -> None:
     for profile, overrides in (
+        ("auto", ComputeProfileOverrides(backend_name="native")),
         ("auto", ComputeProfileOverrides(inter_range_delay_seconds=0.1)),
         ("max", ComputeProfileOverrides(inter_range_delay_seconds=0.1)),
     ):
