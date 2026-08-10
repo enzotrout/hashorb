@@ -83,17 +83,32 @@ def test_lite_cpu_resolution_is_sequential_and_conservative() -> None:
     assert (python.backend_name, python.worker_count) == ("python", None)
 
 
-def test_auto_prefers_one_cuda_device_without_implicit_inventory() -> None:
+def test_auto_prefers_one_cuda_device_without_implicit_inventory_and_paces_it() -> None:
     capabilities = FakeCapabilities(cuda_devices={0, 1}, cuda_sets={(0, 1)})
 
     resolved = resolve_compute_profile("auto", ComputeProfileOverrides(), capabilities)
 
     assert resolved.backend_name == "cuda"
     assert resolved.cuda_device == 0
+    assert resolved.chunk_size == 500_000_000
+    assert resolved.inter_range_delay_seconds == 0.08
     assert ("cuda-multi", (0, 1), 256) not in capabilities.calls
 
 
-def test_auto_explicit_multi_device_set_is_exact() -> None:
+def test_auto_explicit_single_cuda_device_keeps_balanced_pacing() -> None:
+    overrides = ComputeProfileOverrides(cuda_device=2)
+    capabilities = FakeCapabilities(cuda_devices={2})
+
+    resolved = resolve_compute_profile("auto", overrides, capabilities)
+
+    assert resolved.backend_name == "cuda"
+    assert resolved.cuda_device == 2
+    assert resolved.chunk_size == 500_000_000
+    assert resolved.inter_range_delay_seconds == 0.08
+    assert capabilities.calls == [("cuda", 2, 256)]
+
+
+def test_auto_explicit_multi_device_set_is_exact_and_paced() -> None:
     overrides = ComputeProfileOverrides(cuda_devices=(0, 2))
     capabilities = FakeCapabilities(cuda_sets={(0, 2)})
 
@@ -101,16 +116,19 @@ def test_auto_explicit_multi_device_set_is_exact() -> None:
 
     assert resolved.backend_name == "cuda-multi"
     assert resolved.cuda_devices == (0, 2)
+    assert resolved.chunk_size == 500_000_000
+    assert resolved.inter_range_delay_seconds == 0.08
     assert capabilities.calls == [("cuda-multi", (0, 2), 256)]
 
 
-def test_auto_cpu_fallback_is_resolution_only_and_bounded() -> None:
+def test_auto_cpu_fallback_is_resolution_only_bounded_and_unpaced() -> None:
     resolved = resolve_compute_profile(
         "auto", ComputeProfileOverrides(), FakeCapabilities(cpus=64, native=True)
     )
 
     assert resolved.backend_name == "native-parallel"
     assert resolved.worker_count == 8
+    assert resolved.inter_range_delay_seconds == 0
 
 
 def test_max_never_implicitly_selects_multiple_devices_and_bounds_cpu() -> None:
@@ -126,6 +144,7 @@ def test_max_never_implicitly_selects_multiple_devices_and_bounds_cpu() -> None:
     assert (gpu.backend_name, gpu.cuda_device, gpu.cuda_devices) == ("cuda", 0, None)
     assert (cpu.backend_name, cpu.worker_count) == ("native-parallel", 32)
     assert gpu.inter_range_delay_seconds == 0
+    assert cpu.inter_range_delay_seconds == 0
 
 
 @pytest.mark.parametrize(
@@ -144,6 +163,7 @@ def test_lite_rejects_manual_compute_controls(overrides: ComputeProfileOverrides
 def test_auto_and_max_reject_non_device_manual_controls() -> None:
     for profile, overrides in (
         ("auto", ComputeProfileOverrides(backend_name="native")),
+        ("auto", ComputeProfileOverrides(inter_range_delay_seconds=0.1)),
         ("max", ComputeProfileOverrides(inter_range_delay_seconds=0.1)),
     ):
         with pytest.raises(ComputeProfileValidationError):

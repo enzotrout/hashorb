@@ -70,3 +70,28 @@ Documentation:
 
 Remaining:
 - None in the implementation. GitHub PR checks remain required on each updated head before merge.
+
+## 2026-08-10 — Rebalance Auto compute profile
+
+Branch: `local/rebalance-auto-profile`
+Commit: `3ac4220`
+
+Changed:
+- Kept Auto CUDA on the validated 500,000,000-hash range and 256-thread launch while adding an 80 ms rest between complete ranges.
+- Kept Auto CPU fallback on its existing bounded worker and chunk-size policy without additional pacing.
+- Left Lite and Max behavior unchanged and deferred CPU/GPU hybrid allocation.
+- Used the manually validated one-hour Spark Max run at 2.759853619 GH/s as the tuning baseline.
+
+Validation:
+- Packaging #68 passed Windows / Python 3.13, Ubuntu / Python 3.13, macOS / Python 3.13, and Docker CPU / Ubuntu on implementation head `3ac4220`.
+- Security #22 passed source/dependency/workflow/artifact scanning and hardened CPU-container security scanning on implementation head `3ac4220`.
+- Hosted full suite passed with 2,193 tests and 20 documented skips; Ruff, formatting, mypy, lock, package, and diff-hygiene gates passed.
+- Five-minute Spark live gate measured Lite at 1.1486 GH/s effective, Auto at 1.8854 GH/s, and Max at 2.7550 GH/s. Auto was 68.4% of Max and 1.64 times Lite.
+- All three Spark runs reached `runtime_limit_reached` with zero duplicate work, connection losses, reconnect attempts, or failed reconnects.
+- Packaging #74 and Security #25 passed on the documentation head that recorded the measured Spark results.
+
+Documentation:
+- Updated `docs/12-performance-profiles.md`, added `tasks/rebalance-auto-profile.md`, and updated this activity log with measured hardware evidence.
+
+Remaining:
+- None in implementation or hardware acceptance. Exact-head Packaging and Security validation remains required before merge.
