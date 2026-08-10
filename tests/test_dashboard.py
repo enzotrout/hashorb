@@ -103,7 +103,15 @@ def test_dashboard_tracks_auto_raw_and_effective_rates_and_nonce_progress() -> N
             experimental=False,
         )
     )
-    state.apply(_record(5, "stratum_authorized", 0.04, endpoint="pool.example:3333", extra_nonce_2_size=8))
+    state.apply(
+        _record(
+            5,
+            "stratum_authorized",
+            0.04,
+            endpoint="pool.example:3333",
+            extra_nonce_2_size=8,
+        )
+    )
     state.apply(_record(6, "difficulty_received", 0.05, difficulty=10_000))
     state.apply(
         _record(
@@ -266,7 +274,7 @@ def test_nonce_visualization_resets_when_work_variant_advances() -> None:
     )
 
     assert not any(state.nonce_buckets)
-    assert state.recent_bucket_visits == dashboard_module.deque(maxlen=12)
+    assert not state.recent_bucket_visits
     assert state.work_variant_index == 2
     assert state.extra_nonce_2_advances == 1
 
