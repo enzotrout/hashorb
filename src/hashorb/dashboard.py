@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TextIO, cast
+from typing import Never, TextIO, cast
 
 _NONCE_LIMIT = 1 << 32
 _DEFAULT_BUCKET_COUNT = 64
@@ -76,6 +76,7 @@ class DashboardState:
     command: str | None = None
     status: str = "waiting"
     completion_outcome: str | None = None
+    terminal_effective_hashes_per_second: float | None = None
     started_at: datetime | None = None
     last_event_at: datetime | None = None
     profile_requested: str | None = None
@@ -236,6 +237,10 @@ class DashboardState:
             self._remember(record, "share accepted" if accepted else "share rejected")
         elif event == "command_completed":
             self.completion_outcome = _required_string(fields, "outcome")
+            terminal_rate = _optional_number(fields, "effective_hashes_per_second")
+            if terminal_rate is not None and terminal_rate < 0:
+                raise DashboardLogError("dashboard terminal effective rate is invalid")
+            self.terminal_effective_hashes_per_second = terminal_rate
             self.status = self.completion_outcome
             self._remember(record, f"completed {self.completion_outcome}")
         elif event == "command_failed":
@@ -258,7 +263,9 @@ class DashboardState:
     def effective_hashes_per_second(self, now: datetime | None = None) -> float | None:
         """Return recent wall-clock throughput, including profile pacing and waits."""
 
-        reference = now if now is not None else datetime.now(UTC)
+        if self.terminal_effective_hashes_per_second is not None:
+            return self.terminal_effective_hashes_per_second
+        reference = self._metric_reference(now)
         self._prune_effective_points(reference)
         if len(self.effective_points) < 2:
             return None
@@ -274,7 +281,7 @@ class DashboardState:
 
         if self.started_at is None:
             return None
-        reference = now if now is not None else datetime.now(UTC)
+        reference = self._metric_reference(now)
         return max(0.0, (reference - self.started_at).total_seconds())
 
     def job_age_seconds(self, now: datetime | None = None) -> float | None:
@@ -282,14 +289,20 @@ class DashboardState:
 
         if self.current_job_received_at is None:
             return None
-        reference = now if now is not None else datetime.now(UTC)
+        reference = self._metric_reference(now)
         return max(0.0, (reference - self.current_job_received_at).total_seconds())
+
+    def _metric_reference(self, now: datetime | None) -> datetime:
+        if (self.completion_outcome is not None or self.status == "failed") and self.last_event_at:
+            return self.last_event_at
+        return now if now is not None else datetime.now(UTC)
 
     def _reset_for_run(self, record: DashboardRecord) -> None:
         self.active_run_id = record.run_id
         self.command = record.command
         self.status = "starting"
         self.completion_outcome = None
+        self.terminal_effective_hashes_per_second = None
         self.started_at = record.timestamp
         self.last_event_at = record.timestamp
         self.profile_requested = None
@@ -425,11 +438,16 @@ def parse_dashboard_record(text: str) -> DashboardRecord:
     """Parse and validate the stable envelope required by the dashboard."""
 
     try:
-        raw: object = json.loads(text, object_pairs_hook=_unique_object)
+        raw: object = json.loads(
+            text,
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_nonfinite_constant,
+        )
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         raise DashboardLogError("dashboard log contains malformed JSON") from exc
     if not isinstance(raw, dict):
         raise DashboardLogError("dashboard record must be a JSON object")
+    _validate_finite_json_numbers(raw)
     record = cast(dict[str, JsonValue], raw)
 
     schema_version = record.get("schema_version")
@@ -728,6 +746,21 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise ValueError("duplicate JSON key")
         result[key] = value
     return result
+
+
+def _reject_nonfinite_constant(value: str) -> Never:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
+def _validate_finite_json_numbers(value: object) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise DashboardLogError("dashboard record contains a non-finite number")
+    if isinstance(value, dict):
+        for nested in value.values():
+            _validate_finite_json_numbers(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            _validate_finite_json_numbers(nested)
 
 
 def _validated_path(value: str | Path) -> Path:

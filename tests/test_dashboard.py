@@ -328,6 +328,64 @@ def test_once_mode_renders_without_ansi_or_modifying_source(tmp_path: Path) -> N
     assert path.read_bytes() == before
 
 
+def test_completed_snapshot_uses_terminal_rate_and_freezes_elapsed_clocks() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+    state.apply(
+        _record(
+            2,
+            "mining_job_received",
+            1.0,
+            job_id="job-finished",
+            network_bits="1702353d",
+            clean_jobs=True,
+            merkle_branch_count=12,
+        )
+    )
+    state.apply(
+        _record(
+            3,
+            "nonce_range_completed",
+            9.0,
+            job_id="job-finished",
+            start_nonce=0,
+            stop_nonce=500_000_000,
+            hashes_checked=500_000_000,
+            elapsed_ns=181_000_000,
+            hashes_per_second=2_762_430_939.23,
+            match_found=False,
+        )
+    )
+    state.apply(
+        _record(
+            4,
+            "command_completed",
+            10.0,
+            outcome="runtime_limit_reached",
+            profile_wall_elapsed_ns=10_000_000_000,
+            effective_hashes_per_second=1_900_000_000.0,
+        )
+    )
+
+    much_later = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    rendered = render_dashboard(state, width=140, now=much_later, color=False)
+
+    assert state.effective_hashes_per_second(much_later) == 1_900_000_000.0
+    assert state.uptime_seconds(much_later) == 10.0
+    assert state.job_age_seconds(much_later) == 9.0
+    assert "Effective 1.900 GH/s" in rendered
+    assert "Uptime 00:00:10" in rendered
+    assert "Job age 00:00:09" in rendered
+
+
+def test_dashboard_parser_rejects_nonfinite_json_numbers() -> None:
+    record = _json_record(1, "command_started", 0)
+    malformed = record[:-1] + ',"unsafe_metric":NaN}'
+
+    with pytest.raises(DashboardLogError, match="malformed JSON"):
+        dashboard_module.parse_dashboard_record(malformed)
+
+
 def test_nvidia_probe_requests_only_safe_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
