@@ -298,10 +298,15 @@ class DevHelper:
 
     @classmethod
     def _is_suspicious_filename(cls, path_text: str) -> bool:
-        name = Path(cls._display_path(path_text)).name.lower()
+        normalized = cls._display_path(path_text).lower()
+        components = tuple(part for part in normalized.split("/") if part)
+        name = components[-1] if components else normalized
         if name == ".env.example":
             return False
-        return any(marker in name for marker in _SECRET_NAME_MARKERS)
+        return any(
+            marker in name or marker in components[:-1]
+            for marker in _SECRET_NAME_MARKERS
+        )
 
     def review(self) -> int:
         """Report the review surface without reading changed-file contents."""
