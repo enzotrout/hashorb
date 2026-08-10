@@ -93,4 +93,4 @@ Documentation:
 - Updated `docs/12-performance-profiles.md`, added `tasks/rebalance-auto-profile.md`, and updated this activity log with measured hardware evidence.
 
 Remaining:
-- Final Packaging and Security checks are required on the documentation-only final head before merge.
+- Final Packaging and Security checks are running on the documentation-only final head before merge.
