@@ -303,10 +303,7 @@ class DevHelper:
         name = components[-1] if components else normalized
         if name == ".env.example":
             return False
-        return any(
-            marker in name or marker in components[:-1]
-            for marker in _SECRET_NAME_MARKERS
-        )
+        return any(marker in name or marker in components[:-1] for marker in _SECRET_NAME_MARKERS)
 
     def review(self) -> int:
         """Report the review surface without reading changed-file contents."""
