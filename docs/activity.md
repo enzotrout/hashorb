@@ -104,15 +104,16 @@ Commit: `pending`
 Changed:
 - Added a read-only terminal dashboard state model and ANSI renderer driven only by existing sanitized JSONL mining events.
 - Added live raw/effective rate presentation, nonce-space bucket visualization, observed strategy path, recent events, run/network counters, and optional safe `nvidia-smi` telemetry.
-- Added a thin installed-command wrapper for `hashorb dashboard` while delegating all existing commands unchanged to the current CLI implementation.
+- Integrated `hashorb dashboard` directly into the canonical `hashorb.__main__:main` command dispatch after CI correctly rejected an alternate console-entry wrapper.
 - Kept mining control, profile changes, backend changes, strategy execution, and share submission outside this slice.
 
 Validation:
-- Hosted Packaging/Security and full repository validation pending.
+- Ruff, formatting, mypy, lock checks, and the security regression suite passed during iterative hosted validation.
+- The full exact-head Packaging/Security matrix is pending after the canonical CLI correction.
 - Spark `--once` and active-log live-render human gates pending.
 
 Documentation:
 - Added `docs/14-dashboard-tui.md` and `tasks/dashboard-tui-foundation.md`.
 
 Remaining:
-- Complete automated validation, semantic review, and Spark human acceptance before merge.
+- Complete exact-head automated validation, semantic review, and Spark human acceptance before merge.
