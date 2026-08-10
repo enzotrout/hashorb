@@ -9,13 +9,16 @@ Build the first real HashOrb terminal dashboard from the approved TUI mockup. Th
 Allowed files:
 
 - `src/hashorb/dashboard.py`
-- `src/hashorb/__main__.py`
+- `src/hashorb/cli.py`
+- `pyproject.toml`
 - `tests/test_dashboard.py`
-- existing CLI tests only when required for the new command
+- existing CLI tests only when required for the new installed-command wrapper
 - `README.md`
 - `docs/14-dashboard-tui.md`
 - `docs/activity.md`
 - this task file
+
+The installed `hashorb` entry point may move from `hashorb.__main__:main` to a thin wrapper that handles only `dashboard` and delegates every existing command unchanged to `hashorb.__main__.main`. Do not rewrite the mining CLI monolith solely to add this display command.
 
 Do not change:
 
@@ -46,6 +49,7 @@ Do not change:
 13. No credential, wallet, username, password, raw work, extra-nonce value, or arbitrary exception text may be displayed.
 14. Ctrl-C must exit the live dashboard cleanly with status 0.
 15. The first slice is display-only. Keyboard mining controls from the visual mockup are explicitly deferred.
+16. Existing installed commands and their status/output behavior must continue to delegate to the current CLI implementation unchanged.
 
 ## Validation
 
