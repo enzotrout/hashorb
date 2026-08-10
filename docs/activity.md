@@ -115,9 +115,10 @@ Validation:
 - Spark archived-log gate rendered the real one-hour Max run correctly: 9.93 T hashes, approximately 2.759 GH/s effective, frozen 01:00:00 uptime, terminal outcome, coherent sequential nonce visualization, and historical GPU telemetry omitted.
 - Spark live Auto gate rendered in place with approximately 1.879 GH/s effective versus 2.758 GH/s raw, updating GPU telemetry, nonce-space progression/reset, recent events, and run counters.
 - The corresponding three-minute Auto mining run completed with `runtime_limit_reached`, 339,212,481,792 hashes, 710 chunks, zero duplicate work, zero reconnect attempts, approximately 2.758 GH/s raw, and approximately 1.884 GH/s effective.
+- Final exact-head Packaging #132 and Security #53 passed after recording the human acceptance evidence.
 
 Documentation:
 - Added `docs/14-dashboard-tui.md` and `tasks/dashboard-tui-foundation.md` and recorded the completed Spark human acceptance here.
 
 Remaining:
-- Final exact-head Packaging and Security validation after recording acceptance; merge requires explicit user authorization.
+- None in implementation, hosted validation, semantic review, or Spark acceptance. Merge requires explicit user authorization.
