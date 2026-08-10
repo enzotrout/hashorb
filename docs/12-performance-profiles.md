@@ -194,11 +194,29 @@ connection losses, reconnects, stale sessions, liveness warnings, or duplicate
 work.
 
 At that measured Max rate, a 500-million-hash range takes about 0.181 seconds.
-The new Auto CUDA delay is 0.08 seconds, giving a projected compute duty fraction
-of about 69.4% and a projected effective rate near 1.91 GH/s if raw CUDA
-throughput remains unchanged. These are design projections, not acceptance
-claims. A human-controlled Spark comparison of updated Lite, Auto, and Max is
-required before replacing them with measured post-change figures.
+The 80 ms Auto CUDA delay therefore targeted an effective rate near 1.9 GH/s
+without changing the raw CUDA kernel rate.
+
+The post-change human gate then ran Lite, Auto, and Max consecutively for five
+minutes each against the same one-device Spark and live Stratum endpoint:
+
+| Profile | Raw compute rate | Effective wall-clock rate | Effective vs Max | Outcome |
+| --- | ---: | ---: | ---: | --- |
+| Lite | 2.7518 GH/s | 1.1486 GH/s | 41.7% | `runtime_limit_reached` |
+| Auto | 2.7595 GH/s | 1.8854 GH/s | 68.4% | `runtime_limit_reached` |
+| Max | 2.7601 GH/s | 2.7550 GH/s | 100% | `runtime_limit_reached` |
+
+Auto therefore landed materially between Lite and Max as intended: about 1.64
+times Lite's effective rate and about 31.6% below Max. All three runs completed
+their runtime limit with zero duplicate work, reconnect attempts, successful or
+failed reconnects, connection losses, or candidate submissions. The raw CUDA
+compute rates remained within about 0.3% of one another, supporting the design
+choice to preserve the efficient kernel configuration and control average
+intensity through inter-range pacing instead.
+
+These are local measurements from one DGX Spark under one thermal and software
+state. They validate the profile separation on that host but are not portable
+performance, power, utilization, or temperature guarantees.
 
 ## Deferred Work
 
