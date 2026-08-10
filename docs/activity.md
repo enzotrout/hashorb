@@ -70,3 +70,24 @@ Documentation:
 
 Remaining:
 - None in the implementation. GitHub PR checks remain required on each updated head before merge.
+
+## 2026-08-10 — Rebalance Auto compute profile
+
+Branch: `local/rebalance-auto-profile`
+Commit: `pending`
+
+Changed:
+- Kept Auto CUDA on the validated 500,000,000-hash range and 256-thread launch while adding an 80 ms rest between complete ranges.
+- Kept Auto CPU fallback on its existing bounded worker and chunk-size policy without additional pacing.
+- Left Lite and Max behavior unchanged and deferred CPU/GPU hybrid allocation.
+- Used the manually validated one-hour Spark Max run at 2.759853619 GH/s as tuning evidence; the updated Auto Spark rate remains a projection until the human hardware gate runs.
+
+Validation:
+- Repository baseline and hosted Packaging/Security validation pending.
+- Post-change Lite/Auto/Max Spark comparison pending after hosted validation.
+
+Documentation:
+- Updated `docs/12-performance-profiles.md` and added `tasks/rebalance-auto-profile.md`.
+
+Remaining:
+- Run repository/hosted validation and the post-change Spark comparison before merge.
