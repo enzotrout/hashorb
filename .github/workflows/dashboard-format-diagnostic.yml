@@ -6,13 +6,15 @@ on:
       - local/dashboard-tui-foundation
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  format-diff:
+  format:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: local/dashboard-tui-foundation
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.13"
@@ -20,4 +22,18 @@ jobs:
         with:
           version: "0.12.0"
       - run: uv sync --locked --no-python-downloads
-      - run: uv run ruff format --diff src/hashorb/dashboard.py tests/test_dashboard.py
+      - name: Format only dashboard files
+        run: uv run ruff format src/hashorb/dashboard.py tests/test_dashboard.py
+      - name: Commit formatter output when needed
+        shell: bash
+        run: |
+          if git diff --quiet -- src/hashorb/dashboard.py tests/test_dashboard.py; then
+            echo "No formatter changes required."
+            exit 0
+          fi
+          git diff --check -- src/hashorb/dashboard.py tests/test_dashboard.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/hashorb/dashboard.py tests/test_dashboard.py
+          git commit -m "style(dashboard): apply Ruff formatter"
+          git push origin HEAD:local/dashboard-tui-foundation
