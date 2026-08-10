@@ -106,14 +106,18 @@ Changed:
 - Added live raw/effective rate presentation, nonce-space bucket visualization, observed strategy path, recent events, run/network counters, and optional safe `nvidia-smi` telemetry.
 - Integrated `hashorb dashboard` directly into the canonical `hashorb.__main__:main` command dispatch after CI correctly rejected an alternate console-entry wrapper.
 - Kept mining control, profile changes, backend changes, strategy execution, and share submission outside this slice.
+- Corrected archived snapshots so completed runs freeze terminal effective rate and elapsed clocks and never present current GPU telemetry as historical telemetry.
 
 Validation:
-- Ruff, formatting, mypy, lock checks, and the security regression suite passed during iterative hosted validation.
-- The full exact-head Packaging/Security matrix is pending after the canonical CLI correction.
-- Spark `--once` and active-log live-render human gates pending.
+- Exact implementation head `998d21411aeb7646a2145c13fe578f7c136803b9` passed Packaging #128 on Windows / Python 3.13, Ubuntu / Python 3.13, macOS / Python 3.13, and Docker CPU / Ubuntu.
+- Security #51 passed source/dependency/workflow/artifact scanning and hardened CPU-container security scanning on that implementation head.
+- Ubuntu full suite: 2,213 passed and 20 documented hardware/platform skips. Ruff check, Ruff format, mypy, lock, branch-diff hygiene, package build, distribution verification, and installed-distribution smoke all passed.
+- Spark archived-log gate rendered the real one-hour Max run correctly: 9.93 T hashes, approximately 2.759 GH/s effective, frozen 01:00:00 uptime, terminal outcome, coherent sequential nonce visualization, and historical GPU telemetry omitted.
+- Spark live Auto gate rendered in place with approximately 1.879 GH/s effective versus 2.758 GH/s raw, updating GPU telemetry, nonce-space progression/reset, recent events, and run counters.
+- The corresponding three-minute Auto mining run completed with `runtime_limit_reached`, 339,212,481,792 hashes, 710 chunks, zero duplicate work, zero reconnect attempts, approximately 2.758 GH/s raw, and approximately 1.884 GH/s effective.
 
 Documentation:
-- Added `docs/14-dashboard-tui.md` and `tasks/dashboard-tui-foundation.md`.
+- Added `docs/14-dashboard-tui.md` and `tasks/dashboard-tui-foundation.md` and recorded the completed Spark human acceptance here.
 
 Remaining:
-- Complete exact-head automated validation, semantic review, and Spark human acceptance before merge.
+- Final exact-head Packaging and Security validation after recording acceptance; merge requires explicit user authorization.
