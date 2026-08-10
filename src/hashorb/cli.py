@@ -9,9 +9,7 @@ from decimal import Decimal, InvalidOperation
 from hashorb.__main__ import main as legacy_main
 from hashorb.dashboard import DashboardLogError, run_dashboard
 
-_DASHBOARD_USAGE = (
-    "Usage: hashorb dashboard --log-file PATH [--refresh-seconds SECONDS] [--once]"
-)
+_DASHBOARD_USAGE = "Usage: hashorb dashboard --log-file PATH [--refresh-seconds SECONDS] [--once]"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
