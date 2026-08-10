@@ -1,0 +1,128 @@
+name: Dashboard CLI correction v3
+
+on:
+  push:
+    branches:
+      - local/dashboard-tui-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: local/dashboard-tui-foundation
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.12.0"
+      - run: uv sync --locked --no-python-downloads
+      - name: Apply bounded CLI correction
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected exactly one match in {path}: {old[:80]!r}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          dashboard = Path("src/hashorb/dashboard.py")
+          replace_once(
+              dashboard,
+              "import subprocess\n",
+              "import subprocess  # nosec B404 - fixed local nvidia-smi probe only\n",
+          )
+          replace_once(
+              dashboard,
+              "            else subprocess.run(\n",
+              "            else subprocess.run(  # nosec B603 - explicit executable/args, no shell\n",
+          )
+
+          main = Path("src/hashorb/__main__.py")
+          replace_once(
+              main,
+              "from hashorb.diagnostics import build_doctor_report, format_doctor_report\n",
+              "from hashorb.dashboard import DashboardLogError, run_dashboard\n"
+              "from hashorb.diagnostics import build_doctor_report, format_doctor_report\n",
+          )
+          replace_once(
+              main,
+              '    "stratum-mine-chunks,stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} "\n',
+              '    "stratum-mine-chunks,stratum-mine,logs-summary,dashboard,compute-benchmark,"\n'
+              '    "profile-info,doctor} "\n',
+          )
+          replace_once(
+              main,
+              ")\n\ntype _PythonSignalHandler = Callable[[int, FrameType | None], object]\n",
+              ")\n"
+              '_DASHBOARD_USAGE = "Usage: hashorb dashboard --log-file PATH [--refresh-seconds SECONDS] [--once]"\n\n'
+              "type _PythonSignalHandler = Callable[[int, FrameType | None], object]\n",
+          )
+
+          parser = '''\n\ndef _parse_dashboard_command_arguments(\n    arguments: Sequence[str],\n) -> tuple[str, float, bool]:\n    \"\"\"Parse the read-only dashboard source and refresh policy.\"\"\"\n\n    log_file: str | None = None\n    refresh_seconds = 1.0\n    refresh_seen = False\n    once = False\n    index = 0\n    while index < len(arguments):\n        option = arguments[index]\n        if option == \"--once\":\n            if once:\n                raise ValueError(\"--once may be supplied only once\")\n            once = True\n            index += 1\n            continue\n        if option not in {\"--log-file\", \"--refresh-seconds\"}:\n            raise ValueError(\"unsupported dashboard argument\")\n        if index + 1 >= len(arguments) or arguments[index + 1].startswith(\"--\"):\n            raise ValueError(f\"{option} requires a value\")\n        value = arguments[index + 1]\n        if option == \"--log-file\":\n            if log_file is not None:\n                raise ValueError(\"--log-file may be supplied only once\")\n            if not value.strip():\n                raise ValueError(\"--log-file requires a nonblank path\")\n            log_file = value\n        else:\n            if refresh_seen:\n                raise ValueError(\"--refresh-seconds may be supplied only once\")\n            try:\n                parsed = Decimal(value)\n            except InvalidOperation as exc:\n                raise ValueError(\"--refresh-seconds must be between 0.1 and 60\") from exc\n            if (\n                value != value.strip()\n                or not parsed.is_finite()\n                or not Decimal(\"0.1\") <= parsed <= Decimal(\"60\")\n            ):\n                raise ValueError(\"--refresh-seconds must be between 0.1 and 60\")\n            refresh_seconds = float(parsed)\n            refresh_seen = True\n        index += 2\n    if log_file is None:\n        raise ValueError(\"--log-file is required\")\n    return log_file, refresh_seconds, once\n'''
+          replace_once(
+              main,
+              "\n\ndef main(argv: Sequence[str] | None = None) -> int:\n",
+              parser + "\n\ndef main(argv: Sequence[str] | None = None) -> int:\n",
+          )
+
+          dashboard_dispatch = '''    if arguments and arguments[0] == \"dashboard\":\n        if arguments[1:] in ([\"--help\"], [\"-h\"]):\n            print(_DASHBOARD_USAGE)\n            print(\"Read-only live view of an existing sanitized HashOrb JSONL mining log.\")\n            print(\"Ctrl-C exits live mode; --once renders one deterministic snapshot.\")\n            return 0\n        try:\n            dashboard_log_file, refresh_seconds, once = _parse_dashboard_command_arguments(\n                arguments[1:]\n            )\n        except ValueError as exc:\n            print(f\"Argument error: {exc}\", file=sys.stderr)\n            print(_DASHBOARD_USAGE, file=sys.stderr)\n            return 2\n        try:\n            return run_dashboard(\n                dashboard_log_file,\n                refresh_seconds=refresh_seconds,\n                once=once,\n            )\n        except DashboardLogError as exc:\n            print(f\"Dashboard failed: {exc}\", file=sys.stderr)\n            return 1\n'''
+          replace_once(
+              main,
+              '        return _run_log_summary(summary_log_file)\n    if arguments and arguments[0] == "stratum-handshake":\n',
+              '        return _run_log_summary(summary_log_file)\n'
+              + dashboard_dispatch
+              + '    if arguments and arguments[0] == "stratum-handshake":\n',
+          )
+
+          pyproject = Path("pyproject.toml")
+          replace_once(
+              pyproject,
+              'hashorb = "hashorb.cli:main"\n',
+              'hashorb = "hashorb.__main__:main"\n',
+          )
+
+          tests = Path("tests/test_dashboard.py")
+          replace_once(
+              tests,
+              "import hashorb.cli as installed_cli\nimport hashorb.dashboard as dashboard_module\n",
+              "import hashorb.__main__ as hashorb_cli\nimport hashorb.dashboard as dashboard_module\n",
+          )
+          text = tests.read_text(encoding="utf-8")
+          start = text.index(
+              "def test_installed_cli_routes_dashboard_and_delegates_existing_commands("
+          )
+          end = text.index("\n\n@pytest.mark.parametrize(\n", start)
+          replacement = '''def test_canonical_cli_routes_dashboard_without_changing_console_entrypoint(\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    dashboard_calls: list[tuple[str, float, bool]] = []\n\n    def fake_dashboard(log_file: str, *, refresh_seconds: float, once: bool) -> int:\n        dashboard_calls.append((log_file, refresh_seconds, once))\n        return 0\n\n    monkeypatch.setattr(hashorb_cli, \"run_dashboard\", fake_dashboard)\n\n    assert (\n        hashorb_cli.main(\n            [\"dashboard\", \"--log-file\", \"logs/live.jsonl\", \"--refresh-seconds\", \"0.5\", \"--once\"]\n        )\n        == 0\n    )\n    assert dashboard_calls == [(\"logs/live.jsonl\", 0.5, True)]\n'''
+          tests.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+          replace_once(
+              tests,
+              "def test_installed_cli_rejects_invalid_dashboard_arguments(\n",
+              "def test_canonical_cli_rejects_invalid_dashboard_arguments(\n",
+          )
+          replace_once(
+              tests,
+              "    assert installed_cli.main(arguments) == 2\n",
+              "    assert hashorb_cli.main(arguments) == 2\n",
+          )
+          PY
+          rm src/hashorb/cli.py
+          uv run ruff format src/hashorb/__main__.py src/hashorb/dashboard.py tests/test_dashboard.py
+          uv run ruff check src/hashorb/__main__.py src/hashorb/dashboard.py tests/test_dashboard.py
+          git diff --check
+          git rm .github/workflows/dashboard-cli-correction.yml
+          git rm .github/workflows/dashboard-cli-correction-v2.yml
+          git rm .github/workflows/dashboard-cli-correction-v3.yml
+          git add src/hashorb/__main__.py src/hashorb/dashboard.py tests/test_dashboard.py pyproject.toml src/hashorb/cli.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(dashboard): preserve canonical CLI architecture"
+          git push origin HEAD:local/dashboard-tui-foundation
