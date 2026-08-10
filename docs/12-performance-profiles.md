@@ -11,11 +11,11 @@ command invocation and is completed before backend construction.
 concerns. Most operators should not need to understand every technical knob,
 while advanced operators still need a fully explicit and reproducible mode.
 
-**Plain talk:** Lite is gentle, Auto is sensible, Max uses the highest capacity
-allowed by the safe device policy, and Custom exposes the approved controls.
-Profiles choose how intensely HashOrb attempts hashes; they do not change
-which hashes are valid or the probability of success for a fixed number of
-unique hashes.
+**Plain talk:** Lite is gentle, Auto is balanced for everyday operation, Max
+uses the highest capacity allowed by the safe device policy, and Custom exposes
+the approved controls. Profiles choose how intensely HashOrb attempts hashes;
+they do not change which hashes are valid or the probability of success for a
+fixed number of unique hashes.
 
 ## Selection, Precedence, and Legacy Compatibility
 
@@ -55,7 +55,7 @@ policy, Bitcoin work construction, candidate verification, or submission.
 | Profile | Selection policy | Parent chunk | Pacing |
 | --- | --- | ---: | ---: |
 | Lite | Device 0 `cuda` if usable; otherwise sequential `native`; otherwise `python` | GPU 100,000,000; CPU 250,000 | 0.05 s |
-| Auto | Exact explicit CUDA ordinal/list; otherwise device 0 `cuda`; otherwise bounded `native-parallel`; then `native`; then `python` | GPU 500,000,000; native-parallel 5,000,000; native 1,000,000; Python 100,000 | 0 |
+| Auto | Exact explicit CUDA ordinal/list; otherwise device 0 `cuda`; otherwise bounded `native-parallel`; then `native`; then `python` | GPU 500,000,000; native-parallel 5,000,000; native 1,000,000; Python 100,000 | GPU 0.08 s; CPU 0 |
 | Max | Exact explicit CUDA ordinal/list; otherwise device 0 `cuda`; otherwise bounded `native-parallel`; then `native`; then `python` | GPU 500,000,000; native-parallel 10,000,000; native 2,000,000; Python 250,000 | 0 |
 | Custom | Exact explicit approved controls; no guessing or fallback | required | optional, default 0 |
 
@@ -66,8 +66,12 @@ Lite rejects every manual compute override. Auto and Max accept only an
 explicit CUDA device or exact device list. Several devices always require an
 explicit list; neither profile inventories and consumes all visible GPUs.
 Auto uses at most `min(logical_cpus // 2, 8)` native workers. Max uses at most
-`min(logical_cpus, 32)`. A selected backend execution failure is terminal;
-fallback occurs only while resolving availability before mining starts.
+`min(logical_cpus, 32)`. Auto's CPU fallback remains unpaced because the bounded
+worker count is already its intensity control. Auto CUDA instead keeps the same
+efficient 500-million-hash range as Max and inserts an 80 ms rest after each
+complete range. Max remains unpaced. A selected backend execution failure is
+terminal; fallback occurs only while resolving availability before mining
+starts.
 
 Custom requires an explicit backend and chunk size. `native-parallel` also
 requires workers. `cuda` requires exactly one ordinal and a validated launch
@@ -87,7 +91,7 @@ network access, and records no device name, UUID, serial number, or PCI address.
 Ordinary imports, help, docs generation, CPU-only builds, and legacy commands do
 not probe CUDA.
 
-## Lite Pacing and Accounting
+## Profile Pacing and Accounting
 
 Pacing is zero or a finite value from 0 through 60 seconds. A positive delay is
 applied only after one complete parent range and before the next. It blocks on
@@ -96,6 +100,11 @@ maximum 100 ms check quantum. Stop/runtime expiry, a replacement job, stale
 session, or connection recovery interrupts the delay. There is no delay after a
 candidate, terminal chunk limit, or observed stop, and no range mapping or hash
 accounting changes.
+
+Lite uses pacing on both its CUDA and sequential CPU choices. Auto uses pacing
+only when it resolves to CUDA or CUDA-multi; its CPU choices instead rely on the
+existing worker and chunk-size caps. Max is unpaced. Preset pacing is owned by
+the profile and cannot be manually overridden for Lite, Auto, or Max.
 
 `elapsed_ns` and weighted hashes per second remain compute-call measurements for
 backward compatibility. Profiled continuous mining additionally reports
@@ -125,14 +134,14 @@ uv run python -m hashorb compute-benchmark \
 ```
 
 Benchmark output labels the profile but remains a raw backend compute rate;
-profile pacing is not applied. This prevents a paced Lite effective rate from
-being mislabeled as kernel throughput. Continuous mining is the source of the
-effective wall-clock rate.
+profile pacing is not applied. This prevents a paced Lite or Auto effective rate
+from being mislabeled as kernel throughput. Continuous mining is the source of
+the effective wall-clock rate.
 
 ## Spark Evidence and Chosen Constants
 
-All measurements were offline; no pool command was executed. On the one-GPU
-Spark, paired runs used one warmup and five measured repetitions:
+All original tuning measurements were offline; no pool command was executed.
+On the one-GPU Spark, paired runs used one warmup and five measured repetitions:
 
 | Parent range | `cuda` median | one-device `cuda-multi` median | Difference |
 | ---: | ---: | ---: | ---: |
@@ -157,11 +166,12 @@ Lite, Auto, and Max resolved to single-device `cuda` ordinal 0 on this Spark;
 Custom accepted the explicit device-0, 256-thread, 500-million-chunk policy.
 The CUDA extension rebuilt for `sm_121`; device parity passed for all four
 launch sizes, and one-device `cuda-multi` parity passed. Actual two-device
-profile execution and scaling remain unvalidated. The established live baseline
-remains approximately 2.46 GH/s; the offline paired results do not replace it.
+profile execution and scaling remain unvalidated. The established earlier live
+baseline remains approximately 2.46 GH/s; the offline paired results do not
+replace it.
 
-The later four-profile live human gate passed with the same one-device Spark
-policy:
+Before the Auto rebalance, the four-profile live human gate passed with the same
+one-device Spark policy:
 
 | Profile | Raw compute rate | Effective wall-clock rate | Outcome |
 | --- | ---: | ---: | --- |
@@ -174,11 +184,26 @@ Every run completed once with no incomplete run, duplicate work, connection
 loss, reconnect, stale session, or command failure. Lite spent roughly 42% of
 wall time hashing and reduced its effective rate about 58.5% versus Auto.
 Auto, Max, and Custom were expectedly close because all three resolved to the
-same device, launch size, and chunk size on this one-GPU host.
+same device, launch size, chunk size, and zero pacing. That result motivated the
+Auto rebalance.
+
+A later one-hour Max live run on 2026-08-10 sustained 2.759853619 GH/s weighted
+compute rate, checked 9,931,190,860,032 hashes over 20,792 completed ranges, and
+ended with `runtime_limit_reached`. It recorded zero command failures,
+connection losses, reconnects, stale sessions, liveness warnings, or duplicate
+work.
+
+At that measured Max rate, a 500-million-hash range takes about 0.181 seconds.
+The new Auto CUDA delay is 0.08 seconds, giving a projected compute duty fraction
+of about 69.4% and a projected effective rate near 1.91 GH/s if raw CUDA
+throughput remains unchanged. These are design projections, not acceptance
+claims. A human-controlled Spark comparison of updated Lite, Auto, and Max is
+required before replacing them with measured post-change figures.
 
 ## Deferred Work
 
 Profiles are fixed for one invocation. Runtime profile switching, thermal
 feedback, fan or clock control, dashboard controls, saved profiles,
-distributed-worker profiles, automatic multi-GPU selection, actual two-device
-validation, Windows CUDA builds, and portable CUDA wheels remain deferred.
+distributed-worker profiles, CPU/GPU hybrid allocation, automatic multi-GPU
+selection, actual two-device validation, Windows CUDA builds, and portable CUDA
+wheels remain deferred.
