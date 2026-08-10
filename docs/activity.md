@@ -88,9 +88,10 @@ Validation:
 - Hosted full suite passed with 2,193 tests and 20 documented skips; Ruff, formatting, mypy, lock, package, and diff-hygiene gates passed.
 - Five-minute Spark live gate measured Lite at 1.1486 GH/s effective, Auto at 1.8854 GH/s, and Max at 2.7550 GH/s. Auto was 68.4% of Max and 1.64 times Lite.
 - All three Spark runs reached `runtime_limit_reached` with zero duplicate work, connection losses, reconnect attempts, or failed reconnects.
+- Packaging #74 and Security #25 passed on the documentation head that recorded the measured Spark results.
 
 Documentation:
 - Updated `docs/12-performance-profiles.md`, added `tasks/rebalance-auto-profile.md`, and updated this activity log with measured hardware evidence.
 
 Remaining:
-- Final Packaging and Security checks are running on the documentation-only final head before merge.
+- None in implementation or hardware acceptance. Exact-head Packaging and Security validation remains required before merge.
