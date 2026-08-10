@@ -307,12 +307,15 @@ def test_incremental_reader_rejects_malformed_complete_record(tmp_path: Path) ->
 
 def test_once_mode_renders_without_ansi_or_modifying_source(tmp_path: Path) -> None:
     path = tmp_path / "snapshot.jsonl"
-    content = "\n".join(
-        (
-            _json_record(1, "command_started", 0),
-            _json_record(2, "difficulty_received", 1, difficulty=10_000),
+    content = (
+        "\n".join(
+            (
+                _json_record(1, "command_started", 0),
+                _json_record(2, "difficulty_received", 1, difficulty=10_000),
+            )
         )
-    ) + "\n"
+        + "\n"
+    )
     path.write_text(content, encoding="utf-8")
     before = path.read_bytes()
     output = io.StringIO()
@@ -375,9 +378,12 @@ def test_installed_cli_routes_dashboard_and_delegates_existing_commands(
     monkeypatch.setattr(installed_cli, "run_dashboard", fake_dashboard)
     monkeypatch.setattr(installed_cli, "legacy_main", fake_legacy)
 
-    assert installed_cli.main(
-        ["dashboard", "--log-file", "logs/live.jsonl", "--refresh-seconds", "0.5", "--once"]
-    ) == 0
+    assert (
+        installed_cli.main(
+            ["dashboard", "--log-file", "logs/live.jsonl", "--refresh-seconds", "0.5", "--once"]
+        )
+        == 0
+    )
     assert dashboard_calls == [("logs/live.jsonl", 0.5, True)]
 
     assert installed_cli.main(["doctor"]) == 7

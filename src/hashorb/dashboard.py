@@ -113,9 +113,7 @@ class DashboardState:
         default_factory=lambda: [False for _ in range(_DEFAULT_BUCKET_COUNT)]
     )
     recent_bucket_visits: deque[int] = field(default_factory=lambda: deque(maxlen=12))
-    raw_rate_samples: deque[float] = field(
-        default_factory=lambda: deque(maxlen=_RATE_SAMPLE_LIMIT)
-    )
+    raw_rate_samples: deque[float] = field(default_factory=lambda: deque(maxlen=_RATE_SAMPLE_LIMIT))
     effective_points: deque[tuple[datetime, int]] = field(default_factory=deque)
     recent_events: deque[str] = field(default_factory=lambda: deque(maxlen=_RECENT_EVENT_LIMIT))
 
@@ -669,9 +667,7 @@ def run_dashboard(
         for record in batch.records:
             state.apply(record)
         nvidia = (
-            probe_nvidia_metrics(state.device_ordinal)
-            if state.device_ordinal is not None
-            else None
+            probe_nvidia_metrics(state.device_ordinal) if state.device_ordinal is not None else None
         )
         width = shutil.get_terminal_size(fallback=(140, 40)).columns
         destination.write(
