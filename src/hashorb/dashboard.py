@@ -112,16 +112,12 @@ class DashboardState:
     nonce_buckets: list[bool] = field(
         default_factory=lambda: [False for _ in range(_DEFAULT_BUCKET_COUNT)]
     )
-    recent_bucket_visits: deque[int] = field(
-        default_factory=lambda: deque(maxlen=12)
-    )
+    recent_bucket_visits: deque[int] = field(default_factory=lambda: deque(maxlen=12))
     raw_rate_samples: deque[float] = field(
         default_factory=lambda: deque(maxlen=_RATE_SAMPLE_LIMIT)
     )
     effective_points: deque[tuple[datetime, int]] = field(default_factory=deque)
-    recent_events: deque[str] = field(
-        default_factory=lambda: deque(maxlen=_RECENT_EVENT_LIMIT)
-    )
+    recent_events: deque[str] = field(default_factory=lambda: deque(maxlen=_RECENT_EVENT_LIMIT))
 
     def apply(self, record: DashboardRecord) -> None:
         """Apply one validated record if it belongs to the newest mining run."""
@@ -464,7 +460,11 @@ def probe_nvidia_metrics(
 ) -> NvidiaMetrics | None:
     """Read a narrow safe NVIDIA metric set without exposing hardware identity."""
 
-    if isinstance(device_ordinal, bool) or not isinstance(device_ordinal, int) or device_ordinal < 0:
+    if (
+        isinstance(device_ordinal, bool)
+        or not isinstance(device_ordinal, int)
+        or device_ordinal < 0
+    ):
         return None
     executable = shutil.which("nvidia-smi")
     if executable is None:
@@ -498,8 +498,8 @@ def probe_nvidia_metrics(
     values = [item.strip() for item in line[0].split(",")]
     if len(values) != 5:
         return None
-    parsed = tuple(_optional_metric_number(value) for value in values)
-    return NvidiaMetrics(*parsed)
+    parsed = [_optional_metric_number(value) for value in values]
+    return NvidiaMetrics(parsed[0], parsed[1], parsed[2], parsed[3], parsed[4])
 
 
 def render_dashboard(
@@ -589,10 +589,11 @@ def render_dashboard(
     telemetry = _format_nvidia(nvidia, state.device_ordinal)
     lines.append(_row(telemetry, inner_width))
     spark_width = max(28, min(84, inner_width - 33))
+    latest_raw_sample = state.raw_rate_samples[-1] if state.raw_rate_samples else None
     lines.append(
         _row(
             f"Raw range-rate history  {_sparkline(tuple(state.raw_rate_samples), spark_width)}  "
-            f"latest {_format_rate(state.raw_rate_samples[-1] if state.raw_rate_samples else None)}",
+            f"latest {_format_rate(latest_raw_sample)}",
             inner_width,
         )
     )
@@ -601,7 +602,13 @@ def render_dashboard(
     lines.append(_rule(f"NONCE SPACE EXPLORATION — {strategy}", inner_width))
     map_width = max(32, min(_DEFAULT_BUCKET_COUNT, inner_width - 30))
     nonce_map = _render_nonce_map(state, map_width, color=color)
-    lines.append(_row(f"0x00000000  {nonce_map}  0xffffffff", inner_width, already_colored=color))
+    lines.append(
+        _row(
+            f"0x00000000  {nonce_map}  0xffffffff",
+            inner_width,
+            already_colored=color,
+        )
+    )
     completed_buckets = sum(1 for item in state.nonce_buckets if item)
     lines.append(
         _row(
@@ -628,7 +635,8 @@ def render_dashboard(
     source = source_label if source_label is not None else "structured JSONL"
     lines.append(
         _row(
-            f"Ctrl-C exit  |  source {source}  |  display only: mining/profile/backend controls deferred",
+            f"Ctrl-C exit  |  source {source}  |  display only: "
+            "mining/profile/backend controls deferred",
             inner_width,
         )
     )
@@ -972,8 +980,14 @@ def _strategy_explanation(strategy: str) -> str:
     if strategy == "sequential":
         return "Sequential: contiguous parent ranges sweep across the nonce space from low to high."
     if strategy == "orbiting-bit":
-        return "Orbiting-bit: observed parent ranges jump through bit-reversal order; visited buckets scatter across the space."
-    return f"{strategy}: visualization reflects observed parent ranges only; no strategy internals are inspected."
+        return (
+            "Orbiting-bit: observed parent ranges jump through bit-reversal order; "
+            "visited buckets scatter across the space."
+        )
+    return (
+        f"{strategy}: visualization reflects observed parent ranges only; "
+        "no strategy internals are inspected."
+    )
 
 
 def _top_border(title: str, width: int) -> str:
