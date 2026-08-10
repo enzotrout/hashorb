@@ -253,6 +253,12 @@ class DashboardState:
             self._remember(record, "stop requested")
 
     @property
+    def is_terminal(self) -> bool:
+        """Return whether the active run has reached a terminal event."""
+
+        return self.completion_outcome is not None or self.status == "failed"
+
+    @property
     def raw_hashes_per_second(self) -> float | None:
         """Return weighted compute-only throughput for the active run."""
 
@@ -602,7 +608,13 @@ def render_dashboard(
     )
 
     lines.append(_rule("DEVICE / RATE", inner_width))
-    telemetry = _format_nvidia(nvidia, state.device_ordinal)
+    if state.is_terminal and state.device_ordinal is not None:
+        telemetry = (
+            f"CUDA device {state.device_ordinal}  |  "
+            "GPU telemetry omitted for terminal run (not historical)"
+        )
+    else:
+        telemetry = _format_nvidia(nvidia, state.device_ordinal)
     lines.append(_row(telemetry, inner_width))
     spark_width = max(28, min(84, inner_width - 33))
     latest_raw_sample = state.raw_rate_samples[-1] if state.raw_rate_samples else None
@@ -685,7 +697,9 @@ def run_dashboard(
         for record in batch.records:
             state.apply(record)
         nvidia = (
-            probe_nvidia_metrics(state.device_ordinal) if state.device_ordinal is not None else None
+            probe_nvidia_metrics(state.device_ordinal)
+            if state.device_ordinal is not None and not state.is_terminal
+            else None
         )
         width = shutil.get_terminal_size(fallback=(140, 40)).columns
         destination.write(
@@ -715,7 +729,7 @@ def run_dashboard(
                 state.apply(record)
             nvidia = (
                 probe_nvidia_metrics(state.device_ordinal)
-                if state.device_ordinal is not None
+                if state.device_ordinal is not None and not state.is_terminal
                 else None
             )
             width = shutil.get_terminal_size(fallback=(140, 40)).columns

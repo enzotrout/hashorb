@@ -378,6 +378,46 @@ def test_completed_snapshot_uses_terminal_rate_and_freezes_elapsed_clocks() -> N
     assert "Job age 00:00:09" in rendered
 
 
+def test_completed_once_snapshot_does_not_probe_current_gpu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "completed.jsonl"
+    content = (
+        "\n".join(
+            (
+                _json_record(1, "command_started", 0),
+                _json_record(
+                    2,
+                    "compute_profile_resolved",
+                    1,
+                    requested_profile="max",
+                    effective_profile="max",
+                    effective_backend="cuda",
+                    device_ordinal=0,
+                ),
+                _json_record(
+                    3,
+                    "command_completed",
+                    2,
+                    outcome="runtime_limit_reached",
+                    effective_hashes_per_second=2_750_000_000.0,
+                ),
+            )
+        )
+        + "\n"
+    )
+    path.write_text(content, encoding="utf-8")
+
+    def unexpected_probe(device_ordinal: int) -> None:
+        raise AssertionError(f"unexpected NVIDIA probe for device {device_ordinal}")
+
+    monkeypatch.setattr(dashboard_module, "probe_nvidia_metrics", unexpected_probe)
+    output = io.StringIO()
+
+    assert run_dashboard(path, once=True, output=output) == 0
+    assert "GPU telemetry omitted for terminal run (not historical)" in output.getvalue()
+
+
 def test_dashboard_parser_rejects_nonfinite_json_numbers() -> None:
     record = _json_record(1, "command_started", 0)
     malformed = record[:-1] + ',"unsafe_metric":NaN}'
