@@ -21,6 +21,7 @@ _LITE_GPU_CHUNK_SIZE = 100_000_000
 _LITE_CPU_CHUNK_SIZE = 250_000
 _LITE_DELAY_SECONDS = 0.05
 _AUTO_GPU_CHUNK_SIZE = 500_000_000
+_AUTO_GPU_DELAY_SECONDS = 0.08
 _AUTO_PARALLEL_CHUNK_SIZE = 5_000_000
 _AUTO_SEQUENTIAL_CHUNK_SIZE = 1_000_000
 _AUTO_PYTHON_CHUNK_SIZE = 100_000
@@ -256,7 +257,7 @@ def _resolve_automatic(
             cuda_devices=explicit_devices,
             threads=DEFAULT_CUDA_THREADS_PER_BLOCK,
             chunk_size=_AUTO_GPU_CHUNK_SIZE if profile == "auto" else _MAX_GPU_CHUNK_SIZE,
-            delay=0.0,
+            delay=_AUTO_GPU_DELAY_SECONDS if profile == "auto" else 0.0,
             reason=f"{reason_prefix}ExplicitCudaMulti",
         )
     if explicit_device is not None:
@@ -273,7 +274,7 @@ def _resolve_automatic(
             cuda_device=0,
             threads=DEFAULT_CUDA_THREADS_PER_BLOCK,
             chunk_size=_AUTO_GPU_CHUNK_SIZE if profile == "auto" else _MAX_GPU_CHUNK_SIZE,
-            delay=0.0,
+            delay=_AUTO_GPU_DELAY_SECONDS if profile == "auto" else 0.0,
             reason=f"{reason_prefix}CudaDevice",
         )
     if capabilities.native_available():
@@ -391,7 +392,7 @@ def _require_cuda(
         cuda_device=ordinal,
         threads=DEFAULT_CUDA_THREADS_PER_BLOCK,
         chunk_size=_AUTO_GPU_CHUNK_SIZE if profile == "auto" else _MAX_GPU_CHUNK_SIZE,
-        delay=0.0,
+        delay=_AUTO_GPU_DELAY_SECONDS if profile == "auto" else 0.0,
         reason=reason,
     )
 
