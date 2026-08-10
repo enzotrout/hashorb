@@ -96,6 +96,8 @@ The dashboard deliberately shows two rates:
 
 This distinction makes profile pacing visible. On a paced CUDA profile such as Auto, the CUDA kernel can remain near its normal raw rate while effective throughput is lower because deliberate inter-range rest time is included in wall time.
 
+For a completed profiled run, the dashboard uses the terminal `effective_hashes_per_second` recorded by HashOrb when that field is present. Completed-run uptime and job age also freeze at the terminal event timestamp. An archived `--once` snapshot therefore remains stable instead of continuing to age against the current clock.
+
 ## NVIDIA Telemetry
 
 When the active backend exposes a CUDA ordinal and `nvidia-smi` is installed, the dashboard may perform a read-only local query for exactly:
