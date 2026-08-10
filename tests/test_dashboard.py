@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-import hashorb.cli as installed_cli
+import hashorb.__main__ as hashorb_cli
 import hashorb.dashboard as dashboard_module
 from hashorb.dashboard import (
     DashboardLogError,
@@ -361,33 +361,24 @@ def test_nvidia_probe_requests_only_safe_metrics(
     assert "pci" not in command
 
 
-def test_installed_cli_routes_dashboard_and_delegates_existing_commands(
+def test_canonical_cli_routes_dashboard_without_changing_console_entrypoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dashboard_calls: list[tuple[str, float, bool]] = []
-    legacy_calls: list[list[str]] = []
 
     def fake_dashboard(log_file: str, *, refresh_seconds: float, once: bool) -> int:
         dashboard_calls.append((log_file, refresh_seconds, once))
         return 0
 
-    def fake_legacy(arguments: list[str]) -> int:
-        legacy_calls.append(arguments)
-        return 7
-
-    monkeypatch.setattr(installed_cli, "run_dashboard", fake_dashboard)
-    monkeypatch.setattr(installed_cli, "legacy_main", fake_legacy)
+    monkeypatch.setattr(hashorb_cli, "run_dashboard", fake_dashboard)
 
     assert (
-        installed_cli.main(
+        hashorb_cli.main(
             ["dashboard", "--log-file", "logs/live.jsonl", "--refresh-seconds", "0.5", "--once"]
         )
         == 0
     )
     assert dashboard_calls == [("logs/live.jsonl", 0.5, True)]
-
-    assert installed_cli.main(["doctor"]) == 7
-    assert legacy_calls == [["doctor"]]
 
 
 @pytest.mark.parametrize(
@@ -403,11 +394,11 @@ def test_installed_cli_routes_dashboard_and_delegates_existing_commands(
         ["dashboard", "--log-file", "a", "--unknown", "x"],
     ],
 )
-def test_installed_cli_rejects_invalid_dashboard_arguments(
+def test_canonical_cli_rejects_invalid_dashboard_arguments(
     arguments: list[str],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert installed_cli.main(arguments) == 2
+    assert hashorb_cli.main(arguments) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Usage: hashorb dashboard" in captured.err

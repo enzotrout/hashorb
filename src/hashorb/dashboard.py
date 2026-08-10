@@ -8,7 +8,7 @@ import os
 import re
 import shutil
 import stat
-import subprocess
+import subprocess  # nosec B404 - fixed local nvidia-smi probe only
 import sys
 import time
 from collections import deque
@@ -477,7 +477,7 @@ def probe_nvidia_metrics(
         result = (
             runner(args)
             if runner is not None
-            else subprocess.run(
+            else subprocess.run(  # nosec B603 - explicit executable/args, no shell
                 args,
                 check=False,
                 capture_output=True,

@@ -43,6 +43,7 @@ from hashorb.config import (
     parse_cuda_devices,
     resolve_compute_profile,
 )
+from hashorb.dashboard import DashboardLogError, run_dashboard
 from hashorb.diagnostics import build_doctor_report, format_doctor_report
 from hashorb.mining import (
     MAX_LIVENESS_SECONDS,
@@ -129,9 +130,11 @@ _KNOWN_LOG_COMMANDS = (
 _USAGE = (
     "Usage: hashorb "
     "{bitcoin-core-check,solo-hash,solo-mine,stratum-handshake,stratum-observe,stratum-mine-once,"
-    "stratum-mine-chunks,stratum-mine,logs-summary,compute-benchmark,profile-info,doctor} "
+    "stratum-mine-chunks,stratum-mine,logs-summary,dashboard,compute-benchmark,"
+    "profile-info,doctor} "
     "[options]"
 )
+_DASHBOARD_USAGE = "Usage: hashorb dashboard --log-file PATH [--refresh-seconds SECONDS] [--once]"
 
 type _PythonSignalHandler = Callable[[int, FrameType | None], object]
 type _PreviousSignalHandler = int | _PythonSignalHandler | None
@@ -568,6 +571,56 @@ class _ContinuousEventObserver(_ChunkedEventObserver):
         )
 
 
+def _parse_dashboard_command_arguments(
+    arguments: Sequence[str],
+) -> tuple[str, float, bool]:
+    """Parse the read-only dashboard source and refresh policy."""
+
+    log_file: str | None = None
+    refresh_seconds = 1.0
+    refresh_seen = False
+    once = False
+    index = 0
+    while index < len(arguments):
+        option = arguments[index]
+        if option == "--once":
+            if once:
+                raise ValueError("--once may be supplied only once")
+            once = True
+            index += 1
+            continue
+        if option not in {"--log-file", "--refresh-seconds"}:
+            raise ValueError("unsupported dashboard argument")
+        if index + 1 >= len(arguments) or arguments[index + 1].startswith("--"):
+            raise ValueError(f"{option} requires a value")
+        value = arguments[index + 1]
+        if option == "--log-file":
+            if log_file is not None:
+                raise ValueError("--log-file may be supplied only once")
+            if not value.strip():
+                raise ValueError("--log-file requires a nonblank path")
+            log_file = value
+        else:
+            if refresh_seen:
+                raise ValueError("--refresh-seconds may be supplied only once")
+            try:
+                parsed = Decimal(value)
+            except InvalidOperation as exc:
+                raise ValueError("--refresh-seconds must be between 0.1 and 60") from exc
+            if (
+                value != value.strip()
+                or not parsed.is_finite()
+                or not Decimal("0.1") <= parsed <= Decimal("60")
+            ):
+                raise ValueError("--refresh-seconds must be between 0.1 and 60")
+            refresh_seconds = float(parsed)
+            refresh_seen = True
+        index += 2
+    if log_file is None:
+        raise ValueError("--log-file is required")
+    return log_file, refresh_seconds, once
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected HashOrb command and return its process status."""
 
@@ -664,6 +717,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(_USAGE, file=sys.stderr)
             return 2
         return _run_log_summary(summary_log_file)
+    if arguments and arguments[0] == "dashboard":
+        if arguments[1:] in (["--help"], ["-h"]):
+            print(_DASHBOARD_USAGE)
+            print("Read-only live view of an existing sanitized HashOrb JSONL mining log.")
+            print("Ctrl-C exits live mode; --once renders one deterministic snapshot.")
+            return 0
+        try:
+            dashboard_log_file, refresh_seconds, once = _parse_dashboard_command_arguments(
+                arguments[1:]
+            )
+        except ValueError as exc:
+            print(f"Argument error: {exc}", file=sys.stderr)
+            print(_DASHBOARD_USAGE, file=sys.stderr)
+            return 2
+        try:
+            return run_dashboard(
+                dashboard_log_file,
+                refresh_seconds=refresh_seconds,
+                once=once,
+            )
+        except DashboardLogError as exc:
+            print(f"Dashboard failed: {exc}", file=sys.stderr)
+            return 1
     if arguments and arguments[0] == "stratum-handshake":
         try:
             log_file = _parse_log_file(arguments[1:])

@@ -23,7 +23,7 @@ Homepage = "https://hashorb.com"
 Repository = "https://github.com/enzotrout/hashorb"
 
 [project.scripts]
-hashorb = "hashorb.cli:main"
+hashorb = "hashorb.__main__:main"
 
 [dependency-groups]
 dev = [
