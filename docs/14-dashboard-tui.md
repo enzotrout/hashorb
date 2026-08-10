@@ -63,7 +63,7 @@ The initial dashboard includes:
 - duplicate work and liveness/stale-session counters
 - share candidates and accepted/rejected submission counts
 - recent notable events
-- optional safe NVIDIA temperature, power, utilization, and memory readings
+- optional safe NVIDIA temperature, power, utilization, and memory readings while a run is active
 
 No payout address, username, password, raw work, complete extra nonce, wallet material, arbitrary exception text, GPU UUID, serial number, PCI address, or device path is displayed.
 
@@ -100,7 +100,7 @@ For a completed profiled run, the dashboard uses the terminal `effective_hashes_
 
 ## NVIDIA Telemetry
 
-When the active backend exposes a CUDA ordinal and `nvidia-smi` is installed, the dashboard may perform a read-only local query for exactly:
+When an active run exposes a CUDA ordinal and `nvidia-smi` is installed, the dashboard may perform a read-only local query for exactly:
 
 - GPU temperature
 - power draw
@@ -109,6 +109,8 @@ When the active backend exposes a CUDA ordinal and `nvidia-smi` is installed, th
 - used memory
 
 Telemetry failure is informational only. HashOrb does not display raw `nvidia-smi` errors and does not query hardware identity fields such as UUID, serial number, PCI address, or device path.
+
+GPU telemetry is intentionally live-only. Once a run reaches a terminal completion or failure, the dashboard stops probing `nvidia-smi` and reports that GPU telemetry was omitted because current host readings are not historical measurements of the completed run.
 
 ## Log-Following Behavior
 
