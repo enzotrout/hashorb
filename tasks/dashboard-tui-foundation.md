@@ -68,6 +68,18 @@ Hosted Packaging and Security workflows must pass for the exact PR head before m
 
 A human Spark gate must also render `--once` from a real mining log and run the live dashboard against an actively appended mining log before merge.
 
+Spark human acceptance completed on 2026-08-10:
+
+- Archived one-hour Max log rendered correctly with 9.93 T hashes, approximately 2.759 GH/s effective, frozen 01:00:00 uptime, terminal outcome, historical NVIDIA telemetry omitted, and a coherent final sequential nonce-space projection.
+- A three-minute live Auto run rendered in-place while mining. The dashboard showed approximately 1.879 GH/s effective versus 2.758 GH/s raw, live GPU temperature/power/utilization, advancing/resetting nonce-space buckets as work variants changed, recent events, and live run counters.
+- The corresponding Auto mining run completed with `runtime_limit_reached`, 339,212,481,792 hashes, 710 chunks, zero duplicate work, zero reconnect attempts, approximately 2.758 GH/s raw, and approximately 1.884 GH/s effective.
+
 ## Authorization
 
 This task is authorized to create and use `local/dashboard-tui-foundation`, commit and push the bounded implementation, update documentation and tests, and open a pull request. Merge still requires explicit user authorization after review, hosted validation, and the Spark human gate.
+
+## Task Report
+
+Status: READY FOR REVIEW
+
+Implementation, semantic review, archived-log acceptance, and live Spark acceptance are complete. Merge still requires explicit user authorization after the final exact-head hosted Packaging and Security workflows pass.
