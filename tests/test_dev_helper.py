@@ -358,3 +358,11 @@ def test_review_normalizes_paths_and_only_inspects_names(
     commands = [command for command, _cwd in runner.calls]
     assert all(command[:2] != ("git", "show") for command in commands)
     assert all("cat" not in command for command in commands)
+
+
+def test_review_flags_sensitive_directory_components() -> None:
+    assert DevHelper._is_suspicious_filename("secrets/config.json")
+    assert DevHelper._is_suspicious_filename(r"credentials\service.json")
+    assert DevHelper._is_suspicious_filename("wallet/config.json")
+    assert not DevHelper._is_suspicious_filename("docs/development.md")
+    assert not DevHelper._is_suspicious_filename("examples/.env.example")
