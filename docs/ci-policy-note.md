@@ -1,0 +1,1 @@
+HashOrb hosted CI is PR-gated. See AGENTS.md and tasks/reduce-actions-usage.md.
