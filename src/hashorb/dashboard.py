@@ -18,6 +18,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Never, TextIO, cast
 
+from hashorb.mining.target import (
+    TargetError,
+    decode_compact_target,
+    difficulty_to_share_target,
+)
+
 _NONCE_LIMIT = 1 << 32
 _DEFAULT_BUCKET_COUNT = 64
 _RECENT_EVENT_LIMIT = 8
@@ -25,6 +31,8 @@ _RATE_SAMPLE_LIMIT = 80
 _EFFECTIVE_WINDOW_SECONDS = 300.0
 _MIN_RENDER_WIDTH = 88
 _EVENT_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_BEST_HASH = re.compile(r"^[0-9a-f]{64}$")
+_DIFFICULTY_ONE_TARGET = difficulty_to_share_target(1)
 _LEVELS = frozenset({"INFO", "WARNING", "ERROR"})
 _MINING_COMMANDS = frozenset({"stratum-mine", "stratum-mine-chunks", "stratum-mine-once"})
 _ENVELOPE_FIELDS = frozenset(
@@ -86,8 +94,12 @@ class DashboardState:
     worker_count: int | None = None
     strategy_name: str | None = None
     endpoint: str | None = None
-    difficulty: float | None = None
+    difficulty: int | float | None = None
     network_bits: str | None = None
+    best_hash: str | None = None
+    best_hash_value: int | None = None
+    share_target_hit: bool = False
+    network_target_hit: bool = False
     extra_nonce_2_size: int | None = None
     current_job_id: str | None = None
     current_job_received_at: datetime | None = None
@@ -150,12 +162,22 @@ class DashboardState:
             self.status = "mining"
             self._remember(record, f"authorized {self.endpoint}")
         elif event == "difficulty_received":
-            self.difficulty = _required_number(fields, "difficulty")
-            self._remember(record, f"difficulty {self.difficulty:g}")
+            difficulty = _required_exact_number(fields, "difficulty")
+            try:
+                difficulty_to_share_target(difficulty)
+            except TargetError as exc:
+                raise DashboardLogError("dashboard difficulty is invalid") from exc
+            self.difficulty = difficulty
+            self._remember(record, f"difficulty {difficulty:g}")
         elif event == "mining_job_received":
             self.jobs_received += 1
             job_id = _required_string(fields, "job_id")
-            self.network_bits = _required_string(fields, "network_bits")
+            network_bits = _required_string(fields, "network_bits")
+            try:
+                decode_compact_target(network_bits)
+            except TargetError as exc:
+                raise DashboardLogError("dashboard network bits are invalid") from exc
+            self.network_bits = network_bits
             if self.current_job_id is None:
                 self.current_job_id = job_id
                 self.current_job_received_at = record.timestamp
@@ -224,9 +246,28 @@ class DashboardState:
             self.stale_sessions += 1
             self.status = "recovering"
             self._remember(record, "session stale")
+        elif event == "best_hash_improved":
+            best_hash = fields.get("best_hash")
+            if not isinstance(best_hash, str) or _BEST_HASH.fullmatch(best_hash) is None:
+                raise DashboardLogError("dashboard Best Hash is invalid")
+            best_hash_value = int(best_hash, 16)
+            if self.best_hash_value is not None and best_hash_value >= self.best_hash_value:
+                raise DashboardLogError("dashboard Best Hash improvement is not strict")
+            self.best_hash = best_hash
+            self.best_hash_value = best_hash_value
+            self._remember(record, f"best hash improved {_abbreviate(best_hash)}")
         elif event == "share_candidate_found":
+            meets_share = _required_boolean(fields, "meets_share_target")
+            meets_network = _required_boolean(fields, "meets_network_target")
+            if not meets_share and not meets_network:
+                raise DashboardLogError("dashboard share candidate has no target hit")
             self.candidates += 1
-            self._remember(record, "share candidate found")
+            self.share_target_hit = self.share_target_hit or meets_share
+            self.network_target_hit = self.network_target_hit or meets_network
+            if meets_network:
+                self._remember(record, "network target hit")
+            else:
+                self._remember(record, "share target hit")
         elif event == "share_submission_completed":
             accepted = _required_boolean(fields, "accepted")
             self.submissions += 1
@@ -257,6 +298,38 @@ class DashboardState:
         """Return whether the active run has reached a terminal event."""
 
         return self.completion_outcome is not None or self.status == "failed"
+
+    @property
+    def network_target_value(self) -> int | None:
+        """Return the current decoded network target when available."""
+
+        if self.network_bits is None:
+            return None
+        try:
+            return decode_compact_target(self.network_bits)
+        except TargetError as exc:
+            raise DashboardLogError("dashboard network bits are invalid") from exc
+
+    @property
+    def share_target_value(self) -> int | None:
+        """Return the current Stratum share target when difficulty is known."""
+
+        if self.difficulty is None:
+            return None
+        try:
+            return difficulty_to_share_target(self.difficulty)
+        except TargetError as exc:
+            raise DashboardLogError("dashboard difficulty is invalid") from exc
+
+    @property
+    def best_difficulty(self) -> float | None:
+        """Return difficulty represented by the run-wide lowest observed hash."""
+
+        if self.best_hash_value is None:
+            return None
+        if self.best_hash_value == 0:
+            return math.inf
+        return _DIFFICULTY_ONE_TARGET / self.best_hash_value
 
     @property
     def raw_hashes_per_second(self) -> float | None:
@@ -320,6 +393,10 @@ class DashboardState:
         self.endpoint = None
         self.difficulty = None
         self.network_bits = None
+        self.best_hash = None
+        self.best_hash_value = None
+        self.share_target_hit = False
+        self.network_target_hit = False
         self.extra_nonce_2_size = None
         self.current_job_id = None
         self.current_job_received_at = None
@@ -607,6 +684,46 @@ def render_dashboard(
         )
     )
 
+    lines.append(_rule("HASH QUALITY / TARGET", inner_width))
+    lines.append(
+        _row(
+            f"Best Hash       {_format_best_hash(state.best_hash)}",
+            inner_width,
+        )
+    )
+    lines.append(
+        _row(
+            f"Best Difficulty {_format_best_difficulty(state.best_difficulty)}",
+            inner_width,
+        )
+    )
+    lines.append(
+        _row(
+            f"Network Target  {_format_target(state.network_target_value)}",
+            inner_width,
+        )
+    )
+    lines.append(
+        _row(
+            f"Share Target    {_format_target(state.share_target_value)}",
+            inner_width,
+        )
+    )
+    lines.append(
+        _row(
+            "  |  ".join(
+                (
+                    f"Share Target {'HIT' if state.share_target_hit else 'NOT HIT'}",
+                    f"Network Target {'HIT' if state.network_target_hit else 'NOT FOUND'}",
+                    f"Shares Submitted {state.submissions}",
+                    f"Accepted {state.accepted_submissions}",
+                    f"Rejected {state.rejected_submissions}",
+                )
+            ),
+            inner_width,
+        )
+    )
+
     lines.append(_rule("DEVICE / RATE", inner_width))
     if state.is_terminal and state.device_ordinal is not None:
         telemetry = (
@@ -850,6 +967,18 @@ def _required_number(fields: Mapping[str, JsonValue], name: str) -> float:
     return value
 
 
+def _required_exact_number(
+    fields: Mapping[str, JsonValue],
+    name: str,
+) -> int | float:
+    value = fields.get(name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise DashboardLogError("dashboard event field is invalid")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise DashboardLogError("dashboard event field is invalid")
+    return value
+
+
 def _optional_number(fields: Mapping[str, JsonValue], name: str) -> float | None:
     value = fields.get(name)
     if value is None:
@@ -955,12 +1084,30 @@ def _format_duration(value: float | None) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def _format_difficulty(value: float | None) -> str:
+def _format_difficulty(value: int | float | None) -> str:
     if value is None:
         return "n/a"
+    if isinstance(value, int):
+        return f"{value:,}"
     if value.is_integer():
         return f"{int(value):,}"
     return f"{value:,.4g}"
+
+
+def _format_best_hash(value: str | None) -> str:
+    return "waiting for completed range" if value is None else value
+
+
+def _format_target(value: int | None) -> str:
+    return "n/a" if value is None else f"0x{value:064x}"
+
+
+def _format_best_difficulty(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    if math.isinf(value):
+        return "infinite"
+    return f"{value:,.6g}"
 
 
 def _format_range(value: tuple[int, int] | None) -> str:
