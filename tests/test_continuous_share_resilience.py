@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from test_continuous_mining import Harness, run_with_harness
 
 from hashorb.mining import (
     ContinuousMiningOutcome,
@@ -12,7 +13,6 @@ from hashorb.mining import (
 )
 from hashorb.network.stratum.client import StratumRequestError
 from hashorb.network.stratum.messages import StratumError
-from test_continuous_mining import Harness, run_with_harness
 
 
 class PoolRejectingHarness(Harness):
