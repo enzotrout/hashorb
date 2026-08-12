@@ -39,13 +39,22 @@ def digest_for_nonce(nonce: int) -> bytes:
     return hash_block_header(_PREFIX + nonce.to_bytes(4, byteorder="little", signed=False))
 
 
+def best_nonce_for_range(start_nonce: int, stop_nonce: int) -> int:
+    """Return the Python-reference lowest numerical hash nonce for one small range."""
+
+    return min(
+        range(start_nonce, stop_nonce),
+        key=lambda nonce: (block_hash_to_int(digest_for_nonce(nonce)), nonce),
+    )
+
+
 def test_native_extension_exhausts_exact_range_without_mutating_inputs() -> None:
     prefix_before = bytes(_PREFIX)
     share_before = bytes(_MIN_TARGET)
 
     result = native_search(0, 2)
 
-    assert result == (None, None, False, False, 2)
+    assert result == (None, None, False, False, 2, best_nonce_for_range(0, 2))
     assert _PREFIX == prefix_before
     assert _MIN_TARGET == share_before
 
@@ -70,7 +79,7 @@ def test_native_extension_returns_raw_python_reference_digest_and_flags(
         network_target=network_target,
     )
 
-    assert result == (0, digest_for_nonce(0), *expected_flags, 1)
+    assert result == (0, digest_for_nonce(0), *expected_flags, 1, 0)
 
 
 def test_native_extension_stops_at_first_record_low_candidate() -> None:
@@ -86,6 +95,7 @@ def test_native_extension_stops_at_first_record_low_candidate() -> None:
         True,
         False,
         3,
+        2,
     )
 
 
@@ -103,6 +113,7 @@ def test_native_extension_supports_range_ending_at_nonce_limit() -> None:
         False,
         True,
         2,
+        final_nonce,
     )
 
 
