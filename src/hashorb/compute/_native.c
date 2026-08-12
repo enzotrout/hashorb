@@ -196,6 +196,20 @@ static int digest_meets_target(const uint8_t digest[DIGEST_LENGTH],
     return 1;
 }
 
+static int digest_less_than(const uint8_t left[DIGEST_LENGTH],
+                            const uint8_t right[DIGEST_LENGTH]) {
+    for (size_t offset = DIGEST_LENGTH; offset > 0; --offset) {
+        const size_t index = offset - 1;
+        if (left[index] < right[index]) {
+            return 1;
+        }
+        if (left[index] > right[index]) {
+            return 0;
+        }
+    }
+    return 0;
+}
+
 static int target_is_nonzero(const uint8_t target[TARGET_LENGTH]) {
     uint8_t combined = 0;
 
@@ -222,30 +236,34 @@ static int exact_unsigned_integer(PyObject *value, uint64_t *result) {
 
 static PyObject *build_search_result(int found, uint64_t nonce, const uint8_t *digest,
                                      int meets_share, int meets_network,
-                                     uint64_t hashes_checked) {
+                                     uint64_t hashes_checked, uint64_t best_nonce) {
     PyObject *nonce_value = found ? PyLong_FromUnsignedLongLong(nonce) : Py_NewRef(Py_None);
     PyObject *digest_value =
         found ? PyBytes_FromStringAndSize((const char *)digest, DIGEST_LENGTH) : Py_NewRef(Py_None);
     PyObject *share_value = PyBool_FromLong(meets_share);
     PyObject *network_value = PyBool_FromLong(meets_network);
     PyObject *count_value = PyLong_FromUnsignedLongLong(hashes_checked);
+    PyObject *best_nonce_value = PyLong_FromUnsignedLongLong(best_nonce);
     PyObject *result;
 
     if (nonce_value == NULL || digest_value == NULL || share_value == NULL ||
-        network_value == NULL || count_value == NULL) {
+        network_value == NULL || count_value == NULL || best_nonce_value == NULL) {
         Py_XDECREF(nonce_value);
         Py_XDECREF(digest_value);
         Py_XDECREF(share_value);
         Py_XDECREF(network_value);
         Py_XDECREF(count_value);
+        Py_XDECREF(best_nonce_value);
         return NULL;
     }
-    result = PyTuple_Pack(5, nonce_value, digest_value, share_value, network_value, count_value);
+    result = PyTuple_Pack(6, nonce_value, digest_value, share_value, network_value,
+                          count_value, best_nonce_value);
     Py_DECREF(nonce_value);
     Py_DECREF(digest_value);
     Py_DECREF(share_value);
     Py_DECREF(network_value);
     Py_DECREF(count_value);
+    Py_DECREF(best_nonce_value);
     return result;
 }
 
@@ -264,12 +282,15 @@ static PyObject *search_nonce_range(PyObject *self, PyObject *arguments) {
     uint64_t start_nonce;
     uint64_t stop_nonce;
     uint64_t matched_nonce = 0;
+    uint64_t best_nonce = 0;
     uint64_t hashes_checked = 0;
     uint8_t header[HEADER_LENGTH];
     uint8_t digest[DIGEST_LENGTH];
+    uint8_t best_digest[DIGEST_LENGTH];
     uint8_t share_target_copy[TARGET_LENGTH];
     uint8_t network_target_copy[TARGET_LENGTH];
     int found = 0;
+    int has_best = 0;
     int meets_share = 0;
     int meets_network = 0;
 
@@ -323,6 +344,11 @@ static PyObject *search_nonce_range(PyObject *self, PyObject *arguments) {
         header[79] = (uint8_t)(nonce >> 24U);
         double_sha256(header, digest);
         ++hashes_checked;
+        if (!has_best || digest_less_than(digest, best_digest)) {
+            memcpy(best_digest, digest, DIGEST_LENGTH);
+            best_nonce = nonce;
+            has_best = 1;
+        }
         meets_share = digest_meets_target(digest, share_target_copy);
         meets_network = digest_meets_target(digest, network_target_copy);
         if (meets_share || meets_network) {
@@ -334,7 +360,7 @@ static PyObject *search_nonce_range(PyObject *self, PyObject *arguments) {
     Py_END_ALLOW_THREADS
 
     return build_search_result(found, matched_nonce, digest, meets_share, meets_network,
-                               hashes_checked);
+                               hashes_checked, best_nonce);
 }
 
 PyDoc_STRVAR(search_nonce_range_doc,
