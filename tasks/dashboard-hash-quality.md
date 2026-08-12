@@ -101,6 +101,123 @@ Hardware gates before merge:
 3. DGX Spark A/B benchmark compares Max CUDA throughput before and after Best Hash tracking. Any material regression requires redesign rather than acceptance by default.
 4. DGX Spark live dashboard confirms Best Hash, targets, share counters, and target indicators without display corruption.
 
+
+## 2026-08-12 validation status
+
+### CUDA Best Hash performance
+
+Post-change DGX Spark benchmark using the same 500,000,000-hash deterministic range,
+2 warmups, and 10 measured repetitions:
+
+```text
+Median elapsed time: 181771309 ns
+Minimum elapsed time: 178288433 ns
+Maximum elapsed time: 187577586 ns
+Median hashes per second: 2750710801.24
+Minimum hashes per second: 2665564000.00
+Maximum hashes per second: 2804444000.00
+Result: range exhausted
+```
+
+Compared with the pre-change median of `2788097132.82 H/s`, the measured median
+regression is approximately **1.34%**, inside the accepted <=3% gate.
+
+This comparison uses the original pre-change baseline recorded in this task. A separate
+isolated neutral-launch-bound A/B worktree comparison was not performed and must not be
+reported as having been performed.
+
+### Local repository validation
+
+DGX Spark local validation on branch `local/dashboard-hash-quality`:
+
+```text
+Full pytest suite: 2241 passed, 22 skipped
+CUDA hardware suite: 15 passed
+Security regression contracts: 164 passed
+Ruff: passed
+Ruff format check: passed
+mypy: passed
+uv lock check: passed
+CPU source/wheel build: passed
+Distribution verification: passed
+Installed distribution smoke: passed
+Source security audit: passed
+Artifact security audit: passed
+pip-audit: no known vulnerabilities
+zizmor: no workflow findings
+git diff --check: passed
+```
+
+The 22 full-suite skips are the expected opt-in isolated regtest gate, CUDA hardware
+tests that are executed separately with the hardware environment enabled, multi-CUDA
+tests requiring at least two CUDA devices, and the Windows-only PowerShell installer
+test.
+
+Hosted GitHub Actions validation is **unavailable / not run** because the repository
+owner's hosted Actions billing/quota is currently unavailable. No hosted CI pass is
+claimed.
+
+### DGX Spark live dashboard acceptance
+
+A 180-second live Stratum mining run against `stratum.ckpool.org:3333` using profile
+`auto`, backend `cuda`, device `0`, and sequential search completed with:
+
+```text
+Result: runtime_limit_reached
+Chunks completed: 698
+Jobs used: 9
+Job replacements: 8
+Work variants used: 82
+Hashes checked: 333622547200
+Raw hashes per second: 2694450002.71
+Effective hashes per wall-clock second: 1852253758.39
+Candidates found: 0
+Submissions performed: 0
+Reconnect attempts: 0
+```
+
+The terminal dashboard rendered without corruption and showed:
+
+- run-wide canonical Best Hash
+- Best Difficulty
+- full Network Target derived from `network_bits`
+- full Share Target derived from Stratum difficulty
+- Share Target `NOT HIT`
+- Network Target `NOT FOUND`
+- submitted / accepted / rejected share counts
+- nonce-space visualization
+- rate history and CUDA device state
+
+The run emitted **12** `best_hash_improved` events. The first observed values included:
+
+```text
+00000003219e8506fcff0f5e33d20fb66c78b061fb4cc6ad37646f2eef5735fb
+000000026d94aef16756234f019b2c0143ba89178a94fe2740abbe01144ab4ec
+```
+
+The final two improvements were:
+
+```text
+000000000eae2ab5033060666eca8347994e75c3f1045583b36ab5c6e0b64d67
+00000000075e37a899d47103bc7e45fd02ddd94ab6e662245fd097cb192fd4f3
+```
+
+Each later value is numerically lower than the preceding recorded Best Hash, confirming
+strict run-wide improvement semantics in the live log.
+
+### Remaining hardware gate
+
+The DGX Spark CUDA parity, performance, local validation, and live dashboard gates are
+complete.
+
+The remaining task hardware gate is:
+
+- macOS/native-parallel live mining confirms Best Hash changes over time and the
+  share/target panel renders correctly.
+
+Do not mark the task merge-ready until that Mac gate is completed or explicitly
+re-scoped.
+
 ## Authorization
 
 This task is authorized to use `local/dashboard-hash-quality`, commit and push the bounded implementation, update tests/documentation, and open a pull request. Merge still requires explicit user authorization after semantic review and the required available validation/hardware performance/correctness gates.
