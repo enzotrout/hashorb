@@ -2,10 +2,13 @@ name: Security
 
 on:
   pull_request:
-  push:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - "docs/**"
+      - "tasks/**"
+      - "**/*.md"
   schedule:
-    - cron: "17 6 * * 2"
+    - cron: "17 6 1 * *"
   workflow_dispatch:
 
 permissions:
@@ -17,6 +20,7 @@ concurrency:
 
 jobs:
   source:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: Source, dependencies, workflows, and artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -48,6 +52,7 @@ jobs:
         run: scripts/run-security-audit.sh artifacts
 
   container:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: CPU container security
     runs-on: ubuntu-latest
     timeout-minutes: 30
