@@ -42,6 +42,7 @@ from hashorb.mining.strategy import (
     SearchStrategyValidationError,
     SequentialSearchStrategy,
 )
+from hashorb.network.stratum.client import StratumRequestError
 from hashorb.network.stratum.messages import (
     MiningNotifyNotification,
     SetDifficultyNotification,
@@ -849,7 +850,12 @@ def run_continuous_mining(
             event_observer.candidate_found(current_work, match)
             if stop_token.stop_requested:
                 observe_stop()
-            accepted = current_submit_share(current_work, match)
+            try:
+                accepted = current_submit_share(current_work, match)
+            except StratumRequestError as exc:
+                if exc.error is None:
+                    raise
+                accepted = False
             if not isinstance(accepted, bool):
                 raise ContinuousMiningValidationError("submit_share must return an actual Boolean")
             liveness.server_message_received()
@@ -858,12 +864,18 @@ def run_continuous_mining(
             event_observer.submission_completed(current_work, match, accepted)
             if stop_token.stop_requested:
                 observe_stop()
-            outcome = (
-                ContinuousMiningOutcome.SHARE_ACCEPTED
-                if accepted
-                else ContinuousMiningOutcome.SHARE_REJECTED
-            )
-            return finish(outcome, match=match, pool_accepted=accepted)
+            range_fully_searched = chunk_result.hashes_checked == stop_nonce - start_nonce
+            if (
+                match.meets_network_target
+                or not range_fully_searched
+                or stop_token.stop_requested
+            ):
+                outcome = (
+                    ContinuousMiningOutcome.SHARE_ACCEPTED
+                    if accepted
+                    else ContinuousMiningOutcome.SHARE_REJECTED
+                )
+                return finish(outcome, match=match, pool_accepted=accepted)
 
         if stop_token.stop_requested:
             return finish_stopped()
