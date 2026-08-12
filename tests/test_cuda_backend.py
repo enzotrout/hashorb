@@ -577,3 +577,28 @@ def test_cuda_backend_does_not_mutate_or_retain_work() -> None:
 
     assert work == before
     assert not hasattr(backend, "work")
+
+
+def test_cuda_new_extension_result_reconstructs_exact_best_hash() -> None:
+    runtime = FakeCudaRuntime((None, False, False, 3, 8))
+    work = prepared_work()
+
+    result = CudaBackend(runtime=runtime).search_nonce_range(work, 7, 10)
+
+    assert result.match is None
+    assert result.best_nonce == 8
+    assert result.best_hash == digest_for_nonce(work.header_prefix, 8)
+    assert result.best_hash_value == block_hash_to_int(digest_for_nonce(work.header_prefix, 8))
+
+
+@pytest.mark.parametrize(
+    "best_nonce",
+    [None, True, -1, 6, 10, 2**32],
+)
+def test_cuda_new_extension_result_rejects_invalid_best_nonce(
+    best_nonce: object,
+) -> None:
+    runtime = FakeCudaRuntime((None, False, False, 3, best_nonce))
+
+    with pytest.raises(ComputeBackendExecutionError, match="best nonce"):
+        CudaBackend(runtime=runtime).search_nonce_range(prepared_work(), 7, 10)

@@ -22,6 +22,7 @@ from hashorb.config.profile import (
     DEFAULT_CUDA_THREADS_PER_BLOCK,
 )
 from hashorb.mining.search import NonceSearchResult, PreparedMiningWork
+from hashorb.mining.target import block_hash_to_int
 
 type DeviceBackendFactory = Callable[[int], MiningComputeBackend]
 type ExecutorFactory = Callable[[int], Executor]
@@ -302,6 +303,9 @@ def _reduce_device_results(
 
     hashes_checked = 0
     matches = []
+    best_candidates: list[tuple[int, int, bytes]] = []
+    all_best_hashes_present = True
+
     for assignment, result in zip(assignments, results, strict=True):
         if not isinstance(result, NonceSearchResult):
             raise ComputeBackendExecutionError("multi-CUDA device returned invalid data")
@@ -312,16 +316,37 @@ def _reduce_device_results(
             raise ComputeBackendExecutionError("multi-CUDA device returned a different range")
         if result.hashes_checked != assignment.size:
             raise ComputeBackendExecutionError("multi-CUDA device hash count is incomplete")
+
         hashes_checked += result.hashes_checked
         if result.match is not None:
             matches.append(result.match)
 
+        if result.best_nonce is None or result.best_hash is None:
+            all_best_hashes_present = False
+        else:
+            best_candidates.append(
+                (
+                    block_hash_to_int(result.best_hash),
+                    result.best_nonce,
+                    result.best_hash,
+                )
+            )
+
     if hashes_checked != stop_nonce - start_nonce:
         raise ComputeBackendExecutionError("multi-CUDA aggregate hash count is inconsistent")
+
+    best_candidate = (
+        min(best_candidates, key=lambda item: (item[0], item[1]))
+        if all_best_hashes_present and best_candidates
+        else None
+    )
+
     return NonceSearchResult(
         start_nonce=start_nonce,
         stop_nonce=stop_nonce,
         hashes_checked=hashes_checked,
         elapsed_ns=elapsed_ns,
         match=min(matches, key=lambda item: item.nonce) if matches else None,
+        best_nonce=None if best_candidate is None else best_candidate[1],
+        best_hash=None if best_candidate is None else best_candidate[2],
     )
