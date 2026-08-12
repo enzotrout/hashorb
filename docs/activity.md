@@ -122,3 +122,25 @@ Documentation:
 
 Remaining:
 - None in implementation, hosted validation, semantic review, or Spark acceptance. Merge requires explicit user authorization.
+
+## 2026-08-12 — Reduce GitHub Actions usage
+
+Branch: `local/reduce-actions-usage`
+Commit: `pending`
+
+Changed:
+- Removed Packaging from ordinary branch pushes and gated its hosted jobs to non-draft pull requests plus manual dispatch.
+- Removed the duplicate post-merge Security push run, reduced the scheduled Security sweep from weekly to monthly, and gated PR security jobs to non-draft pull requests.
+- Added documentation/task-only path filters so heavy Packaging and Security matrices do not run for documentation-only review work.
+- Preserved exact-head PR reruns on substantive updates and kept `cancel-in-progress: true`.
+- Codified local Mac/Spark validation as the normal development path and prohibited using GitHub Actions as a patch runner or remote development shell.
+
+Validation:
+- Hosted GitHub Actions intentionally not used because the account billing/quota currently prevents jobs from starting.
+- Workflow triggers and draft guards were reviewed directly on the branch; product/test job contents were left unchanged.
+
+Documentation:
+- Added `tasks/reduce-actions-usage.md` and updated `AGENTS.md`, `docs/development.md`, and this activity log.
+
+Remaining:
+- Hosted CI remains unavailable until GitHub Actions billing/quota is restored or the next included-minute cycle begins.

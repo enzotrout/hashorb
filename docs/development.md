@@ -97,12 +97,32 @@ HashOrb Task Report
 
 `AGENTS.md` and the active task define the development contract. The helper is
 the machine-executed validation side of that contract; it does not replace code
-review or GitHub Actions.
+review or the pull-request CI gate.
 
 ## CI relationship
 
-Packaging CI runs the full pytest suite and source-quality checks on Windows,
-Ubuntu, and macOS, plus the Docker CPU gate. It also smoke-tests the development
-wrapper on each host and directly executes `./dev help` on Unix. The Security
-workflow remains a separate review signal for the repository's existing
-security gates.
+Hosted GitHub Actions is intentionally reserved for review gates rather than
+routine development. Ordinary branch pushes do not run Packaging or Security,
+and draft pull requests do not start their hosted jobs. Development validation
+runs locally with `dev check`, `dev full`, platform-specific tests, and DGX Spark
+hardware checks when CUDA behavior is involved.
+
+Packaging runs for a non-draft pull request when it is opened, updated,
+reopened, or marked ready for review. It still runs the full pytest suite and
+source-quality checks on Windows, Ubuntu, and macOS, plus the Docker CPU gate.
+Documentation/task-only pull requests skip this heavy matrix. Maintainers can
+also run Packaging explicitly with `workflow_dispatch`.
+
+Security follows the same non-draft pull-request policy and keeps its source,
+dependency, workflow, artifact, and CPU-container security gates. It no longer
+runs a duplicate validation after merge to `main`; instead, a scheduled sweep
+runs monthly and manual dispatch remains available.
+
+Both workflows keep `cancel-in-progress: true`, so a newer pull-request head
+cancels obsolete hosted work. GitHub Actions must not be used as a remote shell,
+patch runner, or ordinary implementation environment.
+
+When hosted Actions cannot start because of account billing, quota, or spending
+limits, record that hosted validation is unavailable. Continue local development
+when the active task can be validated locally, but never report hosted CI as
+passed when it did not run.
