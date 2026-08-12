@@ -57,6 +57,27 @@ Do not change:
 12. Existing logs without Best Hash events must remain readable and show Best Hash as unavailable rather than failing.
 13. Existing dashboard, mining, packaging, and security behavior must remain compatible.
 
+## Pre-change CUDA baseline
+
+Captured on DGX Spark before Best Hash tracking with the current `cuda` backend, device 0, a 500,000,000-hash deterministic range, 2 warmups, and 10 measured repetitions.
+
+```text
+Hashes per run: 500000000
+Initialization: 302132824 ns
+First launch: 190012094 ns
+Median elapsed time: 179333825 ns
+Minimum elapsed time: 176874788 ns
+Maximum elapsed time: 181232770 ns
+Median hashes per second: 2788097132.82
+Minimum hashes per second: 2758882954.78
+Maximum hashes per second: 2826858511.91
+Total backend-call wall time: 2337650986 ns
+Cleanup: 212142 ns
+Result: range exhausted
+```
+
+Post-change A/B validation must rerun the same command and compare the median and measured spread. A material throughput regression requires redesign rather than being accepted by default.
+
 ## Validation
 
 Run the repository baseline:
@@ -71,7 +92,7 @@ git status --short
 git diff --stat
 ```
 
-Hosted Packaging and Security workflows must pass for the exact PR head before merge.
+Hosted Packaging and Security workflows must pass for the exact PR head before merge when hosted Actions are available. While the repository owner's Actions billing/quota is unavailable, record hosted validation as unavailable and use the required local/hardware gates without claiming hosted CI passed.
 
 Hardware gates before merge:
 
@@ -82,4 +103,4 @@ Hardware gates before merge:
 
 ## Authorization
 
-This task is authorized to use `local/dashboard-hash-quality`, commit and push the bounded implementation, update tests/documentation, and open a pull request. Merge still requires explicit user authorization after semantic review, hosted validation, and the hardware performance/correctness gates.
+This task is authorized to use `local/dashboard-hash-quality`, commit and push the bounded implementation, update tests/documentation, and open a pull request. Merge still requires explicit user authorization after semantic review and the required available validation/hardware performance/correctness gates.
