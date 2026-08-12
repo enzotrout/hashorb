@@ -1,8 +1,12 @@
 name: Packaging
 
 on:
-  push:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - "docs/**"
+      - "tasks/**"
+      - "**/*.md"
   workflow_dispatch:
 
 permissions:
@@ -14,6 +18,7 @@ concurrency:
 
 jobs:
   cpu:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: CPU / ${{ matrix.os }} / Python 3.13
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -75,6 +80,7 @@ jobs:
           uv run python scripts/smoke-installed-distribution.py dist
 
   docker-cpu:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: Docker CPU / Ubuntu
     runs-on: ubuntu-latest
     timeout-minutes: 30

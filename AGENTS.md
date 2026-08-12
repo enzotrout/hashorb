@@ -91,6 +91,19 @@ git diff --stat
 A task is not complete when any required command fails.
 Skipped tests must be listed in the report with their stated reason.
 
+## Hosted CI usage
+
+GitHub Actions is a validation gate, not a development shell or patch-execution environment.
+
+1. Perform normal implementation, formatting, linting, typing, tests, and hardware validation locally on the appropriate Mac, Linux, Docker, or DGX Spark environment.
+2. Do not create temporary GitHub Actions workflows merely to edit files, apply patches, inspect source, or execute ordinary development commands.
+3. Hosted Packaging and Security jobs are intended for non-draft pull-request validation, explicit manual dispatches, and the scheduled Security sweep defined by the workflows.
+4. Draft pull requests and ordinary branch pushes should not consume hosted runner minutes.
+5. Documentation/task-only pull requests should not run the heavy Packaging or Security matrices.
+6. Preserve exact-head pull-request validation after substantive corrective commits by allowing non-draft PR synchronization events to rerun the gates.
+7. If hosted Actions are unavailable because of billing, quota, or account limits, record that fact accurately and continue local development when the task can be validated locally. Never claim hosted CI passed when it did not run.
+8. A task that explicitly requires hosted cross-platform validation remains incomplete until that gate is available or the task is explicitly re-scoped.
+
 ## Required HashOrb Task Report
 
 Every implementation task must end with this structure:
