@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from hashorb.network.stratum import SetDifficultyNotification
 from test_stratum_client_submission import (
     FakeTransport,
     authorize_response,
@@ -12,6 +11,8 @@ from test_stratum_client_submission import (
     submit_response,
     subscribe_response,
 )
+
+from hashorb.network.stratum import SetDifficultyNotification
 
 
 def ping_message() -> dict[str, object]:
