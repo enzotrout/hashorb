@@ -182,13 +182,14 @@ def test_dashboard_tracks_auto_raw_and_effective_rates_and_nonce_progress() -> N
     assert "HashOrb Dashboard" in rendered
     assert "PROFILE auto" in rendered
     assert "BACKEND cuda" in rendered
-    assert "NONCE SPACE EXPLORATION — sequential" in rendered
+    assert "SEARCH ACTIVITY — sequential" in rendered
     assert "Sequential: contiguous parent ranges" in rendered
     assert "Raw 2.762 GH/s" in rendered
+    assert "Average 2.762 GH/s" in rendered
     assert "Effective " in rendered
 
 
-def test_orbiting_bit_nonce_visualization_reflects_observed_scattered_ranges() -> None:
+def test_orbiting_bit_search_activity_reflects_recent_scattered_ranges() -> None:
     state = DashboardState()
     state.apply(_record(1, "command_started", 0.0))
     state.apply(
@@ -222,12 +223,120 @@ def test_orbiting_bit_nonce_visualization_reflects_observed_scattered_ranges() -
             )
         )
 
-    rendered = render_dashboard(state, width=120, color=False)
-    assert "NONCE SPACE EXPLORATION — orbiting-bit" in rendered
-    assert "Orbiting-bit: observed parent ranges jump through bit-reversal order" in rendered
-    assert "Observed range path: 00 → 32 → 16 → 48" in rendered
-    assert "█" in rendered
-    assert "·" in rendered
+    rendered = render_dashboard(
+        state,
+        width=120,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=10),
+        color=False,
+    )
+    assert "SEARCH ACTIVITY — orbiting-bit" in rendered
+    assert "Orbiting-bit: deterministic bit-reversal search order for each work variant." in rendered
+    assert "Recent orbit path  00 → 32 → 16 → 48" in rendered
+    assert "Current range  0xc0000000" in rendered
+    assert "0xc3ffffff" in rendered
+
+
+def test_search_activity_animation_moves_smoothly_without_changing_range() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+    state.apply(
+        _record(
+            2,
+            "search_strategy_selected",
+            0.01,
+            strategy_name="orbiting-bit",
+        )
+    )
+    state.apply(
+        _record(
+            3,
+            "nonce_range_started",
+            1.0,
+            job_id="job-orbit",
+            start_nonce=0x9502F900,
+            stop_nonce=0xB2D05E00,
+        )
+    )
+
+    first = render_dashboard(
+        state,
+        width=140,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=10),
+        color=False,
+    )
+    second = render_dashboard(
+        state,
+        width=140,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=11),
+        color=False,
+    )
+    first_line = next(line for line in first.splitlines() if "Current range" in line)
+    second_line = next(line for line in second.splitlines() if "Current range" in line)
+
+    assert first_line != second_line
+    assert "0x9502f900" in first_line
+    assert "0xb2d05dff" in first_line
+    assert "0x9502f900" in second_line
+    assert "0xb2d05dff" in second_line
+
+
+def test_rare_changes_turn_bright_magenta_for_sixty_seconds() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+    state.apply(_record(2, "difficulty_received", 1.0, difficulty=10_000))
+    state.apply(_record(3, "best_hash_improved", 2.0, best_hash=f"{100:064x}"))
+    state.apply(_record(4, "stratum_reconnect_attempted", 3.0))
+    state.apply(
+        _record(
+            5,
+            "share_candidate_found",
+            4.0,
+            meets_share_target=True,
+            meets_network_target=False,
+        )
+    )
+
+    recent = render_dashboard(
+        state,
+        width=160,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=30),
+        color=True,
+    )
+    assert "\x1b[95;1m│Best Hash" in recent
+    assert "\x1b[95;1m│Best Difficulty" in recent
+    assert "\x1b[95;1mDifficulty 10,000\x1b[0m" in recent
+    assert "\x1b[95;1mReconnects 1/0\x1b[0m" in recent
+    assert "\x1b[95;1m│Share Target HIT" in recent
+
+    expired = render_dashboard(
+        state,
+        width=160,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=65),
+        color=True,
+    )
+    assert "\x1b[95;1m" not in expired
+
+
+def test_network_target_hit_remains_emphasized_after_transient_window() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+    state.apply(
+        _record(
+            2,
+            "share_candidate_found",
+            1.0,
+            meets_share_target=True,
+            meets_network_target=True,
+        )
+    )
+
+    rendered = render_dashboard(
+        state,
+        width=160,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=300),
+        color=True,
+    )
+    assert "\x1b[95;1m│Share Target HIT  |  Network Target HIT" in rendered
 
 
 def test_newer_mining_run_replaces_older_interleaved_run() -> None:
