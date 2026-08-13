@@ -232,13 +232,39 @@ class _MiningOutcome:
     pool_accepted: bool | None
 
 
+def _emit_best_hash_improved(
+    events: EventSink,
+    result: NonceSearchResult,
+    previous_best_hash_value: int | None,
+) -> int | None:
+    """Emit only strict run-wide Best Hash improvements."""
+
+    current_value = result.best_hash_value
+    if current_value is None:
+        return previous_best_hash_value
+
+    if previous_best_hash_value is not None and current_value >= previous_best_hash_value:
+        return previous_best_hash_value
+
+    best_hash = result.best_hash
+    if best_hash is None:
+        raise RuntimeError("Best Hash value exists without its digest")
+
+    events.emit(
+        "best_hash_improved",
+        fields={"best_hash": best_hash[::-1].hex()},
+    )
+    return current_value
+
+
 class _ChunkedEventObserver:
     """Translate passive chunk-orchestration callbacks into safe events."""
 
-    __slots__ = ("_events",)
+    __slots__ = ("_events", "_best_hash_value")
 
     def __init__(self, events: EventSink) -> None:
         self._events = events
+        self._best_hash_value: int | None = None
 
     def notification_received(
         self,
@@ -286,6 +312,12 @@ class _ChunkedEventObserver:
                 "hashes_per_second": result.hashes_per_second,
                 "match_found": result.match is not None,
             },
+        )
+
+        self._best_hash_value = _emit_best_hash_improved(
+            self._events,
+            result,
+            self._best_hash_value,
         )
 
     def job_replaced(
@@ -2715,6 +2747,7 @@ def _mine_one_range(
             "match_found": result.match is not None,
         },
     )
+    _emit_best_hash_improved(events, result, None)
 
     pool_accepted: bool | None = None
     if result.match is not None:

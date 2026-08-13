@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 #include <limits.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define HEADER_PREFIX_LENGTH 76
@@ -11,6 +12,7 @@
 #define DEFAULT_THREADS_PER_BLOCK 256U
 #define MAX_BLOCKS 65535
 #define NONCE_LIMIT 0x100000000ULL
+#define BEST_REDUCTION_THREADS 256U
 
 #define SHA256_CONSTANT_VALUES                                                \
     0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU,         \
@@ -40,6 +42,10 @@ typedef struct {
 typedef struct {
     PreparedCudaWork *work;
     unsigned long long *candidate;
+    unsigned long long *best_nonce;
+    unsigned long long *best_key;
+    unsigned long long *block_best_words;
+    unsigned long long *block_best_nonces;
     uint8_t *flags;
     uint8_t cached_header[HEADER_PREFIX_LENGTH];
     uint8_t cached_share[TARGET_LENGTH];
@@ -271,32 +277,506 @@ __device__ __forceinline__ static bool digest_meets_target(
     return true;
 }
 
-__device__ __forceinline__ static void evaluate_nonce(const PreparedCudaWork *work,
-                                      uint32_t nonce,
-                                      bool *meets_share,
-                                      bool *meets_network) {
+__device__ __forceinline__ static int digest_compare(
+    const uint32_t left[8],
+    const uint32_t right[8]) {
+#pragma unroll
+    for (int index = 7; index >= 0; --index) {
+        uint32_t left_word = reverse_bytes(left[index]);
+        uint32_t right_word = reverse_bytes(right[index]);
+        if (left_word < right_word) {
+            return -1;
+        }
+        if (left_word > right_word) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+__device__ __forceinline__ static uint32_t digest_high_word(
+    const uint32_t digest[8]) {
+    return reverse_bytes(digest[7]);
+}
+
+__device__ __forceinline__ static unsigned long long digest_high_key(
+    const uint32_t digest[8]) {
+    return ((unsigned long long)reverse_bytes(digest[7]) << 32U) |
+           (unsigned long long)reverse_bytes(digest[6]);
+}
+
+__device__ __forceinline__ static bool digest_meets_target_with_high_word(
+    const uint32_t digest[8],
+    const uint32_t target[8],
+    uint32_t high_word) {
+    if (high_word < target[7]) {
+        return true;
+    }
+    if (high_word > target[7]) {
+        return false;
+    }
+
+#pragma unroll
+    for (int index = 6; index >= 0; --index) {
+        uint32_t digest_word = reverse_bytes(digest[index]);
+        if (digest_word < target[index]) {
+            return true;
+        }
+        if (digest_word > target[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
+ * Full 256-bit comparison is required only when two hashes have the same
+ * most-significant 32 bits. Keeping this out of line avoids carrying another
+ * eight-word digest in every hot search lane.
+ */
+#define BEST_TIE_FLAG (1ULL << 63)
+#define BEST_NONCE_MASK 0xffffffffULL
+
+__device__ __forceinline__ static unsigned long long best_nonce_value(
+    unsigned long long state) {
+    return state & BEST_NONCE_MASK;
+}
+
+__device__ __forceinline__ static bool best_state_has_tie(
+    unsigned long long state) {
+    return state != ULLONG_MAX &&
+           (state & BEST_TIE_FLAG) != 0ULL;
+}
+
+__device__ __forceinline__ static void merge_compact_best(
+    unsigned long long candidate_key,
+    unsigned long long candidate_state,
+    unsigned long long *current_key,
+    unsigned long long *current_state) {
+    if (candidate_state == ULLONG_MAX) {
+        return;
+    }
+
+    if (*current_state == ULLONG_MAX ||
+        candidate_key < *current_key) {
+        *current_key = candidate_key;
+        *current_state = candidate_state;
+        return;
+    }
+
+    if (candidate_key > *current_key) {
+        return;
+    }
+
+    unsigned long long candidate_nonce =
+        best_nonce_value(candidate_state);
+    unsigned long long current_nonce =
+        best_nonce_value(*current_state);
+
+    bool tied =
+        best_state_has_tie(candidate_state) ||
+        best_state_has_tie(*current_state) ||
+        candidate_nonce != current_nonce;
+
+    unsigned long long selected_nonce =
+        candidate_nonce < current_nonce
+            ? candidate_nonce
+            : current_nonce;
+
+    *current_state =
+        selected_nonce |
+        (tied ? BEST_TIE_FLAG : 0ULL);
+}
+
+
+__device__ __forceinline__ static void evaluate_nonce(
+    const PreparedCudaWork *work,
+    uint32_t nonce,
+    bool *meets_share,
+    bool *meets_network) {
     uint32_t digest[8];
     double_sha256_nonce(work, nonce, digest);
     *meets_share = digest_meets_target(digest, work->share_target);
     *meets_network = digest_meets_target(digest, work->network_target);
 }
 
-__global__ static void search_kernel(const PreparedCudaWork *work,
-                                     uint64_t start_nonce,
-                                     uint64_t range_size,
-                                     unsigned long long *candidate_nonce) {
-    uint64_t lane = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    uint64_t stride = (uint64_t)gridDim.x * blockDim.x;
+__global__ __launch_bounds__(256, 5) static void search_kernel(
+    const PreparedCudaWork *work,
+    uint64_t start_nonce,
+    uint64_t range_size,
+    unsigned long long *candidate_nonce,
+    unsigned long long *block_best_words,
+    unsigned long long *block_best_nonces) {
+    extern __shared__ unsigned char shared_storage[];
+
+    unsigned long long *shared_words =
+        reinterpret_cast<unsigned long long *>(shared_storage);
+
+    unsigned long long *shared_nonces =
+        reinterpret_cast<unsigned long long *>(
+            shared_words + blockDim.x);
+
+    uint64_t lane =
+        (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t stride =
+        (uint64_t)gridDim.x * blockDim.x;
+
+    unsigned long long local_best_word = ULLONG_MAX;
+    unsigned long long local_best_nonce = ULLONG_MAX;
+
     for (uint64_t offset = lane; offset < range_size; offset += stride) {
         uint32_t nonce = (uint32_t)(start_nonce + offset);
-        bool meets_share = false;
-        bool meets_network = false;
-        evaluate_nonce(work, nonce, &meets_share, &meets_network);
+        uint32_t digest[8];
+
+        double_sha256_nonce(work, nonce, digest);
+
+        uint32_t high_word = digest_high_word(digest);
+        unsigned long long high_key = digest_high_key(digest);
+
+        merge_compact_best(
+            high_key,
+            (unsigned long long)nonce,
+            &local_best_word,
+            &local_best_nonce);
+
+        bool meets_share =
+            digest_meets_target_with_high_word(
+                digest,
+                work->share_target,
+                high_word);
+
+        bool meets_network =
+            digest_meets_target_with_high_word(
+                digest,
+                work->network_target,
+                high_word);
+
         if (meets_share || meets_network) {
-            atomicMin(candidate_nonce, (unsigned long long)nonce);
+            atomicMin(
+                candidate_nonce,
+                (unsigned long long)nonce);
         }
     }
+
+    shared_words[threadIdx.x] = local_best_word;
+    shared_nonces[threadIdx.x] = local_best_nonce;
+    __syncthreads();
+
+    for (unsigned int width = blockDim.x >> 1U;
+         width > 0;
+         width >>= 1U) {
+        if (threadIdx.x < width) {
+            unsigned int peer = threadIdx.x + width;
+
+            merge_compact_best(
+                shared_words[peer],
+                shared_nonces[peer],
+                &shared_words[threadIdx.x],
+                &shared_nonces[threadIdx.x]);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        block_best_words[blockIdx.x] =
+            shared_words[0];
+        block_best_nonces[blockIdx.x] =
+            shared_nonces[0];
+    }
 }
+
+__global__ __launch_bounds__(512, 1) static void search_kernel_512(
+    const PreparedCudaWork *work,
+    uint64_t start_nonce,
+    uint64_t range_size,
+    unsigned long long *candidate_nonce,
+    unsigned long long *block_best_words,
+    unsigned long long *block_best_nonces) {
+    extern __shared__ unsigned char shared_storage[];
+
+    unsigned long long *shared_words =
+        reinterpret_cast<unsigned long long *>(shared_storage);
+
+    unsigned long long *shared_nonces =
+        reinterpret_cast<unsigned long long *>(
+            shared_words + blockDim.x);
+
+    uint64_t lane =
+        (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t stride =
+        (uint64_t)gridDim.x * blockDim.x;
+
+    unsigned long long local_best_word = ULLONG_MAX;
+    unsigned long long local_best_nonce = ULLONG_MAX;
+
+    for (uint64_t offset = lane; offset < range_size; offset += stride) {
+        uint32_t nonce = (uint32_t)(start_nonce + offset);
+        uint32_t digest[8];
+
+        double_sha256_nonce(work, nonce, digest);
+
+        uint32_t high_word = digest_high_word(digest);
+        unsigned long long high_key = digest_high_key(digest);
+
+        merge_compact_best(
+            high_key,
+            (unsigned long long)nonce,
+            &local_best_word,
+            &local_best_nonce);
+
+        bool meets_share =
+            digest_meets_target_with_high_word(
+                digest,
+                work->share_target,
+                high_word);
+
+        bool meets_network =
+            digest_meets_target_with_high_word(
+                digest,
+                work->network_target,
+                high_word);
+
+        if (meets_share || meets_network) {
+            atomicMin(
+                candidate_nonce,
+                (unsigned long long)nonce);
+        }
+    }
+
+    shared_words[threadIdx.x] = local_best_word;
+    shared_nonces[threadIdx.x] = local_best_nonce;
+    __syncthreads();
+
+    for (unsigned int width = blockDim.x >> 1U;
+         width > 0;
+         width >>= 1U) {
+        if (threadIdx.x < width) {
+            unsigned int peer = threadIdx.x + width;
+
+            merge_compact_best(
+                shared_words[peer],
+                shared_nonces[peer],
+                &shared_words[threadIdx.x],
+                &shared_nonces[threadIdx.x]);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        block_best_words[blockIdx.x] =
+            shared_words[0];
+        block_best_nonces[blockIdx.x] =
+            shared_nonces[0];
+    }
+}
+
+__global__ static void reduce_block_bests_kernel(
+    const PreparedCudaWork *work,
+    const unsigned long long *block_best_words,
+    const unsigned long long *block_best_nonces,
+    int block_count,
+    unsigned long long *best_key,
+    unsigned long long *best_nonce) {
+    extern __shared__ unsigned char shared_storage[];
+
+    unsigned long long *shared_words =
+        reinterpret_cast<unsigned long long *>(shared_storage);
+
+    unsigned long long *shared_nonces =
+        reinterpret_cast<unsigned long long *>(
+            shared_words + blockDim.x);
+
+    unsigned long long local_best_word = ULLONG_MAX;
+    unsigned long long local_best_nonce = ULLONG_MAX;
+
+    for (int index = (int)threadIdx.x;
+         index < block_count;
+         index += (int)blockDim.x) {
+        merge_compact_best(
+            block_best_words[index],
+            block_best_nonces[index],
+            &local_best_word,
+            &local_best_nonce);
+    }
+
+    shared_words[threadIdx.x] = local_best_word;
+    shared_nonces[threadIdx.x] = local_best_nonce;
+    __syncthreads();
+
+    for (unsigned int width = blockDim.x >> 1U;
+         width > 0;
+         width >>= 1U) {
+        if (threadIdx.x < width) {
+            unsigned int peer = threadIdx.x + width;
+
+            merge_compact_best(
+                shared_words[peer],
+                shared_nonces[peer],
+                &shared_words[threadIdx.x],
+                &shared_nonces[threadIdx.x]);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        *best_key = shared_words[0];
+        *best_nonce = shared_nonces[0];
+    }
+}
+
+__device__ __noinline__ static bool exact_nonce_is_better(
+    const PreparedCudaWork *work,
+    unsigned long long candidate_nonce,
+    unsigned long long current_nonce) {
+    if (candidate_nonce == ULLONG_MAX) {
+        return false;
+    }
+    if (current_nonce == ULLONG_MAX) {
+        return true;
+    }
+
+    uint32_t candidate_digest[8];
+    uint32_t current_digest[8];
+
+    double_sha256_nonce(
+        work,
+        (uint32_t)candidate_nonce,
+        candidate_digest);
+
+    double_sha256_nonce(
+        work,
+        (uint32_t)current_nonce,
+        current_digest);
+
+    int comparison =
+        digest_compare(candidate_digest, current_digest);
+
+    return comparison < 0 ||
+           (comparison == 0 &&
+            candidate_nonce < current_nonce);
+}
+
+
+__global__ static void resolve_tied_best_kernel(
+    const PreparedCudaWork *work,
+    uint64_t start_nonce,
+    uint64_t range_size,
+    unsigned long long best_key,
+    unsigned long long key_mask,
+    unsigned long long *block_best_nonces) {
+    extern __shared__ unsigned long long shared_nonces[];
+
+    uint64_t lane =
+        (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+
+    uint64_t stride =
+        (uint64_t)gridDim.x * blockDim.x;
+
+    unsigned long long local_best_nonce = ULLONG_MAX;
+
+    for (uint64_t offset = lane;
+         offset < range_size;
+         offset += stride) {
+        uint32_t nonce =
+            (uint32_t)(start_nonce + offset);
+
+        uint32_t digest[8];
+        double_sha256_nonce(work, nonce, digest);
+
+        unsigned long long high_key =
+            digest_high_key(digest);
+
+        if ((high_key & key_mask) !=
+            (best_key & key_mask)) {
+            continue;
+        }
+
+        unsigned long long candidate_nonce =
+            (unsigned long long)nonce;
+
+        if (exact_nonce_is_better(
+                work,
+                candidate_nonce,
+                local_best_nonce)) {
+            local_best_nonce = candidate_nonce;
+        }
+    }
+
+    shared_nonces[threadIdx.x] = local_best_nonce;
+    __syncthreads();
+
+    for (unsigned int width = blockDim.x >> 1U;
+         width > 0;
+         width >>= 1U) {
+        if (threadIdx.x < width) {
+            unsigned int peer = threadIdx.x + width;
+
+            if (exact_nonce_is_better(
+                    work,
+                    shared_nonces[peer],
+                    shared_nonces[threadIdx.x])) {
+                shared_nonces[threadIdx.x] =
+                    shared_nonces[peer];
+            }
+        }
+
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        block_best_nonces[blockIdx.x] =
+            shared_nonces[0];
+    }
+}
+
+
+__global__ static void reduce_resolved_bests_kernel(
+    const PreparedCudaWork *work,
+    const unsigned long long *block_best_nonces,
+    int block_count,
+    unsigned long long *best_nonce) {
+    extern __shared__ unsigned long long shared_nonces[];
+
+    unsigned long long local_best_nonce = ULLONG_MAX;
+
+    for (int index = (int)threadIdx.x;
+         index < block_count;
+         index += (int)blockDim.x) {
+        if (exact_nonce_is_better(
+                work,
+                block_best_nonces[index],
+                local_best_nonce)) {
+            local_best_nonce =
+                block_best_nonces[index];
+        }
+    }
+
+    shared_nonces[threadIdx.x] = local_best_nonce;
+    __syncthreads();
+
+    for (unsigned int width = blockDim.x >> 1U;
+         width > 0;
+         width >>= 1U) {
+        if (threadIdx.x < width) {
+            unsigned int peer = threadIdx.x + width;
+
+            if (exact_nonce_is_better(
+                    work,
+                    shared_nonces[peer],
+                    shared_nonces[threadIdx.x])) {
+                shared_nonces[threadIdx.x] =
+                    shared_nonces[peer];
+            }
+        }
+
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        *best_nonce = shared_nonces[0];
+    }
+}
+
 
 __global__ static void verify_candidate_kernel(const PreparedCudaWork *work,
                                                uint32_t nonce,
@@ -345,6 +825,18 @@ static void release_resources(CudaContext *context) {
     if (owned->flags != NULL) {
         (void)cudaFree(owned->flags);
     }
+    if (owned->block_best_nonces != NULL) {
+        (void)cudaFree(owned->block_best_nonces);
+    }
+    if (owned->block_best_words != NULL) {
+        (void)cudaFree(owned->block_best_words);
+    }
+    if (owned->best_key != NULL) {
+        (void)cudaFree(owned->best_key);
+    }
+    if (owned->best_nonce != NULL) {
+        (void)cudaFree(owned->best_nonce);
+    }
     if (owned->candidate != NULL) {
         (void)cudaFree(owned->candidate);
     }
@@ -353,6 +845,7 @@ static void release_resources(CudaContext *context) {
     }
     memset(owned, 0, sizeof(*owned));
 }
+
 
 static bool upload_work_if_changed(CudaContext *context,
                                    const uint8_t *header_prefix,
@@ -408,6 +901,14 @@ static bool initialize_context(CudaContext *context, int device_ordinal) {
                    sizeof(PreparedCudaWork)) != cudaSuccess ||
         cudaMalloc((void **)&context->resources.candidate,
                    sizeof(unsigned long long)) != cudaSuccess ||
+        cudaMalloc((void **)&context->resources.best_nonce,
+                   sizeof(unsigned long long)) != cudaSuccess ||
+        cudaMalloc((void **)&context->resources.best_key,
+                   sizeof(unsigned long long)) != cudaSuccess ||
+        cudaMalloc((void **)&context->resources.block_best_words,
+                   (size_t)MAX_BLOCKS * sizeof(unsigned long long)) != cudaSuccess ||
+        cudaMalloc((void **)&context->resources.block_best_nonces,
+                   (size_t)MAX_BLOCKS * sizeof(unsigned long long)) != cudaSuccess ||
         cudaMalloc((void **)&context->resources.flags, 2U) != cudaSuccess) {
         release_resources(context);
         context->device_ordinal = -1;
@@ -418,6 +919,7 @@ static bool initialize_context(CudaContext *context, int device_ordinal) {
     context->initialized = true;
     return true;
 }
+
 
 static PyObject *cuda_initialize_device(PyObject *self, PyObject *args) {
     int device_ordinal;
@@ -443,8 +945,9 @@ static PyObject *cuda_initialize_device(PyObject *self, PyObject *args) {
 static PyObject *build_search_result(unsigned long long candidate,
                                      unsigned char meets_share,
                                      unsigned char meets_network,
-                                     unsigned long long hashes_checked) {
-    PyObject *result = PyTuple_New(4);
+                                     unsigned long long hashes_checked,
+                                     unsigned long long best_nonce) {
+    PyObject *result = PyTuple_New(5);
     if (result == NULL) {
         return NULL;
     }
@@ -453,21 +956,28 @@ static PyObject *build_search_result(unsigned long long candidate,
     PyObject *share_object = PyBool_FromLong(meets_share != 0U);
     PyObject *network_object = PyBool_FromLong(meets_network != 0U);
     PyObject *count_object = PyLong_FromUnsignedLongLong(hashes_checked);
+    PyObject *best_nonce_object =
+        best_nonce == ULLONG_MAX ? Py_NewRef(Py_None) : PyLong_FromUnsignedLongLong(best_nonce);
+
     if (nonce_object == NULL || share_object == NULL || network_object == NULL ||
-        count_object == NULL) {
+        count_object == NULL || best_nonce_object == NULL) {
         Py_XDECREF(nonce_object);
         Py_XDECREF(share_object);
         Py_XDECREF(network_object);
         Py_XDECREF(count_object);
+        Py_XDECREF(best_nonce_object);
         Py_DECREF(result);
         return NULL;
     }
+
     PyTuple_SET_ITEM(result, 0, nonce_object);
     PyTuple_SET_ITEM(result, 1, share_object);
     PyTuple_SET_ITEM(result, 2, network_object);
     PyTuple_SET_ITEM(result, 3, count_object);
+    PyTuple_SET_ITEM(result, 4, best_nonce_object);
     return result;
 }
+
 
 static bool search_context(CudaContext *context,
                            const uint8_t *header_prefix,
@@ -477,31 +987,167 @@ static bool search_context(CudaContext *context,
                            unsigned long long stop_nonce,
                            unsigned int threads_per_block,
                            unsigned long long *candidate,
+                           unsigned long long *best_nonce,
                            unsigned char flags[2]) {
+    unsigned long long best_key = ULLONG_MAX;
+
     if (!context->initialized || cudaSetDevice(context->device_ordinal) != cudaSuccess ||
         !upload_work_if_changed(context,
                                 header_prefix,
                                 share_target,
                                 network_target) ||
-        cudaMemset(context->resources.candidate, 0xff, sizeof(*candidate)) !=
-            cudaSuccess) {
+        cudaMemset(context->resources.candidate, 0xff, sizeof(*candidate)) != cudaSuccess ||
+        cudaMemset(context->resources.best_nonce, 0xff, sizeof(*best_nonce)) != cudaSuccess) {
         return false;
     }
+
     unsigned long long range_size = stop_nonce - start_nonce;
     unsigned long long required_blocks =
         (range_size + threads_per_block - 1ULL) / threads_per_block;
     int block_count =
         (int)(required_blocks < MAX_BLOCKS ? required_blocks : MAX_BLOCKS);
-    search_kernel<<<block_count, threads_per_block>>>(context->resources.work,
-                                                       start_nonce,
-                                                       range_size,
-                                                       context->resources.candidate);
+
+    size_t search_shared_bytes =
+        (size_t)threads_per_block *
+        (2U * sizeof(unsigned long long));
+
+    if (threads_per_block == 512U) {
+        search_kernel_512<<<
+            block_count,
+            threads_per_block,
+            search_shared_bytes>>>(
+                context->resources.work,
+                start_nonce,
+                range_size,
+                context->resources.candidate,
+                context->resources.block_best_words,
+                context->resources.block_best_nonces);
+    } else {
+        search_kernel<<<
+            block_count,
+            threads_per_block,
+            search_shared_bytes>>>(
+                context->resources.work,
+                start_nonce,
+                range_size,
+                context->resources.candidate,
+                context->resources.block_best_words,
+                context->resources.block_best_nonces);
+    }
+
+    if (cudaGetLastError() != cudaSuccess) {
+        return false;
+    }
+
+    size_t reduction_shared_bytes =
+        (size_t)BEST_REDUCTION_THREADS *
+        (2U * sizeof(unsigned long long));
+
+    reduce_block_bests_kernel<<<1, BEST_REDUCTION_THREADS, reduction_shared_bytes>>>(
+        context->resources.work,
+        context->resources.block_best_words,
+        context->resources.block_best_nonces,
+        block_count,
+        context->resources.best_key,
+        context->resources.best_nonce);
+
     if (cudaGetLastError() != cudaSuccess ||
         cudaMemcpy(candidate,
                    context->resources.candidate,
                    sizeof(*candidate),
+                   cudaMemcpyDeviceToHost) != cudaSuccess ||
+        cudaMemcpy(&best_key,
+                   context->resources.best_key,
+                   sizeof(best_key),
+                   cudaMemcpyDeviceToHost) != cudaSuccess ||
+        cudaMemcpy(best_nonce,
+                   context->resources.best_nonce,
+                   sizeof(*best_nonce),
                    cudaMemcpyDeviceToHost) != cudaSuccess) {
         return false;
+    }
+
+    if (*best_nonce == ULLONG_MAX ||
+        best_key == ULLONG_MAX) {
+        return false;
+    }
+
+    unsigned long long best_state = *best_nonce;
+
+    bool best_tied =
+        (best_state & BEST_TIE_FLAG) != 0ULL;
+
+    *best_nonce =
+        best_state & BEST_NONCE_MASK;
+
+    const char *force_fallback_value =
+        getenv("HASHORB_CUDA_FORCE_BEST_FALLBACK");
+
+    bool force_fallback =
+        force_fallback_value != NULL &&
+        strcmp(force_fallback_value, "1") == 0;
+
+    if (best_tied || force_fallback) {
+        /*
+         * Production ties use all 64 prefix bits.
+         *
+         * The explicit test mode uses a zero mask so every hash
+         * participates. This gives hardware tests a deterministic
+         * way to execute the rare exact resolver.
+         */
+        unsigned long long key_mask =
+            force_fallback ? 0ULL : ULLONG_MAX;
+
+        /*
+         * Erase the compact representative. From this point the
+         * returned nonce must come from the exact fallback.
+         */
+        *best_nonce = ULLONG_MAX;
+
+        if (cudaMemset(
+                context->resources.best_nonce,
+                0xff,
+                sizeof(*best_nonce)) != cudaSuccess) {
+            return false;
+        }
+
+        size_t fallback_shared_bytes =
+            (size_t)BEST_REDUCTION_THREADS *
+            sizeof(unsigned long long);
+
+        resolve_tied_best_kernel<<<
+            block_count,
+            BEST_REDUCTION_THREADS,
+            fallback_shared_bytes>>>(
+                context->resources.work,
+                start_nonce,
+                range_size,
+                best_key,
+                key_mask,
+                context->resources.block_best_nonces);
+
+        if (cudaGetLastError() != cudaSuccess) {
+            return false;
+        }
+
+        reduce_resolved_bests_kernel<<<
+            1,
+            BEST_REDUCTION_THREADS,
+            fallback_shared_bytes>>>(
+                context->resources.work,
+                context->resources.block_best_nonces,
+                block_count,
+                context->resources.best_nonce);
+
+        if (cudaGetLastError() != cudaSuccess ||
+            cudaMemcpy(
+                best_nonce,
+                context->resources.best_nonce,
+                sizeof(*best_nonce),
+                cudaMemcpyDeviceToHost) != cudaSuccess ||
+            *best_nonce == ULLONG_MAX) {
+            return false;
+        }
     }
 
     if (*candidate != ULLONG_MAX) {
@@ -519,6 +1165,7 @@ static bool search_context(CudaContext *context,
     return true;
 }
 
+
 static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
     Py_buffer header_prefix = {0};
     Py_buffer share_target = {0};
@@ -527,6 +1174,7 @@ static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
     unsigned long long stop_nonce;
     unsigned int threads_per_block = DEFAULT_THREADS_PER_BLOCK;
     unsigned long long candidate = ULLONG_MAX;
+    unsigned long long best_nonce = ULLONG_MAX;
     unsigned char flags[2] = {0U, 0U};
     bool succeeded;
     (void)self;
@@ -550,6 +1198,7 @@ static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "CUDA search arguments are invalid");
         goto cleanup;
     }
+
     Py_BEGIN_ALLOW_THREADS
     succeeded = search_context(&legacy_context,
                                (const uint8_t *)header_prefix.buf,
@@ -559,6 +1208,7 @@ static PyObject *cuda_search_nonce_range(PyObject *self, PyObject *args) {
                                stop_nonce,
                                threads_per_block,
                                &candidate,
+                               &best_nonce,
                                flags);
     Py_END_ALLOW_THREADS
     if (!succeeded) {
@@ -573,8 +1223,9 @@ cleanup:
         return NULL;
     }
     return build_search_result(
-        candidate, flags[0], flags[1], stop_nonce - start_nonce);
+        candidate, flags[0], flags[1], stop_nonce - start_nonce, best_nonce);
 }
+
 
 static PyObject *cuda_close_device(PyObject *self, PyObject *args) {
     bool succeeded;
@@ -656,9 +1307,11 @@ static PyObject *cuda_search_device_context(PyObject *self, PyObject *args) {
     unsigned long long stop_nonce;
     unsigned int threads_per_block = DEFAULT_THREADS_PER_BLOCK;
     unsigned long long candidate = ULLONG_MAX;
+    unsigned long long best_nonce = ULLONG_MAX;
     unsigned char flags[2] = {0U, 0U};
     bool succeeded;
     (void)self;
+
     if (!PyArg_ParseTuple(args,
                           "Oy*y*y*KK|I",
                           &capsule,
@@ -682,6 +1335,7 @@ static PyObject *cuda_search_device_context(PyObject *self, PyObject *args) {
         }
         goto cleanup;
     }
+
     Py_BEGIN_ALLOW_THREADS
     succeeded = search_context(context,
                                (const uint8_t *)header_prefix.buf,
@@ -691,6 +1345,7 @@ static PyObject *cuda_search_device_context(PyObject *self, PyObject *args) {
                                stop_nonce,
                                threads_per_block,
                                &candidate,
+                               &best_nonce,
                                flags);
     Py_END_ALLOW_THREADS
     if (!succeeded) {
@@ -705,8 +1360,9 @@ cleanup:
         return NULL;
     }
     return build_search_result(
-        candidate, flags[0], flags[1], stop_nonce - start_nonce);
+        candidate, flags[0], flags[1], stop_nonce - start_nonce, best_nonce);
 }
+
 
 static PyObject *cuda_close_device_context(PyObject *self, PyObject *args) {
     PyObject *capsule;

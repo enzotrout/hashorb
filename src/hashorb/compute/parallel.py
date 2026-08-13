@@ -259,6 +259,8 @@ def _reduce_worker_results(
 
     hashes_checked = 0
     matches = []
+    best_candidates: list[tuple[int, int, bytes]] = []
+    missing_best = 0
     for assignment, result in zip(assignments, results, strict=True):
         if not isinstance(result, NonceSearchResult):
             raise ComputeBackendExecutionError("parallel worker returned invalid data")
@@ -270,6 +272,11 @@ def _reduce_worker_results(
         hashes_checked += result.hashes_checked
         if result.match is not None:
             matches.append(result.match)
+        best_value = result.best_hash_value
+        if result.best_nonce is None or result.best_hash is None or best_value is None:
+            missing_best += 1
+        else:
+            best_candidates.append((best_value, result.best_nonce, result.best_hash))
 
     range_size = stop_nonce - start_nonce
     if not 1 <= hashes_checked <= range_size:
@@ -277,12 +284,22 @@ def _reduce_worker_results(
     match = min(matches, key=lambda item: item.nonce) if matches else None
     if match is None and hashes_checked != range_size:
         raise ComputeBackendExecutionError("parallel exhausted result is incomplete")
+    if best_candidates and missing_best:
+        raise ComputeBackendExecutionError("parallel worker best-hash results are inconsistent")
+
+    best_nonce: int | None = None
+    best_hash: bytes | None = None
+    if best_candidates:
+        _, best_nonce, best_hash = min(best_candidates, key=lambda item: (item[0], item[1]))
+
     return NonceSearchResult(
         start_nonce=start_nonce,
         stop_nonce=stop_nonce,
         hashes_checked=hashes_checked,
         elapsed_ns=elapsed_ns,
         match=match,
+        best_nonce=best_nonce,
+        best_hash=best_hash,
     )
 
 
