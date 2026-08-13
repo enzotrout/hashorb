@@ -16,11 +16,9 @@ Local repository path: `/home/ltrout/Development/hashorb`
 
 Active integration branch: `local/dashboard-hash-quality`
 
-Current branch head before this handoff commit: `03b415f80c26d59fc85ea952f8af5c3ea6600045`
-
 Open PR: #10, `Restore exact Best Hash dashboard on current main`
 
-PR state: draft and mergeable. Do not merge until the one-hour combined live gate below is clean.
+PR state: draft and mergeable. Do not merge until the one-hour combined live gate and the post-run dashboard-polish checks below are clean.
 
 Base branch: `main`
 
@@ -45,6 +43,19 @@ The active branch contains both of these previously separate lines of work:
    - dashboard renders Best Hash, Best Difficulty, Network Target, Share Target, target-hit indicators, and share counts
    - Best Hash is the true minimum observed over searched nonces, not merely the best share candidate
 
+3. Dashboard presentation polish staged while the one-hour mining process was already running
+   - `DEVICE / RATE` now labels the weighted run-average raw compute rate as `Average` instead of showing the noisy latest range sample
+   - the blocky nonce-space bucket bar is replaced by `SEARCH ACTIVITY`
+   - `SEARCH ACTIVITY` keeps the most recent range endpoints and renders a smooth two-marker dotted animation; marker position is display-only and does not claim to be an exact GPU nonce location
+   - orbiting-bit keeps a recent bucket path and the work-variant number
+   - Best Hash and Best Difficulty turn bright magenta for 60 seconds after a new run-wide best
+   - pool Difficulty and its derived Share Target turn bright magenta for 60 seconds when difficulty changes
+   - share status/counts turn bright magenta for 60 seconds after candidate/submission activity
+   - reconnect counters turn bright magenta for 60 seconds after connection-loss/reconnect activity
+   - a Network Target HIT remains persistently emphasized for the rest of the run
+
+Important validation boundary: the currently running one-hour miner was started before the dashboard-presentation commits. Those later commits change only `src/hashorb/dashboard.py`, dashboard tests, and this documentation. They do not alter mining, CUDA, search strategy, Stratum, share submission, or work-allocation behavior. Therefore the one-hour run remains the mining-behavior gate; after it ends, validate the new dashboard code separately by tests and by replaying the completed JSONL.
+
 ## Critical build detail
 
 The exact Best Hash CUDA branch uses the newer CUDA extension result interface. A stale `_cuda.so` can cause immediate runtime failures or tuple-shape mismatches.
@@ -62,6 +73,8 @@ uv run python setup.py build_ext --inplace
 ```
 
 The DGX Spark target is `sm_121`.
+
+Dashboard-only commits do not require a CUDA rebuild.
 
 ## Validation completed on the combined branch
 
@@ -138,11 +151,11 @@ The exact live pool error was not captured, so do not claim the pool definitely 
 
 PR #9 was created to make structured share rejection nonfatal and to skip known CKPool informational messages. The next long run is specifically intended to exercise this combined code in real conditions and ideally encounter another share candidate.
 
-## Next required gate: one-hour live run
+## Current gate: one-hour live run
 
-Remain on `local/dashboard-hash-quality`. Do not switch to `main` before this gate completes.
+Remain on the local checkout that launched the run until it completes. Do not pull the newer dashboard-only commits into that checkout during the active mining validation.
 
-Run:
+The running command is equivalent to:
 
 ```bash
 cd /home/ltrout/Development/hashorb
@@ -159,30 +172,53 @@ uv run python -m hashorb stratum-mine \
   --log-file logs/hashorb-orbiting-bit-auto-besthash-1h.jsonl
 ```
 
-In a second terminal:
-
-```bash
-cd /home/ltrout/Development/hashorb
-uv run python -m hashorb dashboard \
-  --log-file logs/hashorb-orbiting-bit-auto-besthash-1h.jsonl
-```
-
 Acceptance criteria:
 
 - finishes cleanly as `runtime_limit_reached`, unless a true network-target hit creates an intentional terminal outcome
 - no `Continuous Stratum mining failed`
 - no unhandled `StratumClientError`
-- dashboard continuously shows Best Hash / Best Difficulty / Network Target / Share Target
 - Best Hash may improve across job replacements and work-variant changes
 - zero reconnects is desirable but reconnect recovery may occur if the connection genuinely drops
 - if a share candidate appears, submission result is recorded and normal full-range mining continues after an accepted or structured rejected share
 - exact pool rejection reason must not be inferred unless explicitly logged
 
-## After the one-hour gate
+## Post-run dashboard polish validation
 
-If the one-hour gate is clean:
+After the one-hour miner finishes:
 
-1. record the final metrics and any share behavior in this file
+1. pull the latest `local/dashboard-hash-quality` branch
+2. no CUDA rebuild is required because the post-start changes are dashboard/tests/docs only
+3. run Ruff format/check, mypy, and focused dashboard/hash-quality tests
+4. replay the completed one-hour log through the updated dashboard
+5. verify:
+   - `Raw range-rate history ... Average <rate>`
+   - `SEARCH ACTIVITY — orbiting-bit`
+   - dotted two-marker activity animation is smooth and endpoints remain readable
+   - recent orbit path and variant are readable without the old block bucket map
+   - recent rare changes turn bright magenta for about 60 seconds when replayed/live
+   - Network Target HIT, if ever true, remains persistently emphasized
+
+Recommended focused checks:
+
+```bash
+uv run ruff format --check src/hashorb/dashboard.py tests/test_dashboard.py
+uv run ruff check src/hashorb/dashboard.py tests/test_dashboard.py
+uv run mypy src
+uv run pytest -q tests/test_dashboard.py tests/test_hash_quality_dashboard.py
+```
+
+Replay the completed log:
+
+```bash
+uv run python -m hashorb dashboard \
+  --log-file logs/hashorb-orbiting-bit-auto-besthash-1h.jsonl
+```
+
+## After all gates
+
+If the one-hour mining gate and post-run dashboard polish validation are clean:
+
+1. record the final one-hour metrics and any share behavior in this file
 2. update PR #10 with the completed combined validation
 3. mark PR #10 ready for review
 4. merge PR #10 only after confirming the branch head has not changed unexpectedly
