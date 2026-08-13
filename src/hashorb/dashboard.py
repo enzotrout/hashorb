@@ -29,6 +29,7 @@ _DEFAULT_BUCKET_COUNT = 64
 _RECENT_EVENT_LIMIT = 8
 _RATE_SAMPLE_LIMIT = 80
 _EFFECTIVE_WINDOW_SECONDS = 300.0
+_HIGHLIGHT_SECONDS = 60.0
 _MIN_RENDER_WIDTH = 88
 _EVENT_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _BEST_HASH = re.compile(r"^[0-9a-f]{64}$")
@@ -87,6 +88,10 @@ class DashboardState:
     terminal_effective_hashes_per_second: float | None = None
     started_at: datetime | None = None
     last_event_at: datetime | None = None
+    difficulty_changed_at: datetime | None = None
+    best_hash_changed_at: datetime | None = None
+    share_changed_at: datetime | None = None
+    reconnect_changed_at: datetime | None = None
     profile_requested: str | None = None
     profile_effective: str | None = None
     backend_name: str | None = None
@@ -122,6 +127,7 @@ class DashboardState:
     accepted_submissions: int = 0
     rejected_submissions: int = 0
     current_range: tuple[int, int] | None = None
+    last_range: tuple[int, int] | None = None
     nonce_buckets: list[bool] = field(
         default_factory=lambda: [False for _ in range(_DEFAULT_BUCKET_COUNT)]
     )
@@ -167,6 +173,8 @@ class DashboardState:
                 difficulty_to_share_target(difficulty)
             except TargetError as exc:
                 raise DashboardLogError("dashboard difficulty is invalid") from exc
+            if self.difficulty != difficulty:
+                self.difficulty_changed_at = record.timestamp
             self.difficulty = difficulty
             self._remember(record, f"difficulty {difficulty:g}")
         elif event == "mining_job_received":
@@ -206,6 +214,7 @@ class DashboardState:
                 self.current_job_received_at = record.timestamp
                 self._reset_nonce_variant()
             self.current_range = (start_nonce, stop_nonce)
+            self.last_range = self.current_range
         elif event == "nonce_range_completed":
             start_nonce = _required_integer(fields, "start_nonce")
             stop_nonce = _required_integer(fields, "stop_nonce")
@@ -221,18 +230,22 @@ class DashboardState:
             if rate is not None and rate >= 0:
                 self.raw_rate_samples.append(rate)
             self._mark_nonce_range(start_nonce, stop_nonce)
+            self.last_range = (start_nonce, stop_nonce)
             self.current_range = None
             self.effective_points.append((record.timestamp, self.hashes_checked))
             self._prune_effective_points(record.timestamp)
         elif event == "stratum_connection_lost":
             self.connection_losses += 1
+            self.reconnect_changed_at = record.timestamp
             self.status = "recovering"
             self._remember(record, "connection lost")
         elif event == "stratum_reconnect_attempted":
             self.reconnect_attempts += 1
+            self.reconnect_changed_at = record.timestamp
             self._remember(record, f"reconnect attempt {self.reconnect_attempts}")
         elif event == "stratum_reconnect_succeeded":
             self.reconnect_successes += 1
+            self.reconnect_changed_at = record.timestamp
             self.status = "mining"
             self._remember(record, "reconnected")
         elif event == "duplicate_work_ignored":
@@ -255,6 +268,7 @@ class DashboardState:
                 raise DashboardLogError("dashboard Best Hash improvement is not strict")
             self.best_hash = best_hash
             self.best_hash_value = best_hash_value
+            self.best_hash_changed_at = record.timestamp
             self._remember(record, f"best hash improved {_abbreviate(best_hash)}")
         elif event == "share_candidate_found":
             meets_share = _required_boolean(fields, "meets_share_target")
@@ -262,6 +276,7 @@ class DashboardState:
             if not meets_share and not meets_network:
                 raise DashboardLogError("dashboard share candidate has no target hit")
             self.candidates += 1
+            self.share_changed_at = record.timestamp
             self.share_target_hit = self.share_target_hit or meets_share
             self.network_target_hit = self.network_target_hit or meets_network
             if meets_network:
@@ -271,6 +286,7 @@ class DashboardState:
         elif event == "share_submission_completed":
             accepted = _required_boolean(fields, "accepted")
             self.submissions += 1
+            self.share_changed_at = record.timestamp
             if accepted:
                 self.accepted_submissions += 1
             else:
@@ -384,6 +400,10 @@ class DashboardState:
         self.terminal_effective_hashes_per_second = None
         self.started_at = record.timestamp
         self.last_event_at = record.timestamp
+        self.difficulty_changed_at = None
+        self.best_hash_changed_at = None
+        self.share_changed_at = None
+        self.reconnect_changed_at = None
         self.profile_requested = None
         self.profile_effective = None
         self.backend_name = None
@@ -418,6 +438,7 @@ class DashboardState:
         self.submissions = 0
         self.accepted_submissions = 0
         self.rejected_submissions = 0
+        self.last_range = None
         self.raw_rate_samples.clear()
         self.effective_points.clear()
         self.effective_points.append((record.timestamp, 0))
@@ -612,7 +633,7 @@ def render_dashboard(
 ) -> str:
     """Render one bounded terminal snapshot without terminal side effects."""
 
-    reference = now if now is not None else datetime.now(UTC)
+    reference = state._metric_reference(now)
     safe_width = max(_MIN_RENDER_WIDTH, width)
     inner_width = safe_width - 2
     raw_rate = state.raw_hashes_per_second
@@ -733,41 +754,46 @@ def render_dashboard(
     else:
         telemetry = _format_nvidia(nvidia, state.device_ordinal)
     lines.append(_row(telemetry, inner_width))
-    spark_width = max(28, min(84, inner_width - 33))
-    latest_raw_sample = state.raw_rate_samples[-1] if state.raw_rate_samples else None
+    spark_width = max(28, min(84, inner_width - 34))
     lines.append(
         _row(
             f"Raw range-rate history  {_sparkline(tuple(state.raw_rate_samples), spark_width)}  "
-            f"latest {_format_rate(latest_raw_sample)}",
+            f"Average {_format_rate(raw_rate)}",
             inner_width,
         )
     )
 
     strategy = state.strategy_name or "unknown"
-    lines.append(_rule(f"NONCE SPACE EXPLORATION — {strategy}", inner_width))
-    map_width = max(32, min(_DEFAULT_BUCKET_COUNT, inner_width - 30))
-    nonce_map = _render_nonce_map(state, map_width, color=color)
-    lines.append(
-        _row(
-            f"0x00000000  {nonce_map}  0xffffffff",
-            inner_width,
-            already_colored=color,
+    lines.append(_rule(f"SEARCH ACTIVITY — {strategy}", inner_width))
+    activity_range = state.current_range or state.last_range
+    track_width = max(28, min(72, inner_width - 43))
+    track = _activity_track(track_width, reference)
+    if activity_range is None:
+        activity_text = f"Current range  waiting       {track}"
+    else:
+        activity_text = (
+            f"Current range  0x{activity_range[0]:08x}  {track}  "
+            f"0x{activity_range[1] - 1:08x}"
         )
-    )
-    completed_buckets = sum(1 for item in state.nonce_buckets if item)
-    lines.append(
-        _row(
-            f"Observed buckets {completed_buckets}/{_DEFAULT_BUCKET_COUNT}  |  "
-            f"Current {_format_range(state.current_range)}  |  Variant #{state.work_variant_index}",
-            inner_width,
-        )
-    )
-    lines.append(_row(_strategy_explanation(strategy), inner_width))
+    lines.append(_row(activity_text, inner_width))
     if state.recent_bucket_visits:
         path = " → ".join(f"{item:02d}" for item in state.recent_bucket_visits)
-        lines.append(_row(f"Observed range path: {path}", inner_width))
+        path_label = "Recent orbit path" if strategy == "orbiting-bit" else "Recent range path"
+        lines.append(
+            _row(
+                f"{path_label}  {path}  |  Variant #{state.work_variant_index}",
+                inner_width,
+            )
+        )
     else:
-        lines.append(_row("Observed range path: waiting for completed ranges", inner_width))
+        path_label = "Recent orbit path" if strategy == "orbiting-bit" else "Recent range path"
+        lines.append(
+            _row(
+                f"{path_label}  waiting for completed ranges  |  Variant #{state.work_variant_index}",
+                inner_width,
+            )
+        )
+    lines.append(_row(_strategy_explanation(strategy), inner_width))
 
     lines.append(_rule("RECENT EVENTS", inner_width))
     recent = list(state.recent_events)[-6:]
@@ -790,7 +816,7 @@ def render_dashboard(
     rendered = "\n".join(lines)
     if not color:
         return rendered
-    return _colorize_dashboard(rendered)
+    return _colorize_dashboard(rendered, state=state, reference=reference)
 
 
 def run_dashboard(
@@ -1140,6 +1166,24 @@ def _sparkline(values: Sequence[float], width: int) -> str:
     return "".join(result).rjust(width, "·")
 
 
+def _activity_track(width: int, reference: datetime) -> str:
+    """Return a smooth display-only activity trace unrelated to exact nonce position."""
+
+    if width <= 0:
+        return ""
+    if width == 1:
+        return "x"
+    cycle = 2 * (width - 1)
+    tick = int(reference.timestamp())
+
+    def marker(offset: int) -> int:
+        phase = (tick + offset) % cycle
+        return phase if phase < width else cycle - phase
+
+    positions = {marker(0), marker(max(3, width // 3))}
+    return "".join("x" if index in positions else "." for index in range(width))
+
+
 def _render_nonce_map(state: DashboardState, width: int, *, color: bool) -> str:
     statuses: list[str] = []
     for output_index in range(width):
@@ -1170,10 +1214,7 @@ def _strategy_explanation(strategy: str) -> str:
     if strategy == "sequential":
         return "Sequential: contiguous parent ranges sweep across the nonce space from low to high."
     if strategy == "orbiting-bit":
-        return (
-            "Orbiting-bit: observed parent ranges jump through bit-reversal order; "
-            "visited buckets scatter across the space."
-        )
+        return "Orbiting-bit: deterministic bit-reversal search order for each work variant."
     return (
         f"{strategy}: visualization reflects observed parent ranges only; "
         "no strategy internals are inspected."
@@ -1209,17 +1250,67 @@ def _ansi(text: str, code: str) -> str:
     return f"\x1b[{code}m{text}\x1b[0m"
 
 
-def _colorize_dashboard(rendered: str) -> str:
+def _changed_recently(changed_at: datetime | None, reference: datetime) -> bool:
+    if changed_at is None:
+        return False
+    elapsed = (reference - changed_at).total_seconds()
+    return 0 <= elapsed < _HIGHLIGHT_SECONDS
+
+
+def _colorize_dashboard(
+    rendered: str,
+    *,
+    state: DashboardState | None = None,
+    reference: datetime | None = None,
+) -> str:
+    reference = reference if reference is not None else datetime.now(UTC)
+    best_recent = state is not None and _changed_recently(state.best_hash_changed_at, reference)
+    difficulty_recent = state is not None and _changed_recently(
+        state.difficulty_changed_at, reference
+    )
+    share_recent = state is not None and _changed_recently(state.share_changed_at, reference)
+    reconnect_recent = state is not None and _changed_recently(
+        state.reconnect_changed_at, reference
+    )
+
     lines: list[str] = []
     for line in rendered.splitlines():
+        target_summary = "Shares Submitted" in line and "Network Target" in line
+        if best_recent and ("Best Hash" in line or "Best Difficulty" in line):
+            lines.append(_ansi(line, "95;1"))
+            continue
+        if state is not None and state.network_target_hit and target_summary:
+            lines.append(_ansi(line, "95;1"))
+            continue
+        if share_recent and target_summary:
+            lines.append(_ansi(line, "95;1"))
+            continue
+        if difficulty_recent and "Share Target    " in line:
+            lines.append(_ansi(line, "95;1"))
+            continue
+
+        styled = line
+        if difficulty_recent and state is not None:
+            token = f"Difficulty {_format_difficulty(state.difficulty)}"
+            styled = styled.replace(token, _ansi(token, "95;1"))
+        if reconnect_recent and state is not None:
+            token = f"Reconnects {state.reconnect_attempts}/{state.reconnect_successes}"
+            styled = styled.replace(token, _ansi(token, "95;1"))
+        if share_recent and state is not None:
+            token = (
+                f"Shares {state.submissions} ({state.accepted_submissions} accepted / "
+                f"{state.rejected_submissions} rejected)"
+            )
+            styled = styled.replace(token, _ansi(token, "95;1"))
+
         if "[ " in line and " ]" in line:
-            lines.append(_ansi(line, "36"))
+            lines.append(_ansi(styled, "36"))
         elif "HashOrb Dashboard" in line:
-            lines.append(_ansi(line, "36;1"))
+            lines.append(_ansi(styled, "36;1"))
         elif "STATUS mining" in line:
-            lines.append(line.replace("STATUS mining", _ansi("STATUS mining", "32;1")))
+            lines.append(styled.replace("STATUS mining", _ansi("STATUS mining", "32;1")))
         elif "failed" in line.lower():
-            lines.append(_ansi(line, "31"))
+            lines.append(_ansi(styled, "31"))
         else:
-            lines.append(line)
+            lines.append(styled)
     return "\n".join(lines)
