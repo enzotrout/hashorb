@@ -30,6 +30,7 @@ from hashorb.network.stratum.transport import (
 )
 
 _StratumNotification = SetDifficultyNotification | MiningNotifyNotification
+_IGNORED_SERVER_METHODS = frozenset({"mining.ping", "client.show_message"})
 
 
 class StratumClientState(Enum):
@@ -215,8 +216,11 @@ class StratumClient:
         if self._notifications:
             return self._notifications.popleft()
 
-        message = self._transport.receive_message()
-        return self._route_notification_message(message)
+        while True:
+            message = self._transport.receive_message()
+            notification = self._route_notification_message(message)
+            if notification is not None:
+                return notification
 
     def poll_notification(
         self,
@@ -229,17 +233,21 @@ class StratumClient:
         if self._notifications:
             return self._notifications.popleft()
 
-        try:
-            message = self._transport.receive_message(timeout_seconds=timeout_seconds)
-        except StratumReceiveTimeoutError:
-            return None
-
-        return self._route_notification_message(message)
+        while True:
+            try:
+                message = self._transport.receive_message(timeout_seconds=timeout_seconds)
+            except StratumReceiveTimeoutError:
+                return None
+            notification = self._route_notification_message(message)
+            if notification is not None:
+                return notification
 
     def _route_notification_message(
         self,
         message: Mapping[str, object],
-    ) -> _StratumNotification:
+    ) -> _StratumNotification | None:
+        if _is_ignored_server_message(message):
+            return None
         if "method" not in message:
             response_id = self._parse_response_id(message)
             raise StratumRequestError(
@@ -268,7 +276,9 @@ class StratumClient:
         while True:
             message = self._transport.receive_message()
             if "method" in message:
-                self._notifications.append(self._parse_notification(message))
+                notification = self._route_notification_message(message)
+                if notification is not None:
+                    self._notifications.append(notification)
                 continue
 
             response_id = self._parse_response_id(message)
@@ -326,6 +336,12 @@ class StratumClient:
             raise StratumClientStateError(
                 f"{operation} requires state {required.name}; current state is {self._state.name}"
             )
+
+
+def _is_ignored_server_message(message: Mapping[str, object]) -> bool:
+    """Return whether a known informational server method can be safely skipped."""
+
+    return message.get("method") in _IGNORED_SERVER_METHODS
 
 
 def _validate_poll_timeout(timeout_seconds: float) -> None:

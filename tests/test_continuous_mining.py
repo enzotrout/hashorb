@@ -1214,7 +1214,7 @@ def test_network_time_roll_reuses_seed_and_exact_variant_is_submitted() -> None:
     harness = Harness(match_call=257)
 
     _, initial_job, result = run_with_harness(
-        ContinuousMiningPlan(0xFFFFFFFF, 1),
+        ContinuousMiningPlan(0xFFFFFFFF, 1, max_chunks=257),
         harness,
         extra_nonce_2_size=1,
         extra_nonce_2="80",
