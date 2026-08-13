@@ -865,11 +865,7 @@ def run_continuous_mining(
             if stop_token.stop_requested:
                 observe_stop()
             range_fully_searched = chunk_result.hashes_checked == stop_nonce - start_nonce
-            if (
-                match.meets_network_target
-                or not range_fully_searched
-                or stop_token.stop_requested
-            ):
+            if match.meets_network_target or not range_fully_searched or stop_token.stop_requested:
                 outcome = (
                     ContinuousMiningOutcome.SHARE_ACCEPTED
                     if accepted
