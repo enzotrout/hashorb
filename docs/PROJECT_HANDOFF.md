@@ -18,7 +18,7 @@ Active integration branch: `local/dashboard-hash-quality`
 
 Open PR: #10, `Restore exact Best Hash dashboard on current main`
 
-PR state: draft and mergeable. Do not merge until the one-hour combined live gate and the post-run dashboard-polish checks below are clean.
+PR state: draft and mergeable. The one-hour combined mining gate is complete and clean. Do not merge until the post-run dashboard-polish checks below are also clean.
 
 Base branch: `main`
 
@@ -26,7 +26,7 @@ Current `main` at integration time: `b2516426f1d35d33d02d972870755d4b67195a34`
 
 ## What is currently integrated
 
-The active branch contains both of these previously separate lines of work:
+The active branch contains these lines of work:
 
 1. PR #9 continuous Stratum share/CKPool resilience
    - structured pool share rejection is nonfatal
@@ -43,7 +43,7 @@ The active branch contains both of these previously separate lines of work:
    - dashboard renders Best Hash, Best Difficulty, Network Target, Share Target, target-hit indicators, and share counts
    - Best Hash is the true minimum observed over searched nonces, not merely the best share candidate
 
-3. Dashboard presentation polish staged while the one-hour mining process was already running
+3. Dashboard presentation polish staged after the one-hour miner had already started
    - `DEVICE / RATE` now labels the weighted run-average raw compute rate as `Average` instead of showing the noisy latest range sample
    - the blocky nonce-space bucket bar is replaced by `SEARCH ACTIVITY`
    - `SEARCH ACTIVITY` keeps the most recent range endpoints and renders a smooth two-marker dotted animation; marker position is display-only and does not claim to be an exact GPU nonce location
@@ -54,7 +54,7 @@ The active branch contains both of these previously separate lines of work:
    - reconnect counters turn bright magenta for 60 seconds after connection-loss/reconnect activity
    - a Network Target HIT remains persistently emphasized for the rest of the run
 
-Important validation boundary: the currently running one-hour miner was started before the dashboard-presentation commits. Those later commits change only `src/hashorb/dashboard.py`, dashboard tests, and this documentation. They do not alter mining, CUDA, search strategy, Stratum, share submission, or work-allocation behavior. Therefore the one-hour run remains the mining-behavior gate; after it ends, validate the new dashboard code separately by tests and by replaying the completed JSONL.
+Important validation boundary: the one-hour miner was started before the dashboard-presentation commits. Those later commits change only `src/hashorb/dashboard.py`, dashboard tests, and this documentation. They do not alter mining, CUDA, search strategy, Stratum, share submission, or work-allocation behavior. Therefore the completed one-hour result is the mining-behavior gate; validate the newer dashboard code separately by tests and by replaying the completed JSONL.
 
 ## Critical build detail
 
@@ -92,18 +92,9 @@ Expected skips include isolated regtest, opt-in CUDA tests during the normal sui
 
 Previous exact Best Hash hardware validation recorded a CUDA median throughput regression of approximately 1.34%, within the accepted <=3% gate.
 
-## Most recent live combined gate
+## Five-minute combined live gate
 
-A fresh 5-minute live test on `local/dashboard-hash-quality` used:
-
-- profile: `auto`
-- backend: `cuda`
-- CUDA device: `0`
-- strategy: `orbiting-bit`
-- endpoint: `stratum.ckpool.org:3333`
-- assigned difficulty: `10000`
-- runtime limit: `300` seconds
-- reconnect limit: `5`
+A fresh 5-minute live test on `local/dashboard-hash-quality` used Auto + CUDA device 0 + Orbiting Bit against `stratum.ckpool.org:3333` at assigned difficulty 10000.
 
 Result:
 
@@ -133,7 +124,46 @@ Share Target    NOT HIT
 Network Target  NOT FOUND
 ```
 
-## Previous failure that must remain understood
+## One-hour combined live gate: PASSED
+
+The one-hour Auto + CUDA device 0 + Orbiting Bit run completed cleanly with no reconnects and no mining failure.
+
+```text
+Result: runtime_limit_reached
+Final difficulty: 10000
+Chunks completed: 13945
+Jobs used: 129
+Job replacements: 128
+Work variants used: 1626
+Extra nonce 2 advances: 1497
+Extra nonce 2 cycles: 0
+Network-time rolls: 0
+Duplicate work ignored: 0
+Reconnect attempts: 0
+Successful reconnects: 0
+Failed reconnect attempts: 0
+Sessions established: 1
+Candidates found: 0
+Submissions performed: 0
+Hashes checked: 6645267804416
+Compute elapsed: 2482223511122 ns
+Compute-only hashes per second: 2677143204.32
+Profile wall-clock elapsed: 3600018555528 ns
+Effective wall-clock hashes per second: 1845898209.11
+```
+
+Acceptance result:
+
+- full 3600-second runtime completed normally
+- no `Continuous Stratum mining failed`
+- no unhandled `StratumClientError`
+- no reconnects were needed
+- exact Best Hash telemetry remained active during the run
+- pool/job churn was handled across 128 replacements and 1626 work variants
+
+Important limitation: this run found zero share candidates, so it did **not** exercise the live share-submission path. PR #9's structured share-rejection/continue behavior is covered by tests, but a real pool candidate/submission has not yet been observed on the combined code. Do not claim that live path has been proven until a candidate actually occurs.
+
+## Previous share failure that must remain understood
 
 A prior one-hour Auto + Orbiting Bit run reached a valid local share candidate and then failed with `StratumClientError` before a submission result was recorded.
 
@@ -149,56 +179,18 @@ Reconnects: 0
 
 The exact live pool error was not captured, so do not claim the pool definitely rejected the share as low difficulty.
 
-PR #9 was created to make structured share rejection nonfatal and to skip known CKPool informational messages. The next long run is specifically intended to exercise this combined code in real conditions and ideally encounter another share candidate.
+PR #9 was created to make structured share rejection nonfatal and to skip known CKPool informational messages.
 
-## Current gate: one-hour live run
+## Next required gate: dashboard polish validation
 
-Remain on the local checkout that launched the run until it completes. Do not pull the newer dashboard-only commits into that checkout during the active mining validation.
-
-The running command is equivalent to:
+The one-hour mining gate is complete. Now update the local branch to the latest dashboard-only commits. No CUDA rebuild is required for these commits.
 
 ```bash
 cd /home/ltrout/Development/hashorb
-
-HASHORB_SEARCH_STRATEGY=orbiting-bit \
-HASHORB_ENABLE_LIVE_STRATUM=1 \
-HASHORB_ENABLE_LIVE_MINING=1 \
-uv run python -m hashorb stratum-mine \
-  --profile auto \
-  --device 0 \
-  --start-nonce 0 \
-  --max-runtime-seconds 3600 \
-  --max-reconnect-attempts 5 \
-  --log-file logs/hashorb-orbiting-bit-auto-besthash-1h.jsonl
+git pull --ff-only
 ```
 
-Acceptance criteria:
-
-- finishes cleanly as `runtime_limit_reached`, unless a true network-target hit creates an intentional terminal outcome
-- no `Continuous Stratum mining failed`
-- no unhandled `StratumClientError`
-- Best Hash may improve across job replacements and work-variant changes
-- zero reconnects is desirable but reconnect recovery may occur if the connection genuinely drops
-- if a share candidate appears, submission result is recorded and normal full-range mining continues after an accepted or structured rejected share
-- exact pool rejection reason must not be inferred unless explicitly logged
-
-## Post-run dashboard polish validation
-
-After the one-hour miner finishes:
-
-1. pull the latest `local/dashboard-hash-quality` branch
-2. no CUDA rebuild is required because the post-start changes are dashboard/tests/docs only
-3. run Ruff format/check, mypy, and focused dashboard/hash-quality tests
-4. replay the completed one-hour log through the updated dashboard
-5. verify:
-   - `Raw range-rate history ... Average <rate>`
-   - `SEARCH ACTIVITY — orbiting-bit`
-   - dotted two-marker activity animation is smooth and endpoints remain readable
-   - recent orbit path and variant are readable without the old block bucket map
-   - recent rare changes turn bright magenta for about 60 seconds when replayed/live
-   - Network Target HIT, if ever true, remains persistently emphasized
-
-Recommended focused checks:
+Run:
 
 ```bash
 uv run ruff format --check src/hashorb/dashboard.py tests/test_dashboard.py
@@ -207,24 +199,35 @@ uv run mypy src
 uv run pytest -q tests/test_dashboard.py tests/test_hash_quality_dashboard.py
 ```
 
-Replay the completed log:
+Replay the completed one-hour log:
 
 ```bash
 uv run python -m hashorb dashboard \
   --log-file logs/hashorb-orbiting-bit-auto-besthash-1h.jsonl
 ```
 
+Verify:
+
+- `Raw range-rate history ... Average <rate>`
+- `SEARCH ACTIVITY — orbiting-bit`
+- dotted two-marker activity animation is smooth and endpoints remain readable
+- recent orbit path and variant are readable without the old block bucket map
+- rare changes turn bright magenta for about 60 seconds when live/recent
+- Network Target HIT, if ever true, remains persistently emphasized
+
+Because replaying a completed historical log freezes the metric reference at the terminal event, the animation/highlight appearance may be best checked by a short synthetic/live dashboard run after the focused tests if needed.
+
 ## After all gates
 
-If the one-hour mining gate and post-run dashboard polish validation are clean:
+If the post-run dashboard polish validation is clean:
 
-1. record the final one-hour metrics and any share behavior in this file
-2. update PR #10 with the completed combined validation
-3. mark PR #10 ready for review
-4. merge PR #10 only after confirming the branch head has not changed unexpectedly
-5. switch the Spark back to `main`
-6. `git pull --ff-only`
-7. rebuild the CUDA extension on `main` if the merged result changes the extension relative to the currently loaded `.so`
+1. update this file and PR #10 with the final dashboard validation
+2. mark PR #10 ready for review
+3. merge PR #10 only after confirming the branch head has not changed unexpectedly
+4. switch the Spark back to `main`
+5. `git pull --ff-only`
+6. rebuild the CUDA extension on `main` because the merged Best Hash implementation changes the extension interface relative to old `main`
+7. run a short CUDA smoke test after the rebuild
 
 ## New-session recovery procedure
 
