@@ -192,9 +192,25 @@ def test_submit_share_sends_exact_request_with_authenticated_username() -> None:
             "Job-AbC",
             "A1b2C3d4",
             "65F04aBc",
-            "78563412",
+            "12345678",
         ],
     }
+
+
+def test_submit_nonce_uses_stratum_uint32_hex_not_header_byte_order() -> None:
+    request = build_submit_request(
+        7,
+        make_settings().stratum_username,
+        "job-live-regression",
+        "00000000",
+        "65f04abc",
+        0xF2A916E1,
+    )
+
+    params = request["params"]
+    assert isinstance(params, list)
+    assert params[4] == "f2a916e1"
+    assert params[4] != (0xF2A916E1).to_bytes(4, "little").hex()
 
 
 def test_submit_share_delegates_request_construction(
@@ -235,7 +251,7 @@ def test_submit_share_delegates_request_construction(
             0x12345678,
         )
     ]
-    assert transport.sent[2]["params"][-1] == "78563412"
+    assert transport.sent[2]["params"][-1] == "12345678"
 
 
 def test_submit_share_allocates_consecutive_request_ids() -> None:
@@ -452,5 +468,6 @@ def test_public_mining_result_boundary_reaches_fake_pool(accepted: bool) -> None
     assert result is accepted
     assert isinstance(params, list)
     assert params[1:4] == [work.job_id, work.extra_nonce_2, work.network_time]
-    assert params[4] == candidate_header[76:80].hex()
-    assert bytes.fromhex(params[4]) == candidate_header[76:80]
+    assert params[4] == f"{match.nonce:08x}"
+    assert bytes.fromhex(params[4]) == match.nonce.to_bytes(4, "big")
+    assert bytes.fromhex(params[4]) != candidate_header[76:80]

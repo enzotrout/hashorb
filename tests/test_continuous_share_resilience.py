@@ -11,6 +11,7 @@ from hashorb.mining import (
     NonceSearchMatch,
     PreparedMiningWork,
 )
+from hashorb.network.stratum import build_submit_request
 from hashorb.network.stratum.client import StratumRequestError
 from hashorb.network.stratum.messages import StratumError
 
@@ -88,17 +89,39 @@ def test_partial_range_match_keeps_existing_terminal_behavior() -> None:
     assert len(harness.submit_calls) == 1
 
 
-def test_network_target_match_remains_terminal_even_after_complete_range() -> None:
+def test_network_target_match_uses_protocol_nonce_order_and_is_terminal() -> None:
+    live_nonce = 0xF2A916E1
     harness = Harness(match_call=1, match_flags=(True, True), accepted=True)
 
     _, _, result = run_with_harness(
-        ContinuousMiningPlan(start_nonce=0, chunk_size=1, max_chunks=2),
+        ContinuousMiningPlan(start_nonce=live_nonce, chunk_size=1, max_chunks=2),
         harness,
     )
 
     assert result.outcome is ContinuousMiningOutcome.SHARE_ACCEPTED
     assert len(harness.search_calls) == 1
     assert len(harness.submit_calls) == 1
+
+    work, match = harness.submit_calls[0]
+    assert match.meets_share_target is True
+    assert match.meets_network_target is True
+    assert match.nonce == live_nonce
+
+    request = build_submit_request(
+        3,
+        "bc1qnetworktarget.worker",
+        work.job_id,
+        work.extra_nonce_2,
+        work.network_time,
+        match.nonce,
+    )
+    assert request["params"] == [
+        "bc1qnetworktarget.worker",
+        work.job_id,
+        work.extra_nonce_2,
+        work.network_time,
+        "f2a916e1",
+    ]
 
 
 def test_ambiguous_request_failure_is_not_silently_downgraded() -> None:

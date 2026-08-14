@@ -46,7 +46,7 @@ def test_build_submit_request_has_exact_shape_and_parameter_order() -> None:
             "job-A",
             "aB12",
             "65F04aBc",
-            "78563412",
+            "12345678",
         ],
     }
 
@@ -55,12 +55,12 @@ def test_build_submit_request_has_exact_shape_and_parameter_order() -> None:
     ("nonce", "expected"),
     [
         (0, "00000000"),
-        (1, "01000000"),
-        (0x12345678, "78563412"),
+        (1, "00000001"),
+        (0x12345678, "12345678"),
         (0xFFFFFFFF, "ffffffff"),
     ],
 )
-def test_build_submit_request_serializes_nonce_little_endian(
+def test_build_submit_request_serializes_nonce_as_canonical_uint32_hex(
     nonce: int,
     expected: str,
 ) -> None:
@@ -69,15 +69,16 @@ def test_build_submit_request_serializes_nonce_little_endian(
 
     assert isinstance(params, list)
     assert params[4] == expected
-    assert params[4] == nonce.to_bytes(4, "little").hex()
+    assert params[4] == f"{nonce:08x}"
 
 
-def test_submit_nonce_is_not_direct_integer_formatting() -> None:
+def test_submit_nonce_is_not_serialized_as_header_little_endian_bytes() -> None:
     nonce = 0x12345678
     params = _build_request(nonce=nonce)["params"]
 
     assert isinstance(params, list)
-    assert params[4] != f"{nonce:08x}"
+    assert params[4] == f"{nonce:08x}"
+    assert params[4] != nonce.to_bytes(4, "little").hex()
 
 
 def test_build_submit_request_is_json_compatible_and_deterministic() -> None:
@@ -235,7 +236,7 @@ def test_parse_submit_result_does_not_mutate_message() -> None:
     assert message == original
 
 
-def test_submit_request_uses_prepared_work_and_match_nonce_bytes() -> None:
+def test_submit_request_uses_prepared_work_and_protocol_nonce_text() -> None:
     work = PreparedMiningWork(
         job_id="synthetic-job",
         extra_nonce_2="A1b2C3d4",
@@ -264,5 +265,6 @@ def test_submit_request_uses_prepared_work_and_match_nonce_bytes() -> None:
 
     assert isinstance(params, list)
     assert params[1:4] == [work.job_id, work.extra_nonce_2, work.network_time]
-    assert params[4] == candidate_header[76:80].hex()
-    assert bytes.fromhex(params[4]) == candidate_header[76:80]
+    assert params[4] == f"{match.nonce:08x}"
+    assert bytes.fromhex(params[4]) == match.nonce.to_bytes(4, "big")
+    assert bytes.fromhex(params[4]) != candidate_header[76:80]
