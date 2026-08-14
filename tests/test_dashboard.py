@@ -652,3 +652,49 @@ def test_canonical_cli_rejects_invalid_dashboard_arguments(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Usage: hashorb dashboard" in captured.err
+
+
+def test_effective_rate_windows_diverge_after_five_minutes() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+
+    state.apply(
+        _record(
+            2,
+            "nonce_range_completed",
+            300.0,
+            job_id="rate-job",
+            start_nonce=0,
+            stop_nonce=300,
+            hashes_checked=300,
+            elapsed_ns=100,
+            hashes_per_second=3_000_000_000.0,
+            match_found=False,
+        )
+    )
+    state.apply(
+        _record(
+            3,
+            "nonce_range_completed",
+            600.0,
+            job_id="rate-job",
+            start_nonce=300,
+            stop_nonce=1200,
+            hashes_checked=900,
+            elapsed_ns=100,
+            hashes_per_second=9_000_000_000.0,
+            match_found=False,
+        )
+    )
+
+    reference = datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=600)
+
+    assert state.effective_hashes_per_second(reference) == pytest.approx(2.0)
+    assert state.rolling_effective_hashes_per_second(
+        300.0,
+        reference,
+    ) == pytest.approx(3.0)
+    assert state.rolling_effective_hashes_per_second(
+        3600.0,
+        reference,
+    ) == pytest.approx(2.0)

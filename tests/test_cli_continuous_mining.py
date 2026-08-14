@@ -34,6 +34,8 @@ from hashorb.network.stratum import (
     StratumConnectionError,
     SubscribeResult,
 )
+from hashorb.network.stratum.client import StratumRequestError
+from hashorb.network.stratum.messages import StratumError
 from hashorb.observability import JsonlEventSink, summarize_jsonl
 
 type PythonSignalHandler = Callable[[int, FrameType | None], None]
@@ -1688,3 +1690,61 @@ def test_logs_summary_prints_continuous_command_in_stable_known_order(
     output = capsys.readouterr().out
     assert "stratum-mine-chunks: 0" in output
     assert "stratum-mine: 1" in output
+
+
+def test_structured_pool_rejection_is_mirrored_and_counted_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "structured-rejection.jsonl"
+    rejection = StratumRequestError(
+        "private synthetic pool rejection",
+        request_id=3,
+        error=StratumError(23, "Low difficulty share", None),
+    )
+    client = FakeClient(submission_failure=rejection)
+    install_fakes(
+        monkeypatch,
+        client,
+        SearchHarness(match_call=1),
+        deterministic_log=True,
+    )
+
+    assert (
+        cli_module.main(
+            arguments(
+                chunk_size="1",
+                max_chunks="2",
+                log_file=path,
+            )
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "Candidates found: 1" in output
+    assert "Submissions performed: 1" in output
+    assert "Shares accepted: 0" in output
+    assert "Shares rejected: 1" in output
+
+    primary_records = read_events(path)
+    assert primary_records[-1]["event"] == "command_completed"
+    assert primary_records[-1]["outcome"] == "chunk_limit_reached"
+
+    warning_path = path.with_name(f"{path.stem}.warnings{path.suffix}")
+    warning_records = read_events(warning_path)
+    submission_records = [
+        record for record in warning_records if record["event"] == "share_submission_completed"
+    ]
+
+    assert len(submission_records) == 1
+    submission = submission_records[0]
+    assert submission["level"] == "WARNING"
+    assert submission["accepted"] is False
+    assert submission["rejection_code"] == 23
+    assert submission["rejection_category"] == "low_difficulty"
+
+    warning_text = warning_path.read_text(encoding="utf-8")
+    assert "private synthetic pool rejection" not in warning_text
+    assert "Low difficulty share" not in warning_text
