@@ -165,13 +165,28 @@ def _validated_result(
     elapsed_ns: int,
     native_result: object,
 ) -> NonceSearchResult:
-    if not isinstance(native_result, tuple) or len(native_result) != 5:
+    if not isinstance(native_result, tuple) or len(native_result) not in {5, 6}:
         raise ComputeBackendExecutionError("native compute backend returned invalid data")
-    nonce, digest, meets_share, meets_network, hashes_checked = native_result
+    nonce, digest, meets_share, meets_network, hashes_checked = native_result[:5]
+    best_nonce = native_result[5] if len(native_result) == 6 else None
     if not isinstance(meets_share, bool) or not isinstance(meets_network, bool):
         raise ComputeBackendExecutionError("native compute backend returned invalid flags")
     if isinstance(hashes_checked, bool) or not isinstance(hashes_checked, int):
         raise ComputeBackendExecutionError("native compute backend returned an invalid count")
+
+    verified_best_hash: bytes | None = None
+    if best_nonce is not None:
+        if isinstance(best_nonce, bool) or not isinstance(best_nonce, int):
+            raise ComputeBackendExecutionError("native compute backend returned invalid best nonce")
+        checked_stop = start_nonce + hashes_checked
+        if not start_nonce <= best_nonce < min(stop_nonce, checked_stop):
+            raise ComputeBackendExecutionError("native best nonce is outside the checked range")
+        best_header = work.header_prefix + best_nonce.to_bytes(
+            _NONCE_BYTE_LENGTH,
+            byteorder="little",
+            signed=False,
+        )
+        verified_best_hash = hash_block_header(best_header)
 
     if nonce is None:
         if (
@@ -187,6 +202,8 @@ def _validated_result(
             hashes_checked=hashes_checked,
             elapsed_ns=elapsed_ns,
             match=None,
+            best_nonce=best_nonce,
+            best_hash=verified_best_hash,
         )
 
     if isinstance(nonce, bool) or not isinstance(nonce, int):
@@ -225,4 +242,6 @@ def _validated_result(
         hashes_checked=hashes_checked,
         elapsed_ns=elapsed_ns,
         match=match,
+        best_nonce=best_nonce,
+        best_hash=verified_best_hash,
     )

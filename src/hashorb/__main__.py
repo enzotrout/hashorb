@@ -232,13 +232,39 @@ class _MiningOutcome:
     pool_accepted: bool | None
 
 
+def _emit_best_hash_improved(
+    events: EventSink,
+    result: NonceSearchResult,
+    previous_best_hash_value: int | None,
+) -> int | None:
+    """Emit only strict run-wide Best Hash improvements."""
+
+    current_value = result.best_hash_value
+    if current_value is None:
+        return previous_best_hash_value
+
+    if previous_best_hash_value is not None and current_value >= previous_best_hash_value:
+        return previous_best_hash_value
+
+    best_hash = result.best_hash
+    if best_hash is None:
+        raise RuntimeError("Best Hash value exists without its digest")
+
+    events.emit(
+        "best_hash_improved",
+        fields={"best_hash": best_hash[::-1].hex()},
+    )
+    return current_value
+
+
 class _ChunkedEventObserver:
     """Translate passive chunk-orchestration callbacks into safe events."""
 
-    __slots__ = ("_events",)
+    __slots__ = ("_events", "_best_hash_value")
 
     def __init__(self, events: EventSink) -> None:
         self._events = events
+        self._best_hash_value: int | None = None
 
     def notification_received(
         self,
@@ -288,6 +314,12 @@ class _ChunkedEventObserver:
             },
         )
 
+        self._best_hash_value = _emit_best_hash_improved(
+            self._events,
+            result,
+            self._best_hash_value,
+        )
+
     def job_replaced(
         self,
         previous_job: MiningJob,
@@ -329,17 +361,27 @@ class _ChunkedEventObserver:
         work: PreparedMiningWork,
         match: NonceSearchMatch,
         accepted: bool,
+        *,
+        rejection_code: int | None = None,
+        rejection_category: str | None = None,
     ) -> None:
-        """Emit the single controlled pool response."""
+        """Emit one controlled pool response with safe rejection metadata."""
+
+        fields: dict[str, EventValue] = {
+            "job_id": work.job_id,
+            "nonce": match.nonce,
+            "accepted": accepted,
+        }
+
+        if rejection_code is not None:
+            fields["rejection_code"] = rejection_code
+        if rejection_category is not None:
+            fields["rejection_category"] = rejection_category
 
         self._events.emit(
             "share_submission_completed",
             level="INFO" if accepted else "WARNING",
-            fields={
-                "job_id": work.job_id,
-                "nonce": match.nonce,
-                "accepted": accepted,
-            },
+            fields=fields,
         )
 
 
@@ -1208,6 +1250,15 @@ def _print_log_summary(log_file: str, summary: LogSummary) -> None:
         print(f"  {stage}/{category}: {count}")
 
 
+def _warning_log_path(log_file: str) -> str:
+    """Return the automatic WARNING/ERROR sibling log path."""
+
+    path = Path(log_file)
+    if path.suffix:
+        return str(path.with_name(f"{path.stem}.warnings{path.suffix}"))
+    return str(path.with_name(f"{path.name}.warnings.jsonl"))
+
+
 def _run_with_event_sink(
     command: str,
     log_file: str | None,
@@ -1219,7 +1270,13 @@ def _run_with_event_sink(
 
     try:
         events: EventSink = (
-            NullEventSink() if log_file is None else JsonlEventSink(log_file, command)
+            NullEventSink()
+            if log_file is None
+            else JsonlEventSink(
+                log_file,
+                command,
+                warning_path=_warning_log_path(log_file),
+            )
         )
     except (EventLogError, TypeError, ValueError):
         print("Could not initialize structured event logging.", file=sys.stderr)
@@ -2715,6 +2772,7 @@ def _mine_one_range(
             "match_found": result.match is not None,
         },
     )
+    _emit_best_hash_improved(events, result, None)
 
     pool_accepted: bool | None = None
     if result.match is not None:
@@ -3215,6 +3273,8 @@ def _print_continuous_mining_outcome(
     print(f"Sessions established: {recovery_statistics.sessions_established}")
     print(f"Candidates found: {result.candidates_found if result is not None else 0}")
     print(f"Submissions performed: {result.submissions_performed if result is not None else 0}")
+    print(f"Shares accepted: {result.accepted_submissions if result is not None else 0}")
+    print(f"Shares rejected: {result.rejected_submissions if result is not None else 0}")
     print(f"Hashes checked: {result.total_hashes_checked if result is not None else 0}")
     print(f"Elapsed time: {result.total_elapsed_ns if result is not None else 0} ns")
     rate = result.weighted_hashes_per_second if result is not None else None

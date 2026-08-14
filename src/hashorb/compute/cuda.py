@@ -309,15 +309,34 @@ def _validated_cuda_result(
     elapsed_ns: int,
     cuda_result: object,
 ) -> NonceSearchResult:
-    if not isinstance(cuda_result, tuple) or len(cuda_result) != 4:
+    if not isinstance(cuda_result, tuple) or len(cuda_result) not in {4, 5}:
         raise ComputeBackendExecutionError("CUDA compute backend returned invalid data")
-    nonce, meets_share, meets_network, hashes_checked = cuda_result
+
+    nonce, meets_share, meets_network, hashes_checked = cuda_result[:4]
     if not isinstance(meets_share, bool) or not isinstance(meets_network, bool):
         raise ComputeBackendExecutionError("CUDA compute backend returned invalid flags")
     if isinstance(hashes_checked, bool) or not isinstance(hashes_checked, int):
         raise ComputeBackendExecutionError("CUDA compute backend returned an invalid count")
     if hashes_checked != stop_nonce - start_nonce:
         raise ComputeBackendExecutionError("CUDA compute hash count is inconsistent")
+
+    best_nonce: int | None = None
+    best_hash: bytes | None = None
+    if len(cuda_result) == 5:
+        raw_best_nonce = cuda_result[4]
+        if isinstance(raw_best_nonce, bool) or not isinstance(raw_best_nonce, int):
+            raise ComputeBackendExecutionError(
+                "CUDA compute backend returned an invalid best nonce"
+            )
+        if not start_nonce <= raw_best_nonce < stop_nonce:
+            raise ComputeBackendExecutionError("CUDA best nonce is outside the range")
+        best_nonce = raw_best_nonce
+        best_header = work.header_prefix + best_nonce.to_bytes(
+            _NONCE_BYTE_LENGTH,
+            byteorder="little",
+            signed=False,
+        )
+        best_hash = hash_block_header(best_header)
 
     if nonce is None:
         if meets_share or meets_network:
@@ -328,6 +347,8 @@ def _validated_cuda_result(
             hashes_checked=hashes_checked,
             elapsed_ns=elapsed_ns,
             match=None,
+            best_nonce=best_nonce,
+            best_hash=best_hash,
         )
 
     if isinstance(nonce, bool) or not isinstance(nonce, int):
@@ -361,6 +382,8 @@ def _validated_cuda_result(
             meets_share_target=verified_share,
             meets_network_target=verified_network,
         ),
+        best_nonce=best_nonce,
+        best_hash=best_hash,
     )
 
 

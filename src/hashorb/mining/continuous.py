@@ -70,6 +70,14 @@ _NANOSECONDS_PER_SECOND = 1_000_000_000
 _NOTIFICATION_WAIT_SECONDS = 0.25
 _PACING_WAIT_SECONDS = 0.1
 
+_SHARE_REJECTION_CATEGORIES = {
+    21: "job_not_found",
+    22: "duplicate_share",
+    23: "low_difficulty",
+    24: "unauthorized_worker",
+    25: "not_subscribed",
+}
+
 
 class ContinuousMiningError(Exception):
     """Base error for continuous mining orchestration."""
@@ -168,6 +176,10 @@ class ContinuousMiningResult:
     sessions_established: int
     total_hashes_checked: int
     total_elapsed_ns: int
+    candidate_count: int | None = None
+    submission_count: int | None = None
+    accepted_submission_count: int | None = None
+    rejected_submission_count: int | None = None
 
     def __post_init__(self) -> None:
         """Validate aggregate counters and terminal submission state."""
@@ -220,6 +232,46 @@ class ContinuousMiningResult:
                 "successful_reconnects cannot exceed sessions_established"
             )
 
+        optional_counts = (
+            ("candidate_count", self.candidate_count),
+            ("submission_count", self.submission_count),
+            (
+                "accepted_submission_count",
+                self.accepted_submission_count,
+            ),
+            (
+                "rejected_submission_count",
+                self.rejected_submission_count,
+            ),
+        )
+        for optional_name, optional_value in optional_counts:
+            if optional_value is not None:
+                _validate_nonnegative_integer(
+                    optional_value,
+                    optional_name,
+                )
+
+        counts = tuple(value for _, value in optional_counts)
+        if all(value is not None for value in counts):
+            candidate_count = self.candidate_count
+            submission_count = self.submission_count
+            accepted_count = self.accepted_submission_count
+            rejected_count = self.rejected_submission_count
+
+            assert candidate_count is not None
+            assert submission_count is not None
+            assert accepted_count is not None
+            assert rejected_count is not None
+
+            if submission_count > candidate_count:
+                raise ContinuousMiningValidationError(
+                    "submission_count cannot exceed candidate_count"
+                )
+            if accepted_count + rejected_count != submission_count:
+                raise ContinuousMiningValidationError(
+                    "accepted/rejected counts must equal submission_count"
+                )
+
         submitted_outcome = self.outcome in {
             ContinuousMiningOutcome.SHARE_ACCEPTED,
             ContinuousMiningOutcome.SHARE_REJECTED,
@@ -241,15 +293,35 @@ class ContinuousMiningResult:
 
     @property
     def candidates_found(self) -> int:
-        """Return the session candidate count, which is bounded to one."""
+        """Return every share candidate observed during the session."""
 
+        if self.candidate_count is not None:
+            return self.candidate_count
         return int(self.match is not None)
 
     @property
     def submissions_performed(self) -> int:
-        """Return the session submission count, which is bounded to one."""
+        """Return every share submission performed during the session."""
 
+        if self.submission_count is not None:
+            return self.submission_count
         return int(self.pool_accepted is not None)
+
+    @property
+    def accepted_submissions(self) -> int:
+        """Return every accepted share submission."""
+
+        if self.accepted_submission_count is not None:
+            return self.accepted_submission_count
+        return int(self.pool_accepted is True)
+
+    @property
+    def rejected_submissions(self) -> int:
+        """Return every rejected share submission."""
+
+        if self.rejected_submission_count is not None:
+            return self.rejected_submission_count
+        return int(self.pool_accepted is False)
 
     @property
     def weighted_hashes_per_second(self) -> float | None:
@@ -367,6 +439,9 @@ class ContinuousMiningObserver(Protocol):
         work: PreparedMiningWork,
         match: NonceSearchMatch,
         accepted: bool,
+        *,
+        rejection_code: int | None = None,
+        rejection_category: str | None = None,
     ) -> None:
         """Observe the one terminal pool response."""
 
@@ -451,6 +526,9 @@ class NullContinuousMiningObserver:
         work: PreparedMiningWork,
         match: NonceSearchMatch,
         accepted: bool,
+        *,
+        rejection_code: int | None = None,
+        rejection_category: str | None = None,
     ) -> None:
         """Discard a submission observation."""
 
@@ -598,6 +676,10 @@ def run_continuous_mining(
     duplicates = 0
     total_hashes = 0
     total_elapsed_ns = 0
+    candidate_count = 0
+    submission_count = 0
+    accepted_submission_count = 0
+    rejected_submission_count = 0
     stop_observed = False
 
     def finish(
@@ -640,6 +722,10 @@ def run_continuous_mining(
             sessions_established=statistics.sessions_established,
             total_hashes_checked=total_hashes,
             total_elapsed_ns=total_elapsed_ns,
+            candidate_count=candidate_count,
+            submission_count=submission_count,
+            accepted_submission_count=accepted_submission_count,
+            rejected_submission_count=rejected_submission_count,
         )
 
     def observe_stop() -> None:
@@ -845,31 +931,49 @@ def run_continuous_mining(
 
         if chunk_result.match is not None:
             match = chunk_result.match
+            candidate_count += 1
             if stop_token.stop_requested:
                 observe_stop()
             event_observer.candidate_found(current_work, match)
             if stop_token.stop_requested:
                 observe_stop()
+            rejection_code: int | None = None
+            rejection_category: str | None = None
+
             try:
                 accepted = current_submit_share(current_work, match)
             except StratumRequestError as exc:
                 if exc.error is None:
                     raise
                 accepted = False
+                rejection_code = exc.error.code
+                rejection_category = _SHARE_REJECTION_CATEGORIES.get(
+                    rejection_code,
+                    "pool_rejection",
+                )
+
             if not isinstance(accepted, bool):
                 raise ContinuousMiningValidationError("submit_share must return an actual Boolean")
+
+            submission_count += 1
+            if accepted:
+                accepted_submission_count += 1
+            else:
+                rejected_submission_count += 1
             liveness.server_message_received()
             if stop_token.stop_requested:
                 observe_stop()
-            event_observer.submission_completed(current_work, match, accepted)
+            event_observer.submission_completed(
+                current_work,
+                match,
+                accepted,
+                rejection_code=rejection_code,
+                rejection_category=rejection_category,
+            )
             if stop_token.stop_requested:
                 observe_stop()
             range_fully_searched = chunk_result.hashes_checked == stop_nonce - start_nonce
-            if (
-                match.meets_network_target
-                or not range_fully_searched
-                or stop_token.stop_requested
-            ):
+            if match.meets_network_target or not range_fully_searched or stop_token.stop_requested:
                 outcome = (
                     ContinuousMiningOutcome.SHARE_ACCEPTED
                     if accepted

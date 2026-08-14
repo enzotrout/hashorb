@@ -98,9 +98,11 @@ class NonceSearchResult:
     hashes_checked: int
     elapsed_ns: int
     match: NonceSearchMatch | None
+    best_nonce: int | None = None
+    best_hash: bytes | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        """Validate result counts, range membership, and timing."""
+        """Validate result counts, range membership, timing, and optional best hash."""
 
         _validate_nonce_range(self.start_nonce, self.stop_nonce)
         if isinstance(self.hashes_checked, bool) or not isinstance(
@@ -129,6 +131,16 @@ class NonceSearchResult:
                     "a matched result must count between one hash and the range size"
                 )
 
+        if (self.best_nonce is None) != (self.best_hash is None):
+            raise NonceSearchValidationError(
+                "best_nonce and best_hash must either both be present or both be absent"
+            )
+        if self.best_nonce is not None and self.best_hash is not None:
+            _validate_nonce(self.best_nonce, "best_nonce")
+            if not self.start_nonce <= self.best_nonce < self.stop_nonce:
+                raise NonceSearchValidationError("best_nonce must be inside the searched range")
+            _validate_bytes_length(self.best_hash, "best_hash", _HASH_BYTE_LENGTH)
+
     @property
     def found(self) -> bool:
         """Return whether the range produced a target match."""
@@ -148,6 +160,12 @@ class NonceSearchResult:
         if self.elapsed_ns == 0:
             return None
         return self.hashes_checked * _NANOSECONDS_PER_SECOND / self.elapsed_ns
+
+    @property
+    def best_hash_value(self) -> int | None:
+        """Return the best raw Bitcoin hash as its unsigned comparison integer."""
+
+        return None if self.best_hash is None else block_hash_to_int(self.best_hash)
 
 
 def prepare_mining_work(job: MiningJob, extra_nonce_2: str) -> PreparedMiningWork:
@@ -188,6 +206,9 @@ def search_nonce_range(
 
     started_ns = perf_counter_ns()
     hashes_checked = 0
+    best_nonce: int | None = None
+    best_hash: bytes | None = None
+    best_hash_value: int | None = None
     for nonce in range(start_nonce, stop_nonce):
         nonce_bytes = nonce.to_bytes(
             _NONCE_BYTE_LENGTH,
@@ -201,6 +222,10 @@ def search_nonce_range(
         block_hash = hash_block_header(header)
         hashes_checked += 1
         hash_value = block_hash_to_int(block_hash)
+        if best_hash_value is None or hash_value < best_hash_value:
+            best_nonce = nonce
+            best_hash = block_hash
+            best_hash_value = hash_value
         meets_share_target = hash_value <= work.share_target
         meets_network_target = hash_value <= work.network_target
         if meets_share_target or meets_network_target:
@@ -216,6 +241,8 @@ def search_nonce_range(
                 hashes_checked=hashes_checked,
                 elapsed_ns=_elapsed_since(started_ns),
                 match=match,
+                best_nonce=best_nonce,
+                best_hash=best_hash,
             )
 
     return NonceSearchResult(
@@ -224,6 +251,8 @@ def search_nonce_range(
         hashes_checked=hashes_checked,
         elapsed_ns=_elapsed_since(started_ns),
         match=None,
+        best_nonce=best_nonce,
+        best_hash=best_hash,
     )
 
 

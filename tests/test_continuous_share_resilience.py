@@ -49,6 +49,10 @@ def test_complete_range_share_response_does_not_end_continuous_mining(
     assert result.outcome is ContinuousMiningOutcome.CHUNK_LIMIT_REACHED
     assert len(harness.search_calls) == 2
     assert len(harness.submit_calls) == 1
+    assert result.candidates_found == 1
+    assert result.submissions_performed == 1
+    assert result.accepted_submissions == int(accepted)
+    assert result.rejected_submissions == int(not accepted)
     assert ("submitted", "initial-job", 0, accepted) in harness.observations
 
 
@@ -63,7 +67,12 @@ def test_structured_pool_rejection_is_recorded_and_mining_continues() -> None:
     assert result.outcome is ContinuousMiningOutcome.CHUNK_LIMIT_REACHED
     assert len(harness.search_calls) == 2
     assert len(harness.submit_calls) == 1
+    assert result.candidates_found == 1
+    assert result.submissions_performed == 1
+    assert result.accepted_submissions == 0
+    assert result.rejected_submissions == 1
     assert ("submitted", "initial-job", 0, False) in harness.observations
+    assert ("rejection", 23, "low_difficulty") in harness.observations
 
 
 def test_partial_range_match_keeps_existing_terminal_behavior() -> None:

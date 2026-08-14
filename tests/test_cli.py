@@ -466,7 +466,7 @@ def test_logging_write_failure_is_visible_and_client_still_closes(
     client = FakeClient()
     configure_command(monkeypatch, client)
     sink = FailingEventSink()
-    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command: sink)
+    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command, **kwargs: sink)
 
     assert cli_module.main(["stratum-handshake", "--log-file", "events.jsonl"]) == 1
 
@@ -506,7 +506,7 @@ def test_log_close_failure_after_success_is_visible_and_nonzero(
     client = FakeClient()
     configure_command(monkeypatch, client)
     sink = CloseFailingEventSink()
-    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command: sink)
+    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command, **kwargs: sink)
 
     assert cli_module.main(["stratum-handshake", "--log-file", "events.jsonl"]) == 1
 
@@ -525,7 +525,7 @@ def test_log_close_failure_does_not_hide_earlier_runtime_failure(
     client = FakeClient(StratumClientError("sensitive original failure"))
     configure_command(monkeypatch, client)
     sink = CloseFailingEventSink()
-    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command: sink)
+    monkeypatch.setattr(cli_module, "JsonlEventSink", lambda path, command, **kwargs: sink)
 
     assert cli_module.main(["stratum-handshake", "--log-file", "events.jsonl"]) == 1
 

@@ -211,3 +211,34 @@ def test_evaluated_cuda_launch_sizes_have_real_parity(threads_per_block: int) ->
         assert_cuda_python_match_parity(backend, work, 41, 73)
     finally:
         backend.close()
+
+
+def test_cuda_reports_exact_best_hash_across_full_evaluated_range(
+    cuda_backend: CudaBackend,
+) -> None:
+    start_nonce = 200
+    stop_nonce = 233
+    work = prepared_work(share_target=_MAX_TARGET, network_target=1)
+
+    result = cuda_backend.search_nonce_range(work, start_nonce, stop_nonce)
+
+    expected_nonce = min(
+        range(start_nonce, stop_nonce),
+        key=lambda nonce: digest_value(work.header_prefix, nonce),
+    )
+    expected_hash = hash_block_header(work.header_prefix + expected_nonce.to_bytes(4, "little"))
+
+    assert result.hashes_checked == stop_nonce - start_nonce
+    assert result.best_nonce == expected_nonce
+    assert result.best_hash == expected_hash
+    assert result.best_hash_value == digest_value(work.header_prefix, expected_nonce)
+
+
+def test_cuda_forced_exact_best_fallback_has_hardware_parity(
+    cuda_backend: CudaBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the rare full-256-bit Best Hash resolver deterministically."""
+
+    monkeypatch.setenv("HASHORB_CUDA_FORCE_BEST_FALLBACK", "1")
+    test_cuda_reports_exact_best_hash_across_full_evaluated_range(cuda_backend)

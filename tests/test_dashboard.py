@@ -182,13 +182,16 @@ def test_dashboard_tracks_auto_raw_and_effective_rates_and_nonce_progress() -> N
     assert "HashOrb Dashboard" in rendered
     assert "PROFILE auto" in rendered
     assert "BACKEND cuda" in rendered
-    assert "NONCE SPACE EXPLORATION — sequential" in rendered
+    assert "SEARCH ACTIVITY — sequential" in rendered
     assert "Sequential: contiguous parent ranges" in rendered
     assert "Raw 2.762 GH/s" in rendered
+    assert "Average 1.905 GH/s" in rendered
+    assert "Hashrate (5m) 1.905 GH/s" in rendered
+    assert "Hashrate (1hr) 1.905 GH/s" in rendered
     assert "Effective " in rendered
 
 
-def test_orbiting_bit_nonce_visualization_reflects_observed_scattered_ranges() -> None:
+def test_orbiting_bit_search_activity_reflects_recent_scattered_ranges() -> None:
     state = DashboardState()
     state.apply(_record(1, "command_started", 0.0))
     state.apply(
@@ -222,12 +225,159 @@ def test_orbiting_bit_nonce_visualization_reflects_observed_scattered_ranges() -
             )
         )
 
-    rendered = render_dashboard(state, width=120, color=False)
-    assert "NONCE SPACE EXPLORATION — orbiting-bit" in rendered
-    assert "Orbiting-bit: observed parent ranges jump through bit-reversal order" in rendered
-    assert "Observed range path: 00 → 32 → 16 → 48" in rendered
-    assert "█" in rendered
-    assert "·" in rendered
+    rendered = render_dashboard(
+        state,
+        width=120,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=10),
+        color=False,
+    )
+    assert "SEARCH ACTIVITY — orbiting-bit" in rendered
+    assert (
+        "Orbiting-bit: deterministic bit-reversal search order for each work variant." in rendered
+    )
+    assert "Recent orbit path  00 → 32 → 16 → 48" in rendered
+    assert "Nonce space   0x00000000" in rendered
+    assert "0xffffffff" in rendered
+    assert "Latest range  0xc0000000..0xc3ffffff" in rendered
+
+
+def test_search_activity_animation_follows_observed_orbit_path() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+    state.apply(
+        _record(
+            2,
+            "search_strategy_selected",
+            0.01,
+            strategy_name="orbiting-bit",
+        )
+    )
+
+    bucket_size = (1 << 32) // 64
+    path = (26, 56, 4, 61, 33, 18, 48, 11, 41, 26, 56, 4)
+
+    for sequence, bucket in enumerate(path, start=3):
+        start_nonce = bucket * bucket_size
+        state.apply(
+            _record(
+                sequence,
+                "nonce_range_completed",
+                float(sequence),
+                job_id="job-orbit",
+                start_nonce=start_nonce,
+                stop_nonce=start_nonce + bucket_size,
+                hashes_checked=bucket_size,
+                elapsed_ns=10_000_000,
+                hashes_per_second=1_000_000_000.0,
+                match_found=False,
+            )
+        )
+
+    # Force completed-log replay behavior.
+    state.completion_outcome = "runtime_limit_reached"
+
+    first = render_dashboard(
+        state,
+        width=140,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=10.0),
+        color=False,
+    )
+    second = render_dashboard(
+        state,
+        width=140,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=10.5),
+        color=False,
+    )
+
+    first_line = next(line for line in first.splitlines() if "Nonce space" in line)
+    second_line = next(line for line in second.splitlines() if "Nonce space" in line)
+
+    first_track = first_line.split("0x00000000  ", 1)[1].split("  0xffffffff", 1)[0]
+    second_track = second_line.split("0x00000000  ", 1)[1].split("  0xffffffff", 1)[0]
+
+    assert len(first_track) == 64
+    assert len(second_track) == 64
+    assert first_track != second_track
+
+    valid_positions = set(path)
+
+    first_positions = {index for index, value in enumerate(first_track) if value == "x"}
+    second_positions = {index for index, value in enumerate(second_track) if value == "x"}
+
+    assert first_positions <= valid_positions
+    assert second_positions <= valid_positions
+
+    assert "Recent orbit path  26 → 56 → 04 → 61 → 33 → 18 → 48 → 11 → 41 → 26 → 56 → 04" in first
+
+    colored = render_dashboard(
+        state,
+        width=140,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=10.0),
+        color=True,
+    )
+
+    assert "\x1b[92;1mx\x1b[0m" in colored
+    assert "\x1b[96;1mx\x1b[0m" in colored
+    assert "\x1b[36mx\x1b[0m" in colored
+
+
+def test_rare_changes_turn_bright_magenta_for_sixty_seconds() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+    state.apply(_record(2, "difficulty_received", 1.0, difficulty=10_000))
+    state.apply(_record(3, "best_hash_improved", 2.0, best_hash=f"{100:064x}"))
+    state.apply(_record(4, "stratum_reconnect_attempted", 3.0))
+    state.apply(
+        _record(
+            5,
+            "share_candidate_found",
+            4.0,
+            meets_share_target=True,
+            meets_network_target=False,
+        )
+    )
+
+    recent = render_dashboard(
+        state,
+        width=160,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=30),
+        color=True,
+    )
+    assert "\x1b[95;1m│Best Hash" in recent
+    assert "\x1b[95;1m│Best Difficulty" in recent
+    assert "\x1b[95;1mDifficulty 10,000\x1b[0m" in recent
+    assert "\x1b[95;1mReconnects 1/0\x1b[0m" in recent
+    assert "\x1b[95;1m│Share Target HIT" in recent
+
+    expired = render_dashboard(
+        state,
+        width=160,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=65),
+        color=True,
+    )
+    assert "\x1b[95;1m" not in expired
+
+
+def test_network_target_hit_remains_emphasized_after_transient_window() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+    state.apply(
+        _record(
+            2,
+            "share_candidate_found",
+            1.0,
+            meets_share_target=True,
+            meets_network_target=True,
+        )
+    )
+
+    rendered = render_dashboard(
+        state,
+        width=160,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=300),
+        color=True,
+    )
+    assert "\x1b[95;1m│Share Target HIT  |  Network Target HIT" in rendered
 
 
 def test_newer_mining_run_replaces_older_interleaved_run() -> None:
@@ -242,7 +392,7 @@ def test_newer_mining_run_replaces_older_interleaved_run() -> None:
     assert state.difficulty == 10_000
 
 
-def test_nonce_visualization_resets_when_work_variant_advances() -> None:
+def test_nonce_variant_reset_preserves_recent_path() -> None:
     state = DashboardState()
     state.apply(_record(1, "command_started", 0.0))
     state.apply(
@@ -260,6 +410,8 @@ def test_nonce_visualization_resets_when_work_variant_advances() -> None:
         )
     )
     assert any(state.nonce_buckets)
+    previous_path = tuple(state.recent_bucket_visits)
+    assert previous_path
 
     state.apply(
         _record(
@@ -274,7 +426,7 @@ def test_nonce_visualization_resets_when_work_variant_advances() -> None:
     )
 
     assert not any(state.nonce_buckets)
-    assert not state.recent_bucket_visits
+    assert tuple(state.recent_bucket_visits) == previous_path
     assert state.work_variant_index == 2
     assert state.extra_nonce_2_advances == 1
 
@@ -500,3 +652,49 @@ def test_canonical_cli_rejects_invalid_dashboard_arguments(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Usage: hashorb dashboard" in captured.err
+
+
+def test_effective_rate_windows_diverge_after_five_minutes() -> None:
+    state = DashboardState()
+    state.apply(_record(1, "command_started", 0.0))
+
+    state.apply(
+        _record(
+            2,
+            "nonce_range_completed",
+            300.0,
+            job_id="rate-job",
+            start_nonce=0,
+            stop_nonce=300,
+            hashes_checked=300,
+            elapsed_ns=100,
+            hashes_per_second=3_000_000_000.0,
+            match_found=False,
+        )
+    )
+    state.apply(
+        _record(
+            3,
+            "nonce_range_completed",
+            600.0,
+            job_id="rate-job",
+            start_nonce=300,
+            stop_nonce=1200,
+            hashes_checked=900,
+            elapsed_ns=100,
+            hashes_per_second=9_000_000_000.0,
+            match_found=False,
+        )
+    )
+
+    reference = datetime(2026, 8, 10, 10, 0, tzinfo=UTC) + timedelta(seconds=600)
+
+    assert state.effective_hashes_per_second(reference) == pytest.approx(2.0)
+    assert state.rolling_effective_hashes_per_second(
+        300.0,
+        reference,
+    ) == pytest.approx(3.0)
+    assert state.rolling_effective_hashes_per_second(
+        3600.0,
+        reference,
+    ) == pytest.approx(2.0)
