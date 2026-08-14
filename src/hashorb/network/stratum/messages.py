@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 _HEX_DIGITS = frozenset(string.hexdigits)
 _NETWORK_TIME_HEX_LENGTH = 8
-_NONCE_BYTE_LENGTH = 4
 _MAX_NONCE = 0xFFFFFFFF
 
 
@@ -44,7 +43,7 @@ class SetDifficultyNotification:
 
 @dataclass(frozen=True, slots=True)
 class MiningNotifyNotification:
-    """A mining job announced by a Stratum server."""
+    """A parsed ``mining.notify`` payload."""
 
     job_id: str
     previous_block_hash: str
@@ -263,15 +262,13 @@ def _validate_fixed_hex(value: str, name: str, length: int) -> None:
 
 
 def _serialize_submit_nonce(nonce: int) -> str:
+    """Serialize a Stratum V1 nonce as canonical big-endian uint32 hex text."""
+
     if isinstance(nonce, bool) or not isinstance(nonce, int):
         raise TypeError("nonce must be an integer")
     if not 0 <= nonce <= _MAX_NONCE:
         raise ValueError("nonce must be between 0 and 0xffffffff")
-    return nonce.to_bytes(
-        _NONCE_BYTE_LENGTH,
-        byteorder="little",
-        signed=False,
-    ).hex()
+    return f"{nonce:08x}"
 
 
 def _required_field(message: Mapping[str, object], name: str) -> object:
