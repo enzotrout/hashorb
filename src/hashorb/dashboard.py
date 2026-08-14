@@ -28,7 +28,8 @@ _NONCE_LIMIT = 1 << 32
 _DEFAULT_BUCKET_COUNT = 64
 _RECENT_EVENT_LIMIT = 8
 _RATE_SAMPLE_LIMIT = 80
-_EFFECTIVE_WINDOW_SECONDS = 300.0
+_EFFECTIVE_5M_SECONDS = 300.0
+_EFFECTIVE_1H_SECONDS = 3600.0
 _HIGHLIGHT_SECONDS = 60.0
 _MIN_RENDER_WIDTH = 88
 _EVENT_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
@@ -355,21 +356,62 @@ class DashboardState:
             return None
         return self.hashes_checked * 1_000_000_000 / self.mining_elapsed_ns
 
-    def effective_hashes_per_second(self, now: datetime | None = None) -> float | None:
-        """Return recent wall-clock throughput, including profile pacing and waits."""
+    def effective_hashes_per_second(
+        self,
+        now: datetime | None = None,
+    ) -> float | None:
+        """Return run-wide wall-clock effective throughput."""
 
         if self.terminal_effective_hashes_per_second is not None:
             return self.terminal_effective_hashes_per_second
+        if self.started_at is None or self.hashes_checked <= 0:
+            return None
+
+        reference = self._metric_reference(now)
+        elapsed = (reference - self.started_at).total_seconds()
+        if elapsed <= 0:
+            return None
+
+        return self.hashes_checked / elapsed
+
+    def rolling_effective_hashes_per_second(
+        self,
+        window_seconds: float,
+        now: datetime | None = None,
+    ) -> float | None:
+        """Return effective throughput over a trailing wall-clock window."""
+
+        if window_seconds <= 0:
+            return None
+        if self.started_at is None or self.hashes_checked <= 0:
+            return None
+
         reference = self._metric_reference(now)
         self._prune_effective_points(reference)
-        if len(self.effective_points) < 2:
+
+        if not self.effective_points:
             return None
-        first_time, first_hashes = self.effective_points[0]
-        last_time, last_hashes = self.effective_points[-1]
-        elapsed = (last_time - first_time).total_seconds()
-        if elapsed <= 0 or last_hashes < first_hashes:
+
+        cutoff = reference - timedelta(seconds=window_seconds)
+        baseline = self.effective_points[0]
+
+        for point in self.effective_points:
+            if point[0] <= cutoff:
+                baseline = point
+            else:
+                break
+
+        baseline_time, baseline_hashes = baseline
+        latest_hashes = self.effective_points[-1][1]
+
+        if latest_hashes < baseline_hashes:
             return None
-        return (last_hashes - first_hashes) / elapsed
+
+        elapsed = (reference - baseline_time).total_seconds()
+        if elapsed <= 0:
+            return None
+
+        return (latest_hashes - baseline_hashes) / elapsed
 
     def uptime_seconds(self, now: datetime | None = None) -> float | None:
         """Return elapsed wall time since the active command started."""
@@ -439,6 +481,7 @@ class DashboardState:
         self.accepted_submissions = 0
         self.rejected_submissions = 0
         self.last_range = None
+        self.recent_bucket_visits.clear()
         self.raw_rate_samples.clear()
         self.effective_points.clear()
         self.effective_points.append((record.timestamp, 0))
@@ -449,7 +492,6 @@ class DashboardState:
     def _reset_nonce_variant(self) -> None:
         self.current_range = None
         self.nonce_buckets[:] = [False for _ in range(_DEFAULT_BUCKET_COUNT)]
-        self.recent_bucket_visits.clear()
 
     def _mark_nonce_range(self, start_nonce: int, stop_nonce: int) -> None:
         touched: list[int] = []
@@ -463,7 +505,7 @@ class DashboardState:
             self.recent_bucket_visits.append(touched[len(touched) // 2])
 
     def _prune_effective_points(self, now: datetime) -> None:
-        cutoff = now - timedelta(seconds=_EFFECTIVE_WINDOW_SECONDS)
+        cutoff = now - timedelta(seconds=_EFFECTIVE_1H_SECONDS)
         while len(self.effective_points) > 2 and self.effective_points[1][0] < cutoff:
             self.effective_points.popleft()
 
@@ -633,11 +675,20 @@ def render_dashboard(
 ) -> str:
     """Render one bounded terminal snapshot without terminal side effects."""
 
-    reference = state._metric_reference(now)
+    display_reference = now if now is not None else datetime.now(UTC)
+    reference = state._metric_reference(display_reference)
     safe_width = max(_MIN_RENDER_WIDTH, width)
     inner_width = safe_width - 2
     raw_rate = state.raw_hashes_per_second
     effective_rate = state.effective_hashes_per_second(reference)
+    hashrate_5m = state.rolling_effective_hashes_per_second(
+        _EFFECTIVE_5M_SECONDS,
+        reference,
+    )
+    hashrate_1hr = state.rolling_effective_hashes_per_second(
+        _EFFECTIVE_1H_SECONDS,
+        reference,
+    )
 
     lines = [_top_border("HashOrb Dashboard", inner_width)]
     lines.append(
@@ -757,8 +808,19 @@ def render_dashboard(
     spark_width = max(28, min(84, inner_width - 34))
     lines.append(
         _row(
-            f"Raw range-rate history  {_sparkline(tuple(state.raw_rate_samples), spark_width)}  "
-            f"Average {_format_rate(raw_rate)}",
+            f"Raw range-rate history  {_sparkline(tuple(state.raw_rate_samples), spark_width)}",
+            inner_width,
+        )
+    )
+    lines.append(
+        _row(
+            "  |  ".join(
+                (
+                    f"Average {_format_rate(effective_rate)}",
+                    f"Hashrate (5m) {_format_rate(hashrate_5m)}",
+                    f"Hashrate (1hr) {_format_rate(hashrate_1hr)}",
+                )
+            ),
             inner_width,
         )
     )
@@ -766,22 +828,45 @@ def render_dashboard(
     strategy = state.strategy_name or "unknown"
     lines.append(_rule(f"SEARCH ACTIVITY — {strategy}", inner_width))
     activity_range = state.current_range or state.last_range
-    track_width = max(28, min(72, inner_width - 43))
-    track = _activity_track(track_width, reference)
-    if activity_range is None:
-        activity_text = f"Current range  waiting       {track}"
-    else:
-        activity_text = (
-            f"Current range  0x{activity_range[0]:08x}  {track}  "
-            f"0x{activity_range[1] - 1:08x}"
+    current_activity_bucket = (
+        _activity_bucket(*state.current_range) if state.current_range is not None else None
+    )
+    track = _activity_track(
+        tuple(state.recent_bucket_visits),
+        display_reference,
+        current_bucket=current_activity_bucket,
+        replay=state.is_terminal,
+        color=color,
+    )
+
+    lines.append(
+        _row(
+            f"Nonce space   0x00000000  {track}  0xffffffff",
+            inner_width,
+            already_colored=color,
         )
-    lines.append(_row(activity_text, inner_width))
+    )
+
+    if state.current_range is not None:
+        range_label = "Current range"
+    elif state.is_terminal:
+        range_label = "Last range"
+    else:
+        range_label = "Latest range"
+
+    lines.append(
+        _row(
+            f"{range_label}  {_format_range(activity_range)}  |  "
+            f"Variant #{state.work_variant_index}",
+            inner_width,
+        )
+    )
     if state.recent_bucket_visits:
         path = " → ".join(f"{item:02d}" for item in state.recent_bucket_visits)
         path_label = "Recent orbit path" if strategy == "orbiting-bit" else "Recent range path"
         lines.append(
             _row(
-                f"{path_label}  {path}  |  Variant #{state.work_variant_index}",
+                f"{path_label}  {path}",
                 inner_width,
             )
         )
@@ -789,7 +874,10 @@ def render_dashboard(
         path_label = "Recent orbit path" if strategy == "orbiting-bit" else "Recent range path"
         lines.append(
             _row(
-                f"{path_label}  waiting for completed ranges  |  Variant #{state.work_variant_index}",
+                (
+                    f"{path_label}  waiting for completed ranges  |  "
+                    f"Variant #{state.work_variant_index}"
+                ),
                 inner_width,
             )
         )
@@ -816,7 +904,7 @@ def render_dashboard(
     rendered = "\n".join(lines)
     if not color:
         return rendered
-    return _colorize_dashboard(rendered, state=state, reference=reference)
+    return _colorize_dashboard(rendered, state=state, reference=display_reference)
 
 
 def run_dashboard(
@@ -1166,22 +1254,72 @@ def _sparkline(values: Sequence[float], width: int) -> str:
     return "".join(result).rjust(width, "·")
 
 
-def _activity_track(width: int, reference: datetime) -> str:
-    """Return a smooth display-only activity trace unrelated to exact nonce position."""
+def _activity_bucket(start_nonce: int, stop_nonce: int) -> int:
+    """Return the same representative 0..63 bucket used by Recent orbit path."""
 
-    if width <= 0:
-        return ""
-    if width == 1:
-        return "x"
-    cycle = 2 * (width - 1)
-    tick = int(reference.timestamp())
+    touched: list[int] = []
+    for index in range(_DEFAULT_BUCKET_COUNT):
+        bucket_start = index * _NONCE_LIMIT // _DEFAULT_BUCKET_COUNT
+        bucket_stop = (index + 1) * _NONCE_LIMIT // _DEFAULT_BUCKET_COUNT
+        if max(start_nonce, bucket_start) < min(stop_nonce, bucket_stop):
+            touched.append(index)
 
-    def marker(offset: int) -> int:
-        phase = (tick + offset) % cycle
-        return phase if phase < width else cycle - phase
+    if not touched:
+        return 0
+    return touched[len(touched) // 2]
 
-    positions = {marker(0), marker(max(3, width // 3))}
-    return "".join("x" if index in positions else "." for index in range(width))
+
+def _activity_track(
+    recent_buckets: Sequence[int],
+    reference: datetime,
+    *,
+    current_bucket: int | None,
+    replay: bool,
+    color: bool,
+) -> str:
+    """Render a moving trail that follows the actual Recent orbit path."""
+
+    cells = ["." for _ in range(_DEFAULT_BUCKET_COUNT)]
+    path = [bucket for bucket in recent_buckets if 0 <= bucket < _DEFAULT_BUCKET_COUNT]
+
+    if not path and current_bucket is None:
+        return "".join(cells)
+
+    trail_length = min(6, len(path))
+
+    active_bucket: int | None
+
+    if replay and path:
+        # Historical replay: advance discretely through the recorded path.
+        # There is deliberately no interpolation between buckets.
+        step = int(reference.timestamp() * 2.0) % len(path)
+        active_bucket = path[step]
+
+        trail = [path[(step - distance) % len(path)] for distance in range(trail_length, 0, -1)]
+    else:
+        # Live dashboard: recent completed ranges form the moving trail,
+        # while the actual currently searched range is the green leader.
+        active_bucket = current_bucket
+        if active_bucket is None and path:
+            active_bucket = path[-1]
+            trail = path[-trail_length - 1 : -1]
+        else:
+            trail = path[-trail_length:]
+
+    # Older trail positions are cyan.
+    for bucket in trail:
+        cells[bucket] = _ansi("x", "36") if color else "x"
+
+    # The most recent trailing position is brighter.
+    if trail:
+        newest_trail = trail[-1]
+        cells[newest_trail] = _ansi("x", "96;1") if color else "x"
+
+    # The actual current/replayed path position is bright green.
+    if active_bucket is not None and 0 <= active_bucket < _DEFAULT_BUCKET_COUNT:
+        cells[active_bucket] = _ansi("x", "92;1") if color else "x"
+
+    return "".join(cells)
 
 
 def _render_nonce_map(state: DashboardState, width: int, *, color: bool) -> str:

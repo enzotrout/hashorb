@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from hashorb.observability import EventLogError, JsonlEventSink, NullEventSink
+import hashorb.__main__ as cli_module
+from hashorb.observability import (
+    EventLogError,
+    EventSink,
+    JsonlEventSink,
+    NullEventSink,
+)
 
 FIXED_TIME = datetime(2026, 7, 27, 12, 34, 56, 123456, tzinfo=UTC)
 
@@ -447,3 +453,99 @@ def test_clock_must_return_timezone_aware_datetime(tmp_path: Path, clock_value: 
         sink.emit("command_started")
 
     sink.close()
+
+
+def test_cli_event_sink_creates_warning_error_sibling(
+    tmp_path: Path,
+) -> None:
+    main_path = tmp_path / "mining.jsonl"
+
+    def operation(events: EventSink) -> int:
+        events.emit(
+            "synthetic_warning",
+            level="WARNING",
+            fields={"category": "warning_test"},
+        )
+        events.emit(
+            "synthetic_error",
+            level="ERROR",
+            fields={"category": "error_test"},
+        )
+        return 0
+
+    assert (
+        cli_module._run_with_event_sink(
+            "stratum-mine",
+            str(main_path),
+            operation,
+        )
+        == 0
+    )
+
+    warning_path = tmp_path / "mining.warnings.jsonl"
+
+    main_records = read_records(main_path)
+    warning_records = read_records(warning_path)
+
+    assert [record["event"] for record in warning_records] == [
+        "synthetic_warning",
+        "synthetic_error",
+    ]
+
+    assert [record["level"] for record in warning_records] == [
+        "WARNING",
+        "ERROR",
+    ]
+
+    main_by_sequence = {record["sequence"]: record for record in main_records}
+
+    for warning in warning_records:
+        primary = main_by_sequence[warning["sequence"]]
+        assert warning == primary
+        assert warning["run_id"] == primary["run_id"]
+
+
+def test_warning_mirror_contains_only_warning_and_error(
+    tmp_path: Path,
+) -> None:
+    main_path = tmp_path / "events.jsonl"
+    warning_path = tmp_path / "events.warnings.jsonl"
+
+    sink = JsonlEventSink(
+        main_path,
+        "stratum-mine",
+        warning_path=warning_path,
+        clock=lambda: FIXED_TIME,
+        run_id_factory=lambda: "warning-run",
+    )
+    sink.emit("normal_event")
+    sink.emit(
+        "warning_event",
+        level="WARNING",
+        fields={"category": "warning_test"},
+    )
+    sink.emit(
+        "error_event",
+        level="ERROR",
+        fields={"category": "error_test"},
+    )
+    sink.close()
+
+    main_records = read_records(main_path)
+    warning_records = read_records(warning_path)
+
+    assert [record["event"] for record in main_records] == [
+        "normal_event",
+        "warning_event",
+        "error_event",
+    ]
+    assert [record["event"] for record in warning_records] == [
+        "warning_event",
+        "error_event",
+    ]
+    assert [record["level"] for record in warning_records] == [
+        "WARNING",
+        "ERROR",
+    ]
+    assert [record["sequence"] for record in warning_records] == [2, 3]
+    assert all(record["run_id"] == "warning-run" for record in warning_records)

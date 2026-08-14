@@ -326,10 +326,16 @@ def install_fakes(
     if deterministic_log:
         fixed_time = datetime(2026, 7, 27, 12, 0, 0, tzinfo=UTC)
 
-        def sink_factory(path: str, command: str) -> JsonlEventSink:
+        def sink_factory(
+            path: str,
+            command: str,
+            *,
+            warning_path: str | Path | None = None,
+        ) -> JsonlEventSink:
             return JsonlEventSink(
                 path,
                 command,
+                warning_path=warning_path,
                 clock=lambda: fixed_time,
                 run_id_factory=lambda: "continuous-run",
             )

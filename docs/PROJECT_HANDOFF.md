@@ -12,7 +12,7 @@ Repository: `enzotrout/hashorb`
 
 Primary development host: DGX Spark `spark-2b09`
 
-Local repository path: `/home/ltrout/Development/hashorb`
+Local repository path: `~/Development/hashorb`
 
 Active integration branch: `local/dashboard-hash-quality`
 
@@ -63,7 +63,7 @@ The exact Best Hash CUDA branch uses the newer CUDA extension result interface. 
 After switching between `main` and this branch, rebuild CUDA explicitly on the DGX Spark:
 
 ```bash
-cd /home/ltrout/Development/hashorb
+cd ~/Development/hashorb
 rm -f src/hashorb/compute/_cuda*.so
 rm -rf build
 
@@ -186,7 +186,7 @@ PR #9 was created to make structured share rejection nonfatal and to skip known 
 The one-hour mining gate is complete. Now update the local branch to the latest dashboard-only commits. No CUDA rebuild is required for these commits.
 
 ```bash
-cd /home/ltrout/Development/hashorb
+cd ~/Development/hashorb
 git pull --ff-only
 ```
 
@@ -234,7 +234,7 @@ If the post-run dashboard polish validation is clean:
 When starting a new ChatGPT conversation or resuming after a long interruption, read this file first and verify actual repository state before making changes:
 
 ```bash
-cd /home/ltrout/Development/hashorb
+cd ~/Development/hashorb
 git status --short
 git branch --show-current
 git log -1 --oneline --decorate
@@ -242,5 +242,35 @@ git fetch origin
 ```
 
 Then compare the observed branch/commit with this checkpoint and the open PR before changing code.
+
+Latest validation:
+- Full pytest suite: 2254 passed, 22 skipped
+- CUDA hardware suite: 15 passed
+- Ruff: passed
+- mypy: passed
+- git diff --check: clean
+
+Live share validation:
+- A real CKPool share candidate was found at assigned difficulty 10,000.
+- HashOrb calculated Best Difficulty approximately 15,426.9.
+- The share was submitted and rejected by CKPool.
+- Mining continued normally after the rejection.
+- This live-proves the nonfatal structured share-rejection path.
+- The old run did not preserve CKPool's rejection code/reason.
+
+New diagnostics:
+- Each normal JSONL log now automatically gets a sibling
+  <name>.warnings.jsonl containing WARNING and ERROR events.
+- Structured Stratum share rejections retain a safe rejection_code
+  and normalized rejection_category.
+- Continuous mining now preserves run-wide candidate, submission,
+  accepted-share, and rejected-share totals in the final summary.
+
+Dashboard:
+- Average is effective wall-clock hashrate.
+- Hashrate (5m) is rolling 5-minute effective hashrate.
+- Hashrate (1hr) is rolling 1-hour effective hashrate.
+- Search Activity x markers move through the actual Recent orbit path
+  bucket positions rather than remaining stationary.
 
 Do not reconstruct project state from conversational memory alone when this file and Git history are available.

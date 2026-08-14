@@ -18,6 +18,7 @@ type EventValue = None | bool | int | float | str | Sequence[EventValue] | Mappi
 _SCHEMA_VERSION = 1
 _EVENT_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _LEVELS = frozenset({"INFO", "WARNING", "ERROR"})
+_WARNING_LEVELS = frozenset({"WARNING", "ERROR"})
 _ENVELOPE_FIELDS = frozenset(
     {"schema_version", "timestamp", "run_id", "sequence", "level", "event", "command"}
 )
@@ -129,6 +130,7 @@ class JsonlEventSink:
         path: str | Path,
         command: str,
         *,
+        warning_path: str | Path | None = None,
         clock: Callable[[], datetime] | None = None,
         run_id_factory: Callable[[], str] | None = None,
     ) -> None:
@@ -140,7 +142,22 @@ class JsonlEventSink:
         )
         self._next_sequence = 1
         self._closed = False
+
+        if warning_path is not None and Path(warning_path).absolute() == Path(path).absolute():
+            raise ValueError("warning log path must differ from the main event log path")
+
         self._stream = _open_event_stream(path)
+        self._warning_stream: TextIO | None = None
+
+        if warning_path is not None:
+            try:
+                self._warning_stream = _open_event_stream(warning_path)
+            except (EventLogError, TypeError, ValueError):
+                try:
+                    self._stream.close()
+                except OSError:
+                    pass
+                raise
 
     def emit(
         self,
@@ -173,8 +190,13 @@ class JsonlEventSink:
                 separators=(",", ":"),
                 sort_keys=True,
             )
-            self._stream.write(f"{record}\n")
+            line = f"{record}\n"
+            self._stream.write(line)
             self._stream.flush()
+
+            if self._warning_stream is not None and level in _WARNING_LEVELS:
+                self._warning_stream.write(line)
+                self._warning_stream.flush()
         except (OSError, TypeError, ValueError, UnicodeError) as exc:
             raise EventLogError("could not write structured event log") from exc
 
@@ -186,10 +208,19 @@ class JsonlEventSink:
         if self._closed:
             return
         self._closed = True
-        try:
-            self._stream.close()
-        except OSError as exc:
-            raise EventLogError("could not close structured event log") from exc
+        close_error: OSError | None = None
+
+        for stream in (self._stream, self._warning_stream):
+            if stream is None:
+                continue
+            try:
+                stream.close()
+            except OSError as exc:
+                if close_error is None:
+                    close_error = exc
+
+        if close_error is not None:
+            raise EventLogError("could not close structured event log") from close_error
 
 
 def _validated_event_fields(

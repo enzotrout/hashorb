@@ -216,8 +216,21 @@ class Harness:
         work: PreparedMiningWork,
         match: NonceSearchMatch,
         accepted: bool,
+        *,
+        rejection_code: int | None = None,
+        rejection_category: str | None = None,
     ) -> None:
         self.observations.append(("submitted", work.job_id, match.nonce, accepted))
+        if rejection_code is not None:
+            self.observations.append(("rejection", rejection_code, rejection_category))
+        if rejection_code is not None:
+            self.observations.append(
+                (
+                    "rejection",
+                    rejection_code,
+                    rejection_category,
+                )
+            )
 
     def stop_requested(self) -> None:
         self.observations.append(("stopped",))
