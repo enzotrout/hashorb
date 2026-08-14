@@ -43,7 +43,7 @@ class SetDifficultyNotification:
 
 @dataclass(frozen=True, slots=True)
 class MiningNotifyNotification:
-    """A parsed ``mining.notify`` payload."""
+    """A mining job announced by a Stratum server."""
 
     job_id: str
     previous_block_hash: str
