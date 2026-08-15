@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from test_continuous_mining import Harness, run_with_harness
+from test_continuous_mining import Harness, notification, run_with_harness
 
 from hashorb.mining import (
     ContinuousMiningOutcome,
@@ -44,9 +44,7 @@ def test_continuous_mining_uses_fibonacci_bounce_parent_range_order() -> None:
 def test_fibonacci_bounce_cursor_resets_for_replacement_work() -> None:
     chunk_size = NONCE_LIMIT // 4
     harness = Harness()
-    harness.notifications.append(
-        __import__("test_continuous_mining").notification("replacement-job")
-    )
+    harness.notifications.append(notification("replacement-job"))
 
     _, _, result = run_with_harness(
         ContinuousMiningPlan(
