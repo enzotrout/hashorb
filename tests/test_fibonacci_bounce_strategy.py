@@ -12,6 +12,7 @@ from hashorb.mining import (
     FibonacciBounceSearchStrategy,
     SearchAssignment,
     SearchStrategyCapabilities,
+    SearchStrategyCompatibilityError,
     SearchStrategyValidationError,
     fibonacci_bounce_offset,
     fibonacci_coprime_stride,
@@ -176,6 +177,20 @@ def test_nonzero_start_and_uneven_chunks_cover_exact_nonce_domain() -> None:
     assert sorted(covered) == list(range(start_nonce, nonce_limit))
 
 
+def test_full_uint32_nonce_domain_starts_with_valid_distinct_ranges() -> None:
+    cursor = FibonacciBounceSearchCursor(0, 1, nonce_limit=NONCE_LIMIT)
+    stride = cursor.fibonacci_stride
+
+    assert 0 < stride < NONCE_LIMIT
+    assert gcd(stride, NONCE_LIMIT) == 1
+    first = cursor.next_assignment()
+    second = cursor.next_assignment()
+    third = cursor.next_assignment()
+    assert first == SearchAssignment(0, 0, 1)
+    assert second == SearchAssignment(1, stride, stride + 1)
+    assert third == SearchAssignment(2, NONCE_LIMIT - stride, NONCE_LIMIT - stride + 1)
+
+
 def test_cursor_is_deterministic_and_compact() -> None:
     first = FibonacciBounceSearchCursor(11, 9, nonce_limit=401)
     second = FibonacciBounceSearchCursor(11, 9, nonce_limit=401)
@@ -212,7 +227,7 @@ def test_strategy_is_compatible_with_every_current_available_backend(
 
 
 def test_unavailable_backend_is_rejected() -> None:
-    with pytest.raises(Exception, match="incompatible"):
+    with pytest.raises(SearchStrategyCompatibilityError, match="incompatible"):
         validate_search_strategy_compatibility(
             FibonacciBounceSearchStrategy(),
             BackendCapabilities("cuda", parallel=True, available=False),
