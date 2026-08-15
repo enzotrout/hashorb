@@ -117,11 +117,15 @@ from hashorb.mining.strategy import (
     SequentialSearchCursor,
     SequentialSearchStrategy,
     calculate_orbiting_range_count,
-    list_search_strategies as _list_search_strategies,
     next_power_of_two,
     reverse_bits,
-    select_search_strategy as _select_search_strategy,
     validate_search_strategy_compatibility,
+)
+from hashorb.mining.strategy import (
+    list_search_strategies as _list_search_strategies,
+)
+from hashorb.mining.strategy import (
+    select_search_strategy as _select_search_strategy,
 )
 from hashorb.mining.target import (
     TargetError,

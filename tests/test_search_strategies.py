@@ -194,7 +194,9 @@ def test_builtin_registry_is_deterministic_and_isolated() -> None:
     assert isinstance(first.select("fibonacci-bounce"), FibonacciBounceSearchStrategy)
     assert isinstance(first.select("orbiting-bit"), OrbitingBitSearchStrategy)
     assert isinstance(first.select("sequential"), SequentialSearchStrategy)
-    assert isinstance(select_search_strategy("fibonacci-bounce", first), FibonacciBounceSearchStrategy)
+    assert isinstance(
+        select_search_strategy("fibonacci-bounce", first), FibonacciBounceSearchStrategy
+    )
     assert isinstance(select_search_strategy("auto", first), SequentialSearchStrategy)
 
 

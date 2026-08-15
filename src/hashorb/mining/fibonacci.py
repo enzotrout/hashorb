@@ -189,9 +189,7 @@ class FibonacciBounceSearchCursor:
         start_nonce = self._start_nonce + physical_range_index * self._chunk_size
         stop_nonce = min(start_nonce + self._chunk_size, self._nonce_limit)
         if not self._start_nonce <= start_nonce < stop_nonce <= self._nonce_limit:
-            raise SearchStrategyExecutionError(
-                "fibonacci-bounce produced an invalid parent range"
-            )
+            raise SearchStrategyExecutionError("fibonacci-bounce produced an invalid parent range")
 
         assignment = SearchAssignment(
             assignment_index=assignment_index,
@@ -201,9 +199,7 @@ class FibonacciBounceSearchCursor:
         self._assignment_index += 1
         self._emitted_count += 1
         if self._emitted_count > self._range_count:
-            raise SearchStrategyExecutionError(
-                "fibonacci-bounce emitted too many assignments"
-            )
+            raise SearchStrategyExecutionError("fibonacci-bounce emitted too many assignments")
         return assignment
 
 
