@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="HashOrb is an experimental Bitcoin hashing project for learning Bitcoin internals, GPU compute, CI/CD, and AI-assisted software engineering." />
+  <title>HashOrb — Bitcoin, GPU Compute & AI-Assisted Engineering</title>
+  <style>
+    :root {
+      --bg: #071018;
+      --panel: #0d1822;
+      --panel-2: #101f2b;
+      --text: #edf4f8;
+      --muted: #9fb0bd;
+      --line: rgba(255,255,255,.10);
+      --cyan: #58e6ff;
+      --blue: #66a6ff;
+      --orange: #ff9f43;
+      --green: #78e08f;
+      --max: 1120px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(88,230,255,.12), transparent 28rem),
+        radial-gradient(circle at 90% 20%, rgba(102,166,255,.10), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    a:hover { color: var(--cyan); }
+    .wrap { width: min(calc(100% - 36px), var(--max)); margin: 0 auto; }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(14px);
+      background: rgba(7,16,24,.78);
+      border-bottom: 1px solid var(--line);
+    }
+
+    nav {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand { font-weight: 800; letter-spacing: .03em; }
+    .brand span { color: var(--cyan); }
+    .navlinks { display: flex; gap: 22px; color: var(--muted); font-size: .94rem; }
+
+    .hero {
+      padding: 110px 0 84px;
+      display: grid;
+      grid-template-columns: 1.25fr .75fr;
+      gap: 54px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 11px;
+      border: 1px solid rgba(88,230,255,.25);
+      border-radius: 999px;
+      color: var(--cyan);
+      background: rgba(88,230,255,.06);
+      font-size: .82rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 14px rgba(120,224,143,.8); }
+
+    h1 {
+      margin: 22px 0 18px;
+      font-size: clamp(3.5rem, 9vw, 7.7rem);
+      line-height: .88;
+      letter-spacing: -.065em;
+    }
+
+    .lead {
+      max-width: 720px;
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(1.08rem, 2.2vw, 1.34rem);
+    }
+
+    .actions { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 12px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 46px;
+      padding: 0 18px;
+      border-radius: 10px;
+      font-weight: 750;
+      border: 1px solid var(--line);
+    }
+    .btn.primary { color: #041017; background: var(--cyan); border-color: transparent; }
+    .btn.secondary { background: rgba(255,255,255,.03); }
+
+    .orb {
+      position: relative;
+      min-height: 330px;
+      display: grid;
+      place-items: center;
+    }
+    .orb-core {
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #dffaff 0, var(--cyan) 18%, #176086 56%, #08151f 74%);
+      box-shadow: 0 0 60px rgba(88,230,255,.24), inset -22px -28px 40px rgba(0,0,0,.45);
+      position: relative;
+      z-index: 3;
+    }
+    .ring {
+      position: absolute;
+      width: 300px;
+      height: 110px;
+      border: 1px solid rgba(88,230,255,.45);
+      border-radius: 50%;
+      transform: rotate(-18deg);
+      box-shadow: 0 0 24px rgba(88,230,255,.08);
+    }
+    .ring.r2 { width: 230px; height: 230px; transform: rotate(42deg); border-color: rgba(255,159,67,.35); }
+    .ring.r3 { width: 330px; height: 160px; transform: rotate(58deg); border-color: rgba(102,166,255,.28); }
+
+    section { padding: 78px 0; border-top: 1px solid var(--line); }
+    .section-head { margin-bottom: 32px; max-width: 760px; }
+    .kicker { color: var(--cyan); font-size: .82rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    h2 { margin: 8px 0 12px; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.04; letter-spacing: -.035em; }
+    .section-head p, .card p { color: var(--muted); }
+
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 18px; }
+    .card {
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.018));
+    }
+    .card h3 { margin: 0 0 8px; font-size: 1.18rem; }
+    .card ul { margin: 16px 0 0; padding-left: 19px; color: var(--muted); }
+    .card li + li { margin-top: 7px; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 9px; }
+    .chip {
+      padding: 8px 11px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: #d5e1e8;
+      font-size: .9rem;
+    }
+
+    .terminal {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #050a0e;
+      box-shadow: 0 30px 80px rgba(0,0,0,.28);
+    }
+    .terminal-top {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 15px;
+      border-bottom: 1px solid var(--line);
+      color: #647784;
+      font-size: .82rem;
+    }
+    .lamp { width: 9px; height: 9px; border-radius: 50%; background: #344650; }
+    pre {
+      margin: 0;
+      padding: 22px;
+      overflow-x: auto;
+      color: #c9e4ef;
+      font: 500 .92rem/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    pre .prompt { color: var(--cyan); }
+    pre .comment { color: #607682; }
+
+    .status {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      padding: 23px 25px;
+      border: 1px solid rgba(120,224,143,.24);
+      border-radius: 14px;
+      background: rgba(120,224,143,.055);
+    }
+    .status strong { display: block; margin-bottom: 4px; }
+    .status p { margin: 0; color: var(--muted); }
+
+    footer {
+      padding: 38px 0 52px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .92rem;
+    }
+    .footer-row { display: flex; justify-content: space-between; gap: 24px; align-items: center; }
+
+    @media (max-width: 780px) {
+      .navlinks { display: none; }
+      .hero { grid-template-columns: 1fr; padding: 78px 0 56px; gap: 22px; }
+      .orb { min-height: 250px; order: -1; }
+      .orb-core { width: 112px; height: 112px; }
+      .ring { width: 230px; height: 80px; }
+      .ring.r2 { width: 170px; height: 170px; }
+      .ring.r3 { width: 250px; height: 120px; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      section { padding: 58px 0; }
+      .footer-row { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <nav>
+        <a class="brand" href="#top">Hash<span>Orb</span></a>
+        <div class="navlinks">
+          <a href="#learn">Learning</a>
+          <a href="#stack">Stack</a>
+          <a href="#examples">Examples</a>
+          <a href="#engineering">Engineering</a>
+          <a href="https://github.com/enzotrout/hashorb">GitHub</a>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <div class="wrap hero">
+      <div>
+        <div class="eyebrow"><span class="dot"></span> Active pre-release project</div>
+        <h1>HashOrb</h1>
+        <p class="lead">
+          A hands-on project for learning how Bitcoin mining works while exploring GPU compute,
+          search strategies, CI/CD, and AI-assisted software engineering.
+        </p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/enzotrout/hashorb">View on GitHub</a>
+          <a class="btn secondary" href="#examples">See examples</a>
+        </div>
+      </div>
+      <div class="orb" aria-hidden="true">
+        <div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div>
+        <div class="orb-core"></div>
+      </div>
+    </div>
+
+    <section id="learn">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Why this exists</div>
+          <h2>Learning by building something real.</h2>
+          <p>
+            HashOrb started with a simple question: can I build a Bitcoin hashing system from the ground up
+            and use the process to better understand both Bitcoin and modern AI-assisted engineering?
+          </p>
+        </div>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3>Learning Bitcoin</h3>
+            <p>Using working code to understand the mechanics behind mining instead of treating Bitcoin as a black box.</p>
+            <ul>
+              <li>Block headers and double SHA-256</li>
+              <li>Targets, difficulty, nonces, and search spaces</li>
+              <li>Stratum jobs and share submission</li>
+              <li>Bitcoin Core RPC and solo mining concepts</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <h3>Learning AI-assisted engineering</h3>
+            <p>Using AI as a practical engineering tool while keeping correctness, tests, and security independently verifiable.</p>
+            <ul>
+              <li>GitHub Copilot for implementation and refactoring</li>
+              <li>AI-assisted troubleshooting and code review</li>
+              <li>Test generation and documentation workflows</li>
+              <li>Exploration of agent-assisted development</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="stack">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Tools</div>
+          <h2>Built as an engineering playground.</h2>
+          <p>The stack spans compute, Bitcoin interfaces, automation, testing, security, and local AI infrastructure.</p>
+        </div>
+        <div class="chips">
+          <span class="chip">Python 3.13</span>
+          <span class="chip">Native C</span>
+          <span class="chip">NVIDIA CUDA</span>
+          <span class="chip">GitHub Copilot</span>
+          <span class="chip">GitHub Actions</span>
+          <span class="chip">Docker</span>
+          <span class="chip">uv</span>
+          <span class="chip">Linux</span>
+          <span class="chip">macOS</span>
+          <span class="chip">NVIDIA DGX Spark</span>
+          <span class="chip">Bitcoin Core RPC</span>
+          <span class="chip">Stratum</span>
+          <span class="chip">pytest</span>
+          <span class="chip">Ruff</span>
+          <span class="chip">mypy</span>
+          <span class="chip">Gitleaks</span>
+          <span class="chip">Trivy</span>
+          <span class="chip">Bandit</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="examples">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Examples</div>
+          <h2>Safe, offline commands first.</h2>
+          <p>Diagnostics and benchmarks can be explored without connecting to a mining pool or using a Bitcoin wallet.</p>
+        </div>
+
+        <div class="terminal">
+          <div class="terminal-top"><span class="lamp"></span><span class="lamp"></span><span class="lamp"></span> hashorb — terminal</div>
+          <pre><span class="comment"># Check the local environment</span>
+<span class="prompt">$</span> hashorb doctor
+
+<span class="comment"># CPU correctness / benchmark path</span>
+<span class="prompt">$</span> hashorb compute-benchmark \
+    --backend python \
+    --hash-count 100000
+
+<span class="comment"># NVIDIA CUDA benchmark</span>
+<span class="prompt">$</span> hashorb compute-benchmark \
+    --backend cuda \
+    --device 0 \
+    --hash-count 1000000</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="engineering">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Engineering</div>
+          <h2>More than hashing code.</h2>
+          <p>
+            The project is also a way to practice the habits behind maintainable software: automation,
+            documentation, CI/CD, reproducibility, testing, and security.
+          </p>
+        </div>
+
+        <div class="grid-3">
+          <article class="card"><h3>CI/CD</h3><p>GitHub Actions workflows, pull-request based development, reproducible tooling, and automated checks.</p></article>
+          <article class="card"><h3>Quality</h3><p>Unit and regression testing, static analysis, type checking, benchmarking, and multiple compute backends.</p></article>
+          <article class="card"><h3>Security</h3><p>Dependency, secret, source, and container scanning using tools including Gitleaks, Trivy, Bandit, and pip-audit.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <div class="status">
+          <span class="dot" style="margin-top:8px"></span>
+          <div>
+            <strong>Active development / pre-release</strong>
+            <p>
+              HashOrb is a learning and experimentation project. It is not intended to compete with ASIC mining hardware
+              and does not claim to improve the probability of finding a valid Bitcoin hash.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-row">
+      <div>HashOrb · built by Loren Trout</div>
+      <div><a href="https://github.com/enzotrout/hashorb">GitHub</a> · <a href="https://www.linkedin.com/in/enzotrout">LinkedIn</a></div>
+    </div>
+  </footer>
+</body>
+</html>
