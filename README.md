@@ -117,13 +117,7 @@ HashOrb keeps live Bitcoin operations explicitly opt-in. Offline diagnostics and
 
 HashOrb includes a terminal-based view for watching hashing activity and runtime information.
 
-<!-- Add real project screenshots here before public launch.
-
 ![HashOrb Dashboard](docs/images/hashorb-dashboard.png)
-
-![HashOrb Compute View](docs/images/hashorb-compute.png)
-
--->
 
 ## Engineering the Project
 
