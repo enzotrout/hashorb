@@ -28,6 +28,12 @@ from hashorb.mining.continuous import (
     StopToken,
     run_continuous_mining,
 )
+from hashorb.mining.fibonacci import (
+    FibonacciBounceSearchCursor,
+    FibonacciBounceSearchStrategy,
+    fibonacci_bounce_offset,
+    fibonacci_coprime_stride,
+)
 from hashorb.mining.header import (
     BlockHeaderError,
     BlockHeaderValidationError,
@@ -110,13 +116,16 @@ from hashorb.mining.strategy import (
     SearchStrategyValidationError,
     SequentialSearchCursor,
     SequentialSearchStrategy,
-    builtin_search_strategy_registry,
     calculate_orbiting_range_count,
-    list_search_strategies,
     next_power_of_two,
     reverse_bits,
-    select_search_strategy,
     validate_search_strategy_compatibility,
+)
+from hashorb.mining.strategy import (
+    list_search_strategies as _list_search_strategies,
+)
+from hashorb.mining.strategy import (
+    select_search_strategy as _select_search_strategy,
 )
 from hashorb.mining.target import (
     TargetError,
@@ -126,6 +135,38 @@ from hashorb.mining.target import (
     difficulty_to_share_target,
     hash_meets_target,
 )
+
+
+def builtin_search_strategy_registry() -> SearchStrategyRegistry:
+    """Create a fresh registry containing every built-in search strategy."""
+
+    return SearchStrategyRegistry(
+        (
+            FibonacciBounceSearchStrategy(),
+            OrbitingBitSearchStrategy(),
+            SequentialSearchStrategy(),
+        )
+    )
+
+
+def select_search_strategy(
+    strategy_name: str,
+    registry: SearchStrategyRegistry | None = None,
+) -> MiningSearchStrategy:
+    """Select one strategy using the complete HashOrb built-in registry."""
+
+    selected_registry = builtin_search_strategy_registry() if registry is None else registry
+    return _select_search_strategy(strategy_name, selected_registry)
+
+
+def list_search_strategies(
+    registry: SearchStrategyRegistry | None = None,
+) -> tuple[SearchStrategyCapabilities, ...]:
+    """List strategy capabilities using the complete HashOrb built-in registry."""
+
+    selected_registry = builtin_search_strategy_registry() if registry is None else registry
+    return _list_search_strategies(selected_registry)
+
 
 __all__ = [
     "BackoffWaiter",
@@ -145,6 +186,8 @@ __all__ = [
     "ContinuousMiningResult",
     "ContinuousMiningValidationError",
     "ExtraNonceSeedFactory",
+    "FibonacciBounceSearchCursor",
+    "FibonacciBounceSearchStrategy",
     "MAX_RECONNECT_ATTEMPTS",
     "MAX_LIVENESS_SECONDS",
     "MAX_RUNTIME_SECONDS",
@@ -212,6 +255,8 @@ __all__ = [
     "calculate_orbiting_range_count",
     "decode_compact_target",
     "difficulty_to_share_target",
+    "fibonacci_bounce_offset",
+    "fibonacci_coprime_stride",
     "hash_block_header",
     "hash_coinbase_transaction",
     "hash_meets_target",

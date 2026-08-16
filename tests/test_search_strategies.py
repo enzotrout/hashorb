@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 from hashorb.mining import (
+    FibonacciBounceSearchStrategy,
     MiningSearchStrategy,
     OrbitingBitSearchStrategy,
     SearchAssignment,
@@ -186,11 +187,16 @@ def test_builtin_registry_is_deterministic_and_isolated() -> None:
     assert first is not second
     assert first.list_capabilities() == second.list_capabilities()
     assert tuple(item.strategy_name for item in list_search_strategies(first)) == (
+        "fibonacci-bounce",
         "orbiting-bit",
         "sequential",
     )
+    assert isinstance(first.select("fibonacci-bounce"), FibonacciBounceSearchStrategy)
     assert isinstance(first.select("orbiting-bit"), OrbitingBitSearchStrategy)
     assert isinstance(first.select("sequential"), SequentialSearchStrategy)
+    assert isinstance(
+        select_search_strategy("fibonacci-bounce", first), FibonacciBounceSearchStrategy
+    )
     assert isinstance(select_search_strategy("auto", first), SequentialSearchStrategy)
 
 
