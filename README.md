@@ -177,6 +177,10 @@ Start with the **[documentation index](docs/README.md)** for a plain-language ma
 - [Bitcoin Core true solo](docs/14-bitcoin-core-true-solo.md)
 - [Security](SECURITY.md)
 
+## License
+
+HashOrb is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) for the full terms and [NOTICE](NOTICE) for project attribution.
+
 ## Project Status
 
 🚧 **Active development / pre-release**
