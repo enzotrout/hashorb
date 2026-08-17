@@ -113,6 +113,16 @@ hashorb compute-benchmark \
 
 HashOrb keeps live Bitcoin operations explicitly opt-in. Offline diagnostics and benchmarks do not require a mining pool or Bitcoin wallet.
 
+### Bitcoin Core
+
+Bitcoin Core operations are deliberately separated into three commands:
+
+- `hashorb bitcoin-core-check` inspects Bitcoin Core readiness and templates without mining.
+- `hashorb solo-hash` performs bounded hash-only work and cannot earn a reward because it has no submission capability.
+- `hashorb solo-mine` is the explicit submission-capable true-solo mining path.
+
+See [Bitcoin Core true solo](docs/14-bitcoin-core-true-solo.md) for configuration and live-operation details.
+
 ## Dashboard
 
 HashOrb includes a terminal-based view for watching hashing activity and runtime information.
