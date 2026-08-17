@@ -4,7 +4,7 @@ Get HashOrb from a fresh checkout to a short, bounded Stratum mining run on Linu
 
 ## Plain Talk
 
-You need three things: Python 3.13, `uv`, and a public Bitcoin receive address. HashOrb connects to CKPool by default, receives real mining work, hashes it, and submits qualifying shares. You never need to give HashOrb a seed phrase, private key, or wallet password.
+You need a prepared host plus a public Bitcoin receive address. HashOrb connects to CKPool by default, receives real mining work, hashes it, and submits qualifying shares. You never need to give HashOrb a seed phrase, private key, or wallet password.
 
 This guide starts with a five-minute run so you can confirm the miner works before leaving it running longer.
 
@@ -12,13 +12,17 @@ This guide starts with a five-minute run so you can confirm the miner works befo
 
 HashOrb is pre-release software. CPU mining is suitable for learning and validation, not for competing with ASIC hardware.
 
-You need:
+First prepare your machine using the **[Prerequisites Guide](PREREQUISITES.md)**. It has separate setup and verification steps for:
 
-- Git
-- CPython 3.13
-- `uv`
-- Internet access
-- a public Bitcoin receive address that you control
+- Linux CPU
+- Linux NVIDIA CUDA
+- macOS
+- Windows
+- Docker
+
+For host installations, the key dependencies are Git, CPython 3.13, and `uv`. Docker users do not need host Python or `uv` when using only the container path.
+
+You also need Internet access and a public Bitcoin receive address that you control.
 
 For NVIDIA CUDA hashing, use Linux and follow the optional CUDA section after the basic CPU path works.
 
@@ -89,7 +93,7 @@ Stop earlier with Ctrl-C. A normal bounded run should finish with a controlled s
 
 ### Optional NVIDIA CUDA on Linux
 
-First confirm the NVIDIA driver and CUDA toolkit are already installed and usable. HashOrb does not install them for you.
+First confirm the NVIDIA driver and CUDA toolkit are already installed and usable. The [Prerequisites Guide](PREREQUISITES.md#optional-nvidia-cuda) includes the host checks. HashOrb does not install them for you.
 
 Build the optional CUDA extension for the architecture you intentionally choose. For example, the DGX Spark validation host uses architecture `121`:
 
@@ -173,7 +177,7 @@ The portable Python backend is the required Windows path. Native MSVC and Window
 
 ## Docker
 
-The repository Dockerfile builds the portable CPU image.
+The repository Dockerfile builds the portable CPU image. If you are following this path, the [Docker prerequisites](PREREQUISITES.md#docker) require Git and Docker, not host Python or `uv`.
 
 ```bash
 docker build -t hashorb:cpu .
@@ -268,5 +272,7 @@ If you are running from the source checkout instead of the installed user-local 
 ```bash
 uv run hashorb doctor
 ```
+
+If a prerequisite command is missing, return to the [Prerequisites Guide](PREREQUISITES.md) before troubleshooting HashOrb itself.
 
 For packaging details and platform validation boundaries, see [Installation and Packaging](13-installation-and-packaging.md).
