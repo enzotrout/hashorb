@@ -1,5 +1,9 @@
 # Structured Event Logging
 
+## Plain Talk
+
+HashOrb can write a local JSONL event stream while mining so you can inspect what happened, build summaries, and drive the terminal dashboard without giving those tools control of the miner. The log is designed to contain mining state and safe identifiers, not wallet secrets, private configuration values, or raw protocol payloads.
+
 ## Purpose
 
 HashOrb preserves concise human-readable console output while optionally
@@ -318,69 +322,3 @@ outcomes remain visible only under their exact recorded value.
 ## Aggregation and Privacy
 
 The immutable summary reports record and run status counts, chronological
-first and last UTC timestamps, sorted command, compute-backend, requested and
-effective profile, search-strategy, and completion-outcome counts,
-known mining event counts, work variants searched, extra-nonce advances and
-cycles, network-time rolls, duplicate work ignored, connection losses,
-reconnect attempts, reconnect successes, reconnect failures, reconnect
-exhaustion events, liveness warnings, stale sessions, stale reconnect
-starts/successes/failures, configured liveness limits, stable stale-reason
-counts, range totals, accepted and rejected submission counts, and sorted
-controlled failure-stage/category counts. Command counts
-are per distinct run ID rather than per record. The human-readable CLI always
-shows the five currently known commands in a stable order, including zero
-counts, followed by any future command names in sorted order.
-
-Backend aggregates count validated `compute_backend_selected` events by their
-stable name and are displayed only when present. Future backend names remain
-forward-compatible. The summary does not expose implementation errors or
-hardware identifiers, and backend counts do not affect nonce-range totals or
-weighted hash rate.
-
-Profile aggregates count validated `compute_profile_resolved` events by
-requested and effective name. Old logs without profile events remain readable,
-and unknown future nonblank profile names are counted conservatively rather
-than rejected.
-
-Strategy aggregates likewise count validated `search_strategy_selected` events
-by stable name and appear only when present. Future strategy names remain
-forward-compatible. Strategy counts do not expose cursor state or change range
-totals, elapsed-time totals, or weighted hash rate.
-
-The analyzer treats progression events as stable known records and validates
-only their safe fields. It counts event occurrences rather than trusting or
-summing cumulative fields. A `mining_work_advanced` record counts one searched
-variant; reasons `extra_nonce_2` and `network_time` each count one deterministic
-extra-nonce advance. Cycle, time-roll, and duplicate records each add one to
-their corresponding aggregate. Unknown future schema-version-1 events retain
-the existing forward-compatible behavior and do not affect current totals.
-
-Recovery event fields are validated before aggregation. The analyzer counts
-event occurrences rather than trusting cumulative reconnect or session-index
-fields. These recovery counters do not affect nonce-range totals or weighted
-hash rate.
-
-Liveness configuration is read only from optional safe numeric fields on
-`command_started`; old logs without those fields remain valid. Stale events are
-counted by occurrence and stable reason. Unknown future reasons remain visible
-without changing current mining totals.
-
-Aggregate mining rate is weighted from the integer totals:
-
-```text
-weighted_hps = total_hashes_checked * 1_000_000_000 / total_elapsed_ns
-```
-
-The analyzer does not average or trust logged per-range rates. The result is
-unavailable when no range completed or total elapsed time is zero.
-
-The CLI prints aggregate information only. It omits run IDs, job IDs,
-usernames, payout addresses, passwords, extra nonces, coinbase data, nonces,
-block hashes, raw events, raw exception messages, and protocol payloads. The
-user-supplied path may be displayed.
-
-Long continuous runs can grow append-only JSONL files substantially. File
-rotation and retention, machine-readable summary output, compression, remote
-export, background delivery, and Prometheus/Grafana-compatible metrics remain
-deferred. Operators should use bounded invocations plus filesystem quotas or a
-reviewed rotation policy.
