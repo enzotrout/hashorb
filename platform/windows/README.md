@@ -6,6 +6,8 @@ Windows uses the shared HashOrb Python package. The portable Python backend is t
 
 For the shortest path from checkout to a bounded live mining run, use the [Quick Start Guide](../../docs/QUICKSTART.md#windows).
 
+The Windows installer is `scripts/install-windows.ps1`.
+
 From a normal non-administrator PowerShell session:
 
 ```powershell
