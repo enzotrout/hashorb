@@ -115,13 +115,13 @@ HashOrb keeps live Bitcoin operations explicitly opt-in. Offline diagnostics and
 
 ### Bitcoin Core
 
-Bitcoin Core operations remain explicit and separate from offline benchmarking.
+Bitcoin Core operations are deliberately separated into three commands:
 
-```bash
-hashorb bitcoin-core-check
-```
+- `hashorb bitcoin-core-check` inspects Bitcoin Core readiness and templates without mining.
+- `hashorb solo-hash` performs bounded hash-only work and cannot earn a reward because it has no submission capability.
+- `hashorb solo-mine` is the explicit submission-capable true-solo mining path.
 
-See [Bitcoin Core true solo](docs/14-bitcoin-core-true-solo.md) for configuration and live-operation commands.
+See [Bitcoin Core true solo](docs/14-bitcoin-core-true-solo.md) for configuration and live-operation details.
 
 ## Dashboard
 
