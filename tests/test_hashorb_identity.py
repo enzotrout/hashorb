@@ -20,7 +20,6 @@ _ROOT = Path(__file__).resolve().parents[1]
 _LEGACY_PATTERN = "Hashsphere|hashsphere|HASHSPHERE_|Hashphere|hashphere|HASHPHERE_"
 _ALLOWED_LEGACY_FILES = {
     "docs/15-security-audit.md",
-    "docs/16-hashorb-migration.md",
     "scripts/migrate-hashorb-env.py",
     "scripts/smoke-installed-distribution.py",
     "scripts/verify-distributions.py",
