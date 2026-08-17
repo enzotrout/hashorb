@@ -2,6 +2,8 @@ include .env.example
 include .dockerignore
 include ARCHITECTURE.md
 include Dockerfile
+include LICENSE
+include NOTICE
 include README.md
 include ROADMAP.md
 include SECURITY.md
