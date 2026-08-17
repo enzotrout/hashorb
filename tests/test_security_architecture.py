@@ -39,9 +39,9 @@ def test_workflows_are_read_only_and_avoid_privileged_triggers_and_runners() -> 
 
 def test_security_workflow_is_scheduled_bounded_and_submission_free() -> None:
     text = _workflow_text("security.yml")
-    for trigger in ("pull_request:", "schedule:", "workflow_dispatch:"):
+    for trigger in ("pull_request:", "push:", "schedule:", "workflow_dispatch:"):
         assert trigger in text
-    assert "push:" not in text
+    assert "branches: [main]" in text
     assert "types: [opened, synchronize, reopened, ready_for_review]" in text
     for ignored_path in ('- "docs/**"', '- "tasks/**"', '- "**/*.md"'):
         assert ignored_path in text
