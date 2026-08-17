@@ -258,10 +258,15 @@ class ContinuousMiningResult:
             accepted_count = self.accepted_submission_count
             rejected_count = self.rejected_submission_count
 
-            assert candidate_count is not None
-            assert submission_count is not None
-            assert accepted_count is not None
-            assert rejected_count is not None
+            if (
+                candidate_count is None
+                or submission_count is None
+                or accepted_count is None
+                or rejected_count is None
+            ):
+                raise ContinuousMiningValidationError(
+                    "mining result counts are unexpectedly incomplete"
+                )
 
             if submission_count > candidate_count:
                 raise ContinuousMiningValidationError(
