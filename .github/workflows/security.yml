@@ -7,6 +7,12 @@ on:
       - "docs/**"
       - "tasks/**"
       - "**/*.md"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "tasks/**"
+      - "**/*.md"
   schedule:
     - cron: "17 6 1 * *"
   workflow_dispatch:

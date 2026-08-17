@@ -3,10 +3,8 @@ name: Packaging
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - "docs/**"
-      - "tasks/**"
-      - "**/*.md"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
