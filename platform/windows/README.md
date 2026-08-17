@@ -1,7 +1,15 @@
-# Windows Distribution Boundary
+# Windows
 
-HashOrb uses the shared Python package. Run `scripts/install-windows.ps1`
-from a reviewed checkout without administrator access or execution-policy
-changes. Python is the required backend; native/MSVC and CUDA remain
-unvalidated optional boundaries. Full instructions are in
-`docs/13-installation-and-packaging.md`.
+## Plain Talk
+
+Windows uses the shared HashOrb Python package. The portable Python backend is the required path; native MSVC and Windows CUDA are not claimed as broadly validated yet.
+
+For the shortest path from checkout to a bounded live mining run, use the [Quick Start Guide](../../docs/QUICKSTART.md#windows).
+
+From a normal non-administrator PowerShell session:
+
+```powershell
+& .\scripts\install-windows.ps1 -Action install
+```
+
+The installer does not change execution policy or install a separate Windows miner. Detailed validation boundaries are documented in [Installation and Packaging](../../docs/13-installation-and-packaging.md).
