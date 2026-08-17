@@ -2,13 +2,14 @@
 
 This directory is the public technical documentation for HashOrb.
 
-If you want to get HashOrb running quickly, start with the [Quick Start Guide](QUICKSTART.md). If you want to understand how the miner is built, use the topic map below.
+If you want to get HashOrb running quickly, start by preparing your machine with [Prerequisites](PREREQUISITES.md), then follow the [Quick Start Guide](QUICKSTART.md). If you want to understand how the miner is built, use the topic map below.
 
 HashOrb is an active pre-release learning project. The documentation describes implemented behavior unless a section is explicitly marked experimental, deferred, historical, or pending hardware validation.
 
 ## Quick Start
 
-- [Quick Start: Linux, macOS, Windows, and Docker](QUICKSTART.md) — install, configure a public Bitcoin payout address, verify the environment, and start a short bounded Stratum mining run.
+- [Prerequisites: Linux, macOS, Windows, and Docker](PREREQUISITES.md) — install and verify the tools required before installing HashOrb.
+- [Quick Start: Linux, macOS, Windows, and Docker](QUICKSTART.md) — configure a public Bitcoin payout address, install HashOrb, verify the environment, and start a short bounded Stratum mining run.
 
 ## Development and Packaging
 
