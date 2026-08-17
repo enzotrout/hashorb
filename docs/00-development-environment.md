@@ -1,40 +1,78 @@
-# Milestone 0.3 Summary
+# Development Environment
 
-## Python Development Environment
+## What
 
-The HashOrb project uses an isolated Python development environment based on
-Python 3.13 and `uv`. The recommended workflow is to let `uv` provision the
-project Python locally, then run `uv sync` from the repository root so the
-same interpreter is used for tests, linting, and CUDA builds.
+HashOrb uses Python 3.13, `uv`, a repository-local virtual environment, and locked dependencies for development and validation.
 
-### Development Standards
+## Why
 
-- Python 3.13
-- uv
+The project contains Python, an optional native C extension, and an optional CUDA extension. A reproducible environment keeps tests, linting, typing, packaging, and native builds tied to the same interpreter and dependency set.
+
+## Plain Talk
+
+Work inside the repository environment instead of installing development dependencies into the operating system's Python. `uv` keeps the environment repeatable, and the repository's `dev` helper runs the checks expected before review.
+
+## Standard Toolchain
+
+- CPython 3.13
+- `uv`
 - `.venv`
 - `pyproject.toml`
 - `uv.lock`
-
-### Development Toolchain
-
 - pytest
 - Ruff
 - mypy
 
-### Validation
+## Start a Development Checkout
 
-The following commands should succeed on every developer workstation:
+From the repository root:
 
 ```bash
-uv run ruff check .
+./dev start
+```
+
+On Windows:
+
+```powershell
+python .\dev start
+```
+
+The helper prepares the locked environment without downloading a different Python interpreter behind your back.
+
+You can also use `uv` directly:
+
+```bash
+uv sync --locked --no-python-downloads
+```
+
+## Routine Validation
+
+Fast local checks:
+
+```bash
+./dev check
+```
+
+Full pre-review gate:
+
+```bash
+./dev full
+```
+
+Equivalent core commands include:
+
+```bash
 uv run ruff format --check .
+uv run ruff check .
 uv run mypy src
 uv run pytest -q
 uv lock --check
 ```
 
-### Resource Strategy
+## CPU and CUDA Boundary
 
-CPU development and packaging should remain reproducible on Linux, macOS, and
-Windows CI runners. CUDA development and GPU benchmarking require an explicitly
-configured NVIDIA Linux host; they are not part of the portable CPU gate.
+Portable development and packaging should work without CUDA. The Python backend is always the correctness baseline, and the optional native C extension is used when it builds successfully.
+
+CUDA development requires an explicitly configured NVIDIA Linux host, CUDA toolkit, target architecture, and device selection. CUDA is not part of the portable CPU installation contract.
+
+For installation rather than development, use the [Quick Start Guide](QUICKSTART.md). For the repository workflow, see [Development Workflow](development.md) and [Git Workflow](01-git-workflow.md).
