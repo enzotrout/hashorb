@@ -1,8 +1,12 @@
 # Terminal Dashboard TUI
 
+## Plain Talk
+
+The HashOrb dashboard is a read-only control-room view of a mining log. It shows rates, work progression, strategy activity, share results, reconnects, and safe GPU telemetry, but it cannot start mining, change a profile, submit a share, or alter the search order.
+
 ## Purpose
 
-HashOrb's first dashboard is a read-only terminal user interface built on the existing sanitized JSONL event stream. It is intentionally downstream of mining and observability:
+HashOrb's terminal dashboard is built on the existing sanitized JSONL event stream. It is intentionally downstream of mining and observability:
 
 ```text
 Mining / Stratum / Compute
@@ -44,7 +48,7 @@ hashorb dashboard \
 
 ## What It Shows
 
-The initial dashboard includes:
+The dashboard includes:
 
 - active mining command and run state
 - requested/effective profile when present
@@ -120,8 +124,8 @@ If the file is replaced or truncated, the follower resets its projection and rer
 
 If multiple command runs exist in one append-only file, the dashboard selects the newest supported mining run and ignores later interleaved events from older runs.
 
-## First-Slice Boundary
+## Control Boundary
 
-The visual mockup includes keyboard actions such as start/stop mining, profile changes, backend changes, and reconnect commands. Those are deliberately **not** part of this foundation.
+The dashboard is intentionally observational. Start/stop mining, profile changes, backend changes, strategy changes, and reconnect actions belong to the mining command and its explicit authorization boundaries, not to the renderer.
 
-The first slice proves the state model, live rates, nonce-space visuals, terminal rendering, safe local telemetry, and read-only log following. Interactive mining controls can be designed later as a separate authorization and lifecycle slice rather than mixing control behavior into the presentation foundation.
+Keeping display and control separate means the dashboard can be used against live or archived logs without gaining submission authority or changing the mining process it is observing.

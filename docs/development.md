@@ -1,5 +1,9 @@
 # HashOrb development workflow
 
+## Plain Talk
+
+Use the repository's `dev` helper for the routine engineering loop: synchronize a clean checkout, prepare the locked environment, run fast checks while working, run the full suite before review, and inspect the branch diff before opening a pull request. It is development tooling only; it never controls mining or Bitcoin behavior.
+
 HashOrb uses one repository-local helper for routine development setup, checks,
 diagnostics, and pre-review inspection. It does not own mining behavior,
 Bitcoin or Stratum behavior, compute algorithms, or release policy.

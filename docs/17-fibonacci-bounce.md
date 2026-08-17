@@ -1,5 +1,9 @@
 # Fibonacci Bounce Search Strategy
 
+## Plain Talk
+
+Fibonacci Bounce changes the order in which HashOrb visits ordinary nonce ranges. Instead of walking them left to right, it uses a deterministic Fibonacci-derived stride and a back-and-forth bounce pattern. It still covers every parent range once, uses the same hashing backends, and does not claim better Bitcoin mining odds.
+
 ## Purpose
 
 `fibonacci-bounce` is an experimental HashOrb parent-range ordering strategy.

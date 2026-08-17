@@ -16,6 +16,14 @@ HashOrb is an active **pre-release learning project**. It is not intended to com
 
 Project site: <https://hashorb.com>
 
+## Quick Start
+
+Want to run it rather than read about it first?
+
+**[Quick Start: Linux, macOS, Windows, and Docker](docs/QUICKSTART.md)**
+
+The guide walks from a fresh checkout to a short bounded Stratum mining run using a public Bitcoin receive address. HashOrb never needs a seed phrase, private key, or wallet password for that path.
+
 ## Why I Built It
 
 HashOrb started with a simple question:
@@ -65,7 +73,7 @@ AI is used as an engineering tool rather than a replacement for validation. Hash
 | CI/CD | GitHub Actions |
 | Containers | Docker |
 | Python tooling | uv |
-| Platforms | Linux, macOS, NVIDIA DGX Spark |
+| Platforms | Linux, macOS, Windows CPU path, NVIDIA DGX Spark |
 | Bitcoin | Stratum, Bitcoin Core RPC |
 | Quality | pytest, Ruff, mypy |
 | Security | Gitleaks, Trivy, Bandit, pip-audit |
@@ -82,9 +90,15 @@ HashOrb currently has several compute paths:
 
 The project separates **how hashes are calculated** from **how portions of the search space are selected**.
 
-One experimental search strategy, `orbiting-bit`, changes the order in which ranges are explored while preserving the same overall search space.
+## Search Strategies
 
-It does **not** claim to increase the probability of finding a valid Bitcoin hash.
+Built-in search orders include:
+
+- **Sequential** — reference range order
+- **Orbiting Bit** — deterministic bit-reversal range order
+- **Fibonacci Bounce** — deterministic Fibonacci-derived range permutation
+
+These strategies change the order in which ordinary nonce ranges are explored. They do **not** claim to increase the probability of finding a valid Bitcoin hash.
 
 ## Quick Examples
 
@@ -149,16 +163,15 @@ The goal is not simply to make hashing code work, but to learn how to build, tes
 
 ## Documentation
 
-The README intentionally stays high level. Detailed engineering documentation lives under `docs/`.
+The README intentionally stays high level.
 
-Useful starting points:
+Start with the **[documentation index](docs/README.md)** for a plain-language map of the technical docs, or jump directly to:
 
+- [Quick Start](docs/QUICKSTART.md)
 - [Architecture](ARCHITECTURE.md)
-- [Development](docs/development.md)
+- [Stratum and compute design](docs/03-stratum-and-compute-design.md)
 - [Compute backends](docs/05-compute-backends.md)
 - [Search strategies](docs/08-search-strategies.md)
-- [Orbiting Bit](docs/09-orbiting-bit.md)
-- [CUDA backend](docs/10-cuda-backend.md)
 - [Performance profiles](docs/12-performance-profiles.md)
 - [Installation and packaging](docs/13-installation-and-packaging.md)
 - [Bitcoin Core true solo](docs/14-bitcoin-core-true-solo.md)

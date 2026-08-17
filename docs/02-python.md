@@ -1,127 +1,80 @@
-# Python Development Environment
+# Python Environment
 
-## Purpose
+## What
 
-HashOrb uses an isolated and reproducible Python environment.
+HashOrb targets CPython 3.13 and uses `uv` to create and synchronize the repository-local virtual environment from `pyproject.toml` and `uv.lock`.
 
-The project does **not** install dependencies into a platform system Python.
+## Why
 
----
+The miner needs a predictable interpreter and dependency set across development, tests, packaging, and optional native builds. Keeping those dependencies out of the platform system Python also makes cleanup and reproduction much easier.
+
+## Plain Talk
+
+Install Python 3.13 and `uv`, then let the repository create its own environment. Use `uv run ...` or the `dev` helper instead of mixing HashOrb dependencies into whatever Python your operating system happens to provide.
 
 ## Standard Versions
 
 - Python: 3.13
-- Environment manager: uv
+- Environment manager: `uv`
 - Virtual environment: `.venv`
 - Project metadata: `pyproject.toml`
 - Dependency lock file: `uv.lock`
 
----
+## Prepare the Environment
 
-## Installation
-
-Install uv separately using a method you have reviewed. For example, on macOS
-with an existing Homebrew installation:
+If you already have Python 3.13 and `uv` available:
 
 ```bash
-brew install uv
+uv sync --locked --no-python-downloads
 ```
 
-Create the virtual environment:
+The repository helper wraps the normal development setup:
 
 ```bash
-uv venv --python 3.13
+./dev start
 ```
 
-Activate it:
+Windows:
 
-```bash
-source .venv/bin/activate
+```powershell
+python .\dev start
 ```
 
-Install project dependencies:
+The sync may build HashOrb's optional portable native C extension when a suitable compiler is available. That extension is not required for the Python backend.
 
-```bash
-uv sync --locked
-```
+## Run Commands Inside the Environment
 
-This also attempts to build HashOrb's optional portable native C extension
-when a platform compiler is available. The extension is not required for the
-default Python backend or a Python-only installation. Native development and
-clean-build instructions are documented in
-[`06-native-cpu.md`](06-native-cpu.md).
-
----
-
-## Verification
-
-Verify the Python version:
+Examples:
 
 ```bash
 uv run python --version
+uv run hashorb doctor
+uv run hashorb compute-benchmark --backend python --hash-count 100000
 ```
 
-Run Ruff:
+## Verification
 
 ```bash
+uv run ruff format --check .
 uv run ruff check .
-```
-
-Run mypy:
-
-```bash
 uv run mypy src
-```
-
-Run pytest:
-
-```bash
-uv run pytest
-```
-
-Verify the lock file:
-
-```bash
+uv run pytest -q
 uv lock --check
 ```
 
----
+For the normal repository workflow, prefer:
 
-## Development Tools
-
-| Tool | Purpose |
-|------|---------|
-| pytest | Unit testing |
-| Ruff | Linting, formatting, import sorting |
-| mypy | Static type checking |
-| uv | Python environment and dependency management |
-
----
-
-## Environment Separation
-
-HashOrb environment:
-
-```text
-<repository>/.venv
+```bash
+./dev check
+./dev full
 ```
 
-The virtual environment is **never committed to Git**.
+## Native and CUDA Builds
 
-Only these files are version controlled:
+The Python backend is the portable correctness baseline.
 
-- `pyproject.toml`
-- `uv.lock`
+The native C backend is optional and documented in [Native CPU](06-native-cpu.md). CUDA is a separate explicit Linux/NVIDIA source-build tier documented in [CUDA Backend](10-cuda-backend.md) and [Installation and Packaging](13-installation-and-packaging.md).
 
-These files allow any machine to recreate the exact development environment.
+## User Installation
 
----
-
-## Current Validation
-
-- Python 3.13 is the only declared interpreter line.
-- Linux ARM64 Spark development and clean-install gates are current.
-- Apple Silicon native builds were exercised previously, but the packaging
-  changes on the current HEAD still require the macOS CI runner.
-- Windows remains CI-configured and statically reviewed until its runner gate
-  executes.
+This page describes the development environment. To install the `hashorb` command and begin mining, use the [Quick Start Guide](QUICKSTART.md).
