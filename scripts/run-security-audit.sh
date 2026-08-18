@@ -113,17 +113,26 @@ import sys
 from pathlib import Path
 
 document = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-identifiers = sorted(
+findings = sorted(
     {
-        finding.get("VulnerabilityID")
+        (
+            finding.get("VulnerabilityID", "unknown"),
+            finding.get("PkgName", "unknown"),
+            finding.get("InstalledVersion", "unknown"),
+            finding.get("FixedVersion", "unavailable") or "unavailable",
+        )
         for result in document.get("Results") or ()
         for finding in result.get("Vulnerabilities") or ()
         if isinstance(finding.get("VulnerabilityID"), str)
         and finding.get("VulnerabilityID")
     }
 )
-if identifiers:
-    print("Trivy vulnerability IDs: " + ", ".join(identifiers), file=sys.stderr)
+for vulnerability_id, package, installed, fixed in findings:
+    print(
+        f"Trivy vulnerability: {vulnerability_id}; package={package}; "
+        f"installed={installed}; fixed={fixed}",
+        file=sys.stderr,
+    )
 PY
         printf '%s\n' "Trivy High/Critical findings detected; report contents suppressed." >&2
         exit 1
