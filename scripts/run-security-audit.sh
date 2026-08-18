@@ -120,6 +120,9 @@ findings = sorted(
             finding.get("PkgName", "unknown"),
             finding.get("InstalledVersion", "unknown"),
             finding.get("FixedVersion", "unavailable") or "unavailable",
+            finding.get("Severity", "unknown"),
+            finding.get("Title", "unavailable") or "unavailable",
+            finding.get("PrimaryURL", "unavailable") or "unavailable",
         )
         for result in document.get("Results") or ()
         for finding in result.get("Vulnerabilities") or ()
@@ -127,10 +130,11 @@ findings = sorted(
         and finding.get("VulnerabilityID")
     }
 )
-for vulnerability_id, package, installed, fixed in findings:
+for vulnerability_id, package, installed, fixed, severity, title, primary_url in findings:
     print(
         f"Trivy vulnerability: {vulnerability_id}; package={package}; "
-        f"installed={installed}; fixed={fixed}",
+        f"installed={installed}; fixed={fixed}; severity={severity}; "
+        f"title={title}; advisory={primary_url}",
         file=sys.stderr,
     )
 PY
