@@ -19,6 +19,9 @@ vulnerabilities:
   - id: CVE-2026-13221
     expired_at: 2026-10-31
     statement: HashOrb does not invoke the Perl interpreter.
+  - id: CVE-2026-14456
+    expired_at: 2026-10-31
+    statement: HashOrb does not run an OpenSSL QUIC server or accept QUIC traffic.
   - id: CVE-2026-41992
     expired_at: 2026-10-31
     statement: HashOrb does not invoke gzip or process gzip input at runtime.
