@@ -272,8 +272,10 @@ The public analysis boundary is:
 ```python
 class LogSummaryError(RuntimeError): ...
 
+
 @dataclass(frozen=True, slots=True)
 class LogSummary: ...
+
 
 def summarize_jsonl(path: str | Path) -> LogSummary: ...
 ```
