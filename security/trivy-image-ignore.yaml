@@ -1,4 +1,4 @@
-# Reviewed 2026-07-31 against the digest-pinned CPU runtime image. These
+# Reviewed 2026-08-18 against the digest-pinned CPU runtime image. These
 # suppressions expire quickly and apply only to the image scan. HashOrb does
 # not invoke the affected utilities/libraries or accept their vulnerable input
 # classes; the container runs non-root without capabilities and with a
@@ -13,6 +13,9 @@ vulnerabilities:
   - id: CVE-2025-69720
     expired_at: 2026-10-31
     statement: HashOrb does not use ncurses or parse attacker-controlled terminal databases.
+  - id: CVE-2026-12087
+    expired_at: 2026-10-31
+    statement: HashOrb does not invoke Perl or call pack_ip_mreq_source with attacker-controlled input.
   - id: CVE-2026-13221
     expired_at: 2026-10-31
     statement: HashOrb does not invoke the Perl interpreter.
@@ -25,6 +28,9 @@ vulnerabilities:
   - id: CVE-2026-42497
     expired_at: 2026-10-31
     statement: HashOrb does not invoke the Perl interpreter.
+  - id: CVE-2026-48959
+    expired_at: 2026-10-31
+    statement: HashOrb does not invoke Perl or process ZIP archives at runtime.
   - id: CVE-2026-48962
     expired_at: 2026-10-31
     statement: HashOrb does not invoke the Perl interpreter.
