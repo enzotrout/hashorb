@@ -107,6 +107,24 @@ for result in document.get("Results") or ():
 raise SystemExit(0 if findings == 0 else 1)
 PY
     then
+        python3 - "$report" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+document = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+identifiers = sorted(
+    {
+        finding.get("VulnerabilityID")
+        for result in document.get("Results") or ()
+        for finding in result.get("Vulnerabilities") or ()
+        if isinstance(finding.get("VulnerabilityID"), str)
+        and finding.get("VulnerabilityID")
+    }
+)
+if identifiers:
+    print("Trivy vulnerability IDs: " + ", ".join(identifiers), file=sys.stderr)
+PY
         printf '%s\n' "Trivy High/Critical findings detected; report contents suppressed." >&2
         exit 1
     fi
