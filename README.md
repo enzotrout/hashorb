@@ -8,7 +8,7 @@ HashOrb is an experimental Bitcoin hashing and mining project that I am building
 - SHA-256 hashing and nonce search
 - Stratum mining and Bitcoin Core
 - CPU and NVIDIA CUDA compute
-- Search strategies and distributed hashing concepts
+- Search strategies
 - AI-assisted software engineering
 - CI/CD, testing, security, and developer tooling
 
@@ -23,6 +23,14 @@ Want to run it rather than read about it first?
 **[Quick Start: Linux, macOS, Windows, and Docker](docs/QUICKSTART.md)**
 
 The guide walks from a fresh checkout to a short bounded Stratum mining run using a public Bitcoin receive address. HashOrb never needs a seed phrase, private key, or wallet password for that path.
+
+## Simple Multi-Machine Mining
+
+HashOrb intentionally uses a simple scale-out model: **one independent HashOrb miner per machine**.
+
+If you want to mine from several computers through CKPool, install HashOrb on each machine and configure the same Bitcoin payout address. CKPool accepts the Bitcoin address as the Stratum username and allows an optional worker extension. Each HashOrb instance maintains its own Stratum session and receives its own work, so HashOrb does not need a distributed coordinator or swarm layer.
+
+This keeps multi-machine mining operationally simple: add another machine by installing and configuring another independent HashOrb instance.
 
 ## Why I Built It
 
@@ -125,6 +133,22 @@ hashorb compute-benchmark \
   --hash-count 1000000
 ```
 
+### Mine Bitcoin through CKPool
+
+Set your public Bitcoin receive address in `.env`, then explicitly enable live Stratum and mining for the current shell:
+
+```bash
+export HASHORB_ENABLE_LIVE_STRATUM=1
+export HASHORB_ENABLE_LIVE_MINING=1
+
+hashorb stratum-mine \
+  --profile auto \
+  --max-runtime-seconds 300 \
+  --log-file logs/events.jsonl
+```
+
+That performs a real, bounded five-minute mining run. See the [Quick Start](docs/QUICKSTART.md) for setup on Linux, macOS, Windows, Docker, and supported NVIDIA CUDA systems.
+
 HashOrb keeps live Bitcoin operations explicitly opt-in. Offline diagnostics and benchmarks do not require a mining pool or Bitcoin wallet.
 
 ### Bitcoin Core
@@ -185,6 +209,6 @@ HashOrb is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) for
 
 🚧 **Active development / pre-release**
 
-HashOrb continues to evolve as I learn more about Bitcoin, GPU computing, AI-assisted engineering, and scalable software development.
+HashOrb continues to evolve as I learn more about Bitcoin, GPU computing, AI-assisted engineering, and maintainable software development.
 
 Feedback and technical discussion are welcome.
