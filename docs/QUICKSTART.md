@@ -33,8 +33,6 @@ git clone https://github.com/enzotrout/hashorb.git
 cd hashorb
 ```
 
-Until the repository is public, use whatever authenticated clone URL you already use.
-
 ## 2. Create Your Configuration
 
 Copy the example file without committing the result.
