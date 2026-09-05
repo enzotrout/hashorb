@@ -16,7 +16,12 @@ class SmokeError(RuntimeError):
     """A clean-installed distribution failed an offline smoke check."""
 
 
-def _capture(command: list[str], *, cwd: Path, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _capture(
+    command: list[str],
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=cwd,
@@ -73,7 +78,10 @@ def _assert_installed_dotenv_loading(
         raise SmokeError("installed CLI doctor failed while loading parent .env")
     if "[ready] configuration-source: present; values hidden" not in doctor.stdout:
         raise SmokeError("installed CLI did not discover parent .env from working directory")
-    if "[ready] stratum-configuration: complete enough to validate at runtime; values hidden" not in doctor.stdout:
+    expected_stratum_status = (
+        "[ready] stratum-configuration: complete enough to validate at runtime; values hidden"
+    )
+    if expected_stratum_status not in doctor.stdout:
         raise SmokeError("installed CLI did not load HASHORB_BITCOIN_ADDRESS from .env")
 
     _run(
@@ -113,10 +121,7 @@ def _assert_installed_dotenv_loading(
             str(python),
             "-I",
             "-c",
-            (
-                "from hashorb.config.settings import Settings; "
-                "Settings.from_env()"
-            ),
+            "from hashorb.config.settings import Settings; Settings.from_env()",
         ],
         cwd=unrelated_directory,
         environment=dotenv_environment,
