@@ -201,6 +201,15 @@ Start with the **[documentation index](docs/README.md)** for a plain-language ma
 - [Bitcoin Core true solo](docs/14-bitcoin-core-true-solo.md)
 - [Security](SECURITY.md)
 
+## Support HashOrb
+
+HashOrb is free and open source. If you find it useful and want to support continued development, testing, and documentation, you can contribute in either of these ways:
+
+- ☕ **Buy Me a Coffee:** <https://buymeacoffee.com/hashorb>
+- ₿ **Bitcoin:** `bc1qgr9cv6n8tl33k96q2nxk6cf9gj2f7asjj264te`
+
+Bitcoin contributions should be sent on the Bitcoin network.
+
 ## License
 
 HashOrb is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) for the full terms and [NOTICE](NOTICE) for project attribution.
