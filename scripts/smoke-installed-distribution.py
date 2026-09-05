@@ -16,8 +16,8 @@ class SmokeError(RuntimeError):
     """A clean-installed distribution failed an offline smoke check."""
 
 
-def _run(command: list[str], *, cwd: Path, environment: dict[str, str]) -> None:
-    result = subprocess.run(
+def _capture(command: list[str], *, cwd: Path, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         command,
         cwd=cwd,
         env=environment,
@@ -26,8 +26,105 @@ def _run(command: list[str], *, cwd: Path, environment: dict[str, str]) -> None:
         text=True,
         encoding="utf-8",
     )
+
+
+def _run(command: list[str], *, cwd: Path, environment: dict[str, str]) -> None:
+    result = _capture(command, cwd=cwd, environment=environment)
     if result.returncode != 0:
         raise SmokeError(f"offline command failed: {command[1] if len(command) > 1 else 'cli'}")
+
+
+def _assert_installed_dotenv_loading(
+    *,
+    command: Path,
+    python: Path,
+    root: Path,
+    base_environment: dict[str, str],
+) -> None:
+    """Exercise real installed-package .env discovery from a nested working directory."""
+
+    configured_root = root / "configured"
+    nested_directory = configured_root / "nested"
+    nested_directory.mkdir(parents=True)
+    (configured_root / ".env").write_text(
+        "\n".join(
+            [
+                "HASHORB_BITCOIN_ADDRESS=bc1qinstalledsmokeaddress",
+                "HASHORB_STRATUM_HOST=stratum.ckpool.org",
+                "HASHORB_STRATUM_PORT=3333",
+                "HASHORB_WORKER_NAME=auto",
+                "HASHORB_STRATUM_PASSWORD=x",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+        newline="",
+    )
+
+    dotenv_environment = dict(base_environment)
+    dotenv_environment.pop("PYTHON_DOTENV_DISABLED", None)
+
+    doctor = _capture(
+        [str(command), "doctor", "--log-dir", "logs"],
+        cwd=nested_directory,
+        environment=dotenv_environment,
+    )
+    if doctor.returncode != 0:
+        raise SmokeError("installed CLI doctor failed while loading parent .env")
+    if "[ready] configuration-source: present; values hidden" not in doctor.stdout:
+        raise SmokeError("installed CLI did not discover parent .env from working directory")
+    if "[ready] stratum-configuration: complete enough to validate at runtime; values hidden" not in doctor.stdout:
+        raise SmokeError("installed CLI did not load HASHORB_BITCOIN_ADDRESS from .env")
+
+    _run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            (
+                "from hashorb.config.settings import Settings; "
+                "assert Settings.from_env().bitcoin_address == 'bc1qinstalledsmokeaddress'"
+            ),
+        ],
+        cwd=nested_directory,
+        environment=dotenv_environment,
+    )
+
+    overridden_environment = dict(dotenv_environment)
+    overridden_environment["HASHORB_BITCOIN_ADDRESS"] = "bc1qprocessoverride"
+    _run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            (
+                "from hashorb.config.settings import Settings; "
+                "assert Settings.from_env().bitcoin_address == 'bc1qprocessoverride'"
+            ),
+        ],
+        cwd=nested_directory,
+        environment=overridden_environment,
+    )
+
+    unrelated_directory = root / "unrelated"
+    unrelated_directory.mkdir()
+    unrelated = _capture(
+        [
+            str(python),
+            "-I",
+            "-c",
+            (
+                "from hashorb.config.settings import Settings; "
+                "Settings.from_env()"
+            ),
+        ],
+        cwd=unrelated_directory,
+        environment=dotenv_environment,
+    )
+    if unrelated.returncode == 0:
+        raise SmokeError("installed package loaded .env from an unrelated directory")
+    if "HASHORB_BITCOIN_ADDRESS is required" not in unrelated.stderr:
+        raise SmokeError("unrelated-directory .env negative smoke failed unexpectedly")
 
 
 def smoke_distribution(distribution_directory: Path) -> None:
@@ -123,6 +220,12 @@ def smoke_distribution(distribution_directory: Path) -> None:
             ],
             cwd=run_directory,
             environment=environment,
+        )
+        _assert_installed_dotenv_loading(
+            command=command,
+            python=python,
+            root=root,
+            base_environment=environment,
         )
         if any(path.exists() for path in legacy_commands):
             raise SmokeError("a legacy console command is installed")
