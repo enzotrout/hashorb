@@ -1,4 +1,4 @@
-# Reviewed 2026-08-29 against the digest-pinned CPU runtime image. These
+# Reviewed 2026-09-05 against the digest-pinned CPU runtime image. These
 # suppressions expire quickly and apply only to the image scan. HashOrb does
 # not invoke the affected utilities/libraries or accept their vulnerable input
 # classes; the container runs non-root without capabilities and with a
@@ -28,6 +28,9 @@ vulnerabilities:
   - id: CVE-2026-14456
     expired_at: 2026-10-31
     statement: HashOrb does not run an OpenSSL QUIC server or accept QUIC traffic.
+  - id: CVE-2026-16742
+    expired_at: 2026-10-31
+    statement: HashOrb does not run systemd or systemd-homed; the runtime container is non-root and does not manage home records.
   - id: CVE-2026-41992
     expired_at: 2026-10-31
     statement: HashOrb does not invoke gzip or process gzip input at runtime.
@@ -58,6 +61,18 @@ vulnerabilities:
   - id: CVE-2026-57433
     expired_at: 2026-10-31
     statement: HashOrb does not invoke the Perl interpreter.
+  - id: CVE-2026-76642
+    expired_at: 2026-10-31
+    statement: HashOrb does not invoke mount helpers or X-mount hooks; the runtime is non-root with all capabilities dropped and receives no mount capability.
+  - id: CVE-2026-78408
+    expired_at: 2026-10-31
+    statement: HashOrb does not invoke nsenter or join cgroups; the runtime is non-root with all capabilities dropped and has no cgroup-management authority.
+  - id: CVE-2026-78409
+    expired_at: 2026-10-31
+    statement: HashOrb does not invoke mount or use X-mount.subdir; the runtime is non-root with all capabilities dropped and receives no mount capability.
+  - id: CVE-2026-78410
+    expired_at: 2026-10-31
+    statement: HashOrb does not create restricted bind mounts or use X-mount.owner/group/mode; the runtime is non-root with all capabilities dropped and receives no mount capability.
   - id: CVE-2026-8376
     expired_at: 2026-10-31
     statement: HashOrb does not invoke the Perl interpreter.
