@@ -6,6 +6,7 @@ import math
 import os
 import re
 import socket
+import sys
 from dataclasses import dataclass
 
 from hashorb.config.environment import load_hashorb_environment
@@ -27,6 +28,7 @@ DEFAULT_CUDA_DEVICE = 0
 DEFAULT_CUDA_DEVICES = (DEFAULT_CUDA_DEVICE,)
 MAX_CUDA_DEVICE = (1 << 31) - 1
 MAX_CUDA_DEVICES = 256
+HASHORB_SUPPORT_BITCOIN_ADDRESS = "bc1qgr9cv6n8tl33k96q2nxk6cf9gj2f7asjj264te"
 
 _WORKER_INVALID_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]+")
 
@@ -50,6 +52,54 @@ def resolve_worker_name(configured_name: str) -> str:
         configured_name = socket.gethostname()
 
     return sanitize_worker_name(configured_name)
+
+
+def _interactive_bitcoin_address() -> str | None:
+    """Offer an explicit payout choice only when stdin is an interactive terminal."""
+
+    try:
+        interactive = sys.stdin.isatty()
+    except (AttributeError, OSError):
+        interactive = False
+    if not interactive:
+        return None
+
+    print("No Bitcoin payout address is configured.")
+    print()
+    print("Choose:")
+    print("1. Enter my Bitcoin address")
+    print("2. Mine temporarily to the HashOrb support address")
+    print("3. Cancel")
+
+    while True:
+        try:
+            choice = input("Selection: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            print("Mining cancelled.")
+            return None
+
+        if choice == "1":
+            try:
+                address = input("Bitcoin address: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                print("Mining cancelled.")
+                return None
+            if not address:
+                print("Bitcoin address cannot be blank.")
+                continue
+            print("Using your Bitcoin address for this session.")
+            print("Add HASHORB_BITCOIN_ADDRESS to .env to remember it for future runs.")
+            return address
+        if choice == "2":
+            print("Using the HashOrb support address for this mining session only:")
+            print(HASHORB_SUPPORT_BITCOIN_ADDRESS)
+            return HASHORB_SUPPORT_BITCOIN_ADDRESS
+        if choice == "3":
+            print("Mining cancelled.")
+            return None
+        print("Choose 1, 2, or 3.")
 
 
 @dataclass(frozen=True)
@@ -83,6 +133,8 @@ class Settings:
         load_hashorb_environment()
 
         bitcoin_address = os.getenv("HASHORB_BITCOIN_ADDRESS", "").strip()
+        if not bitcoin_address:
+            bitcoin_address = _interactive_bitcoin_address() or ""
         if not bitcoin_address:
             raise ValueError("HASHORB_BITCOIN_ADDRESS is required")
 
