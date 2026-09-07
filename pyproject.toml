@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hashorb"
 version = "0.1.0"
-description = "HashOrb: Distributed hashing as a coordinated swarm."
+description = "Open source Bitcoin solo mining software for learning, experimentation, and real mining."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = "Apache-2.0"
