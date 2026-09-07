@@ -1,5 +1,10 @@
 # HashOrb
 
+[![Packaging](https://github.com/enzotrout/hashorb/actions/workflows/packaging.yml/badge.svg)](https://github.com/enzotrout/hashorb/actions/workflows/packaging.yml)
+[![Security](https://github.com/enzotrout/hashorb/actions/workflows/security.yml/badge.svg)](https://github.com/enzotrout/hashorb/actions/workflows/security.yml)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 **Exploring Bitcoin, hashing, GPU compute, and AI-assisted software development.**
 
 HashOrb is an experimental Bitcoin hashing and mining project that I am building as a hands-on way to learn more about:
@@ -192,6 +197,7 @@ The README intentionally stays high level.
 Start with the **[documentation index](docs/README.md)** for a plain-language map of the technical docs, or jump directly to:
 
 - [Quick Start](docs/QUICKSTART.md)
+- [IDE development setup](docs/18-ide-development-setup.md)
 - [Architecture](ARCHITECTURE.md)
 - [Stratum and compute design](docs/03-stratum-and-compute-design.md)
 - [Compute backends](docs/05-compute-backends.md)
@@ -200,6 +206,13 @@ Start with the **[documentation index](docs/README.md)** for a plain-language ma
 - [Installation and packaging](docs/13-installation-and-packaging.md)
 - [Bitcoin Core true solo](docs/14-bitcoin-core-true-solo.md)
 - [Security](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), then use the [IDE Development Setup](docs/18-ide-development-setup.md) for a reproducible workstation, recommended VS Code extensions, validation tasks, debugging, and cross-platform interpreter setup.
+
+Use [GitHub Discussions](https://github.com/enzotrout/hashorb/discussions) for questions, ideas, and mining results that are not concrete bug reports.
 
 ## Support HashOrb
 

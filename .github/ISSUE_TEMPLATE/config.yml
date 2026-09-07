@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and discussion
+    url: https://github.com/enzotrout/hashorb/discussions
+    about: Ask usage questions, share mining results, or discuss ideas with the community.
+  - name: Security vulnerability
+    url: https://github.com/enzotrout/hashorb/security/policy
+    about: Please use the security policy instead of opening a public vulnerability issue.

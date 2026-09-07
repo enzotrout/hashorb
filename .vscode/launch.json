@@ -1,0 +1,33 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "HashOrb: doctor",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "hashorb",
+            "args": ["doctor"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env",
+            "justMyCode": true
+        },
+        {
+            "name": "HashOrb: CPU benchmark",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "hashorb",
+            "args": [
+                "compute-benchmark",
+                "--backend",
+                "python",
+                "--hash-count",
+                "100000"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env",
+            "justMyCode": true
+        }
+    ]
+}

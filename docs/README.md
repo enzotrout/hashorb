@@ -14,10 +14,13 @@ HashOrb is an active pre-release learning project. The documentation describes i
 ## Development and Packaging
 
 - [Development Environment](00-development-environment.md) — **Plain talk:** the tools and checks needed to work on HashOrb without polluting the system Python.
+- [IDE Development Setup](18-ide-development-setup.md) — **Plain talk:** clone the project, use the repository `.venv`, install recommended VS Code extensions, run validation tasks, debug safely, and configure other IDEs such as PyCharm.
 - [Git Workflow](01-git-workflow.md) — **Plain talk:** how changes move from a task branch through local checks and a reviewed pull request.
 - [Python Environment](02-python.md) — **Plain talk:** how Python 3.13, `uv`, `.venv`, and the lock file keep local development reproducible.
 - [Development Workflow](development.md) — **Plain talk:** how the repository-local `dev` helper runs routine setup, checks, doctor, and review commands.
 - [Installation and Packaging](13-installation-and-packaging.md) — **Plain talk:** how the same HashOrb package is installed and packaged across supported operating-system boundaries.
+- [Contributing](../CONTRIBUTING.md) — contribution scope, pull-request expectations, testing, mining/security review, and community guidance.
+- [Changelog](../CHANGELOG.md) — notable user-visible and engineering changes grouped by release.
 
 ## Mining Architecture
 

@@ -1,0 +1,50 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "HashOrb: Sync environment",
+            "type": "shell",
+            "command": "uv sync --locked --no-python-downloads",
+            "problemMatcher": []
+        },
+        {
+            "label": "HashOrb: Ruff format check",
+            "type": "shell",
+            "command": "uv run ruff format --check .",
+            "problemMatcher": []
+        },
+        {
+            "label": "HashOrb: Ruff lint",
+            "type": "shell",
+            "command": "uv run ruff check .",
+            "problemMatcher": []
+        },
+        {
+            "label": "HashOrb: mypy",
+            "type": "shell",
+            "command": "uv run mypy src",
+            "problemMatcher": []
+        },
+        {
+            "label": "HashOrb: pytest",
+            "type": "shell",
+            "command": "uv run pytest -q",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "HashOrb: Full validation",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "HashOrb: Ruff format check",
+                "HashOrb: Ruff lint",
+                "HashOrb: mypy",
+                "HashOrb: pytest"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
