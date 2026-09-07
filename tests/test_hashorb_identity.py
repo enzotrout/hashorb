@@ -49,7 +49,7 @@ def test_canonical_distribution_package_and_entry_point() -> None:
     assert metadata["project"]["name"] == "hashorb"
     assert metadata["project"]["version"] == "0.1.0"
     assert metadata["project"]["description"] == (
-        "HashOrb: Distributed hashing as a coordinated swarm."
+        "Open source Bitcoin solo mining software for learning, experimentation, and real mining."
     )
     assert metadata["project"]["scripts"] == {"hashorb": "hashorb.__main__:main"}
     assert (_ROOT / "src" / "hashorb" / "__init__.py").is_file()
