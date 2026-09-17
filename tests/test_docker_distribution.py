@@ -15,6 +15,8 @@ def test_dockerfile_builds_cpu_wheel_and_has_a_minimal_nonroot_runtime() -> None
     assert "-slim-bookworm@sha256:" in text
     assert "HASHORB_BUILD_CUDA=0" in text
     assert "python -m pip wheel" in text
+    assert "apt-get install --yes --no-install-recommends --only-upgrade libpcre2-8-0" in text
+    assert "rm -rf /var/lib/apt/lists/*" in text
     assert "USER hashorb" in text
     assert 'ENTRYPOINT ["hashorb"]' in text
     assert 'CMD ["doctor", "--log-dir", "/app/logs"]' in text

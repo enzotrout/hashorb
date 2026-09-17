@@ -24,6 +24,9 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_ROOT_USER_ACTION=ignore
 
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends --only-upgrade libpcre2-8-0 \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid "${HASHORB_GID}" hashorb \
     && useradd --uid "${HASHORB_UID}" --gid hashorb --create-home hashorb
 COPY --from=builder /wheels /wheels
