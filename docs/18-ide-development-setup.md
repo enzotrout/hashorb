@@ -44,13 +44,6 @@ Create a focused branch for each change:
 git switch -c feature/short-description
 ```
 
-## Existing Checkout Still Named `hashsphere`
-
-If this machine already had the repository before the HashOrb rename, update that checkout instead of cloning a second copy. Follow **[Migrating an Existing Pre-Rename Checkout](19-existing-checkout-migration.md)** first.
-
-In particular, close or reopen IDE workspaces after the outer directory is renamed. A workspace, Python interpreter selection, terminal working directory, debugger configuration, or repository-local `.venv` may still reference the old absolute `hashsphere` path. Recreate the repository `.venv` after the folder rename rather than trying to reuse it.
-
-On a remote DGX Spark VS Code session, reconnect to the new `hashorb` directory after the migration and rebuild the CUDA extension from that new path before continuing CUDA development.
 ## Prepare the development environment
 
 From the repository root:
