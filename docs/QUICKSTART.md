@@ -33,19 +33,47 @@ git clone https://github.com/enzotrout/hashorb.git
 cd hashorb
 ```
 
-## Existing Checkout from Before the HashOrb Rename
+## Running HashOrb from the Source Checkout
 
-If you cloned the project before it was renamed to **HashOrb**, your local folder or Git remote may still use the old `hashsphere` name even though the code is now HashOrb. Do not delete that checkout and start over just because the folder name is old.
+When you are inside the cloned HashOrb repository, the most reliable command form is:
 
-Follow **[Migrating an Existing Pre-Rename Checkout](19-existing-checkout-migration.md)** before continuing. It covers:
+```bash
+uv run hashorb <command>
+```
 
-- updating `origin` to `enzotrout/hashorb`
-- renaming the local checkout directory from `hashsphere` to `hashorb`
-- safely renaming old `HASHSPHERE_` / `HASHPHERE_` keys in a private `.env`
-- recreating `.venv` because virtual environments may contain absolute paths
-- rebuilding native code and, on a DGX Spark, rebuilding the CUDA extension
+For example:
 
-New clones of `https://github.com/enzotrout/hashorb.git` do not need this migration.
+```bash
+uv run hashorb doctor
+uv run hashorb dashboard --log-file logs/events.jsonl
+```
+
+`uv run` executes HashOrb from the repository's managed Python environment, so the `hashorb` executable does not need to be installed globally or already present on your shell's `PATH`.
+
+If you instead ran the user-local installer, bare commands such as `hashorb doctor` and `hashorb dashboard ...` work only when uv's tool binary directory is on `PATH`.
+
+Check the tool binary directory with:
+
+```bash
+uv tool dir --bin
+```
+
+For the current shell, you can add that directory to `PATH` explicitly:
+
+```bash
+export PATH="$(uv tool dir --bin):$PATH"
+```
+
+That `export` affects only the current shell session. To make a PATH change persistent, add the appropriate export to your shell startup file, such as `~/.bashrc`, `~/.zshrc`, or the equivalent configuration used by your shell, then start a new shell or reload that file.
+
+If you see:
+
+```text
+hashorb: command not found
+```
+
+while working from the repository, use the `uv run hashorb ...` form instead of assuming HashOrb itself is broken.
+
 ## 2. Create Your Configuration
 
 Copy the example file without committing the result.
@@ -225,17 +253,19 @@ The current repository Dockerfile is CPU-only. A CUDA Docker image is not curren
 
 ## Watch the Dashboard
 
-If you are mining directly on the host and writing `logs/events.jsonl`, open another terminal:
+If you are running from the source checkout and writing `logs/events.jsonl`, open another terminal in the repository and run:
 
 ```bash
-hashorb dashboard --log-file logs/events.jsonl
+uv run hashorb dashboard --log-file logs/events.jsonl
 ```
 
 For a one-time snapshot:
 
 ```bash
-hashorb dashboard --log-file logs/events.jsonl --once
+uv run hashorb dashboard --log-file logs/events.jsonl --once
 ```
+
+If you installed HashOrb as a user-local uv tool and its binary directory is already on `PATH`, the equivalent bare command is `hashorb dashboard ...`.
 
 ## Try Another Search Strategy
 
@@ -271,18 +301,14 @@ Read [Bitcoin Core True Solo](14-bitcoin-core-true-solo.md) before enabling that
 
 ## Troubleshooting
 
-Start with:
-
-```bash
-hashorb doctor
-hashorb --help
-```
-
-If you are running from the source checkout instead of the installed user-local command, prefix commands with `uv run`, for example:
+From the source checkout, start with:
 
 ```bash
 uv run hashorb doctor
+uv run hashorb --help
 ```
+
+If you installed HashOrb as a user-local tool, you may use the shorter `hashorb ...` form once its binary directory is on `PATH`. If `hashorb` returns `command not found`, check `uv tool dir --bin` or use `uv run hashorb ...` from the repository.
 
 If a prerequisite command is missing, return to the [Prerequisites Guide](PREREQUISITES.md) before troubleshooting HashOrb itself.
 
