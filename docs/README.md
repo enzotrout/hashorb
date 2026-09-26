@@ -10,7 +10,6 @@ HashOrb is an active pre-release learning project. The documentation describes i
 
 - [Prerequisites: Linux, macOS, Windows, and Docker](PREREQUISITES.md) — install and verify the tools required before installing HashOrb.
 - [Quick Start: Linux, macOS, Windows, and Docker](QUICKSTART.md) — configure a public Bitcoin payout address, install HashOrb, verify the environment, and start a short bounded Stratum mining run.
-- [Existing pre-rename checkout migration](19-existing-checkout-migration.md) — **Plain talk:** update an older `hashsphere` checkout to the `hashorb` repository, folder, environment names, virtual environment, native build, and DGX Spark CUDA build without exposing private configuration.
 
 ## Development and Packaging
 
