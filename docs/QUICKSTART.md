@@ -50,9 +50,20 @@ uv run hashorb dashboard --log-file logs/events.jsonl
 
 `uv run` executes HashOrb from the repository's managed Python environment, so the `hashorb` executable does not need to be installed globally or already present on your shell's `PATH`.
 
-If you instead ran the user-local installer, bare commands such as `hashorb doctor` and `hashorb dashboard ...` work only when uv's tool binary directory is on `PATH`.
+If you want to use bare commands such as `hashorb doctor` or `hashorb dashboard ...`, two things must both be true:
 
-Check the tool binary directory with:
+1. HashOrb must be installed as a user-local uv tool.
+2. uv's tool binary directory must be on your shell's `PATH`.
+
+Adding the directory to `PATH` does **not** install HashOrb.
+
+From the repository root, install the user-local tool with:
+
+```bash
+./scripts/install-unix.sh install
+```
+
+Then check the tool binary directory with:
 
 ```bash
 uv tool dir --bin
@@ -66,13 +77,23 @@ export PATH="$(uv tool dir --bin):$PATH"
 
 That `export` affects only the current shell session. To make a PATH change persistent, add the appropriate export to your shell startup file, such as `~/.bashrc`, `~/.zshrc`, or the equivalent configuration used by your shell, then start a new shell or reload that file.
 
+Verify the installed command with:
+
+```bash
+uv tool list
+command -v hashorb
+hashorb --help
+```
+
+If `uv tool list` does not show HashOrb, install it first with `./scripts/install-unix.sh install`.
+
 If you see:
 
 ```text
 hashorb: command not found
 ```
 
-while working from the repository, use the `uv run hashorb ...` form instead of assuming HashOrb itself is broken.
+while working from the repository, first remember that changing `PATH` alone is not enough. Either install HashOrb as a uv tool, or use the repository environment directly with `uv run hashorb ...`.
 
 ## 2. Create Your Configuration
 
@@ -265,7 +286,7 @@ For a one-time snapshot:
 uv run hashorb dashboard --log-file logs/events.jsonl --once
 ```
 
-If you installed HashOrb as a user-local uv tool and its binary directory is already on `PATH`, the equivalent bare command is `hashorb dashboard ...`.
+If you installed HashOrb as a user-local uv tool with `./scripts/install-unix.sh install` and its binary directory is on `PATH`, the equivalent bare command is `hashorb dashboard ...`. Adding the bin directory to `PATH` by itself does not install the command.
 
 ## Try Another Search Strategy
 
@@ -308,7 +329,15 @@ uv run hashorb doctor
 uv run hashorb --help
 ```
 
-If you installed HashOrb as a user-local tool, you may use the shorter `hashorb ...` form once its binary directory is on `PATH`. If `hashorb` returns `command not found`, check `uv tool dir --bin` or use `uv run hashorb ...` from the repository.
+If you installed HashOrb as a user-local tool, you may use the shorter `hashorb ...` form once its binary directory is on `PATH`. If `hashorb` returns `command not found`, check both installation and PATH:
+
+```bash
+uv tool list
+uv tool dir --bin
+command -v hashorb
+```
+
+If HashOrb is not installed, run `./scripts/install-unix.sh install`. If you only want to run from the source checkout, use `uv run hashorb ...`.
 
 If a prerequisite command is missing, return to the [Prerequisites Guide](PREREQUISITES.md) before troubleshooting HashOrb itself.
 
