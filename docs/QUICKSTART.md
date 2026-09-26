@@ -33,6 +33,19 @@ git clone https://github.com/enzotrout/hashorb.git
 cd hashorb
 ```
 
+## Existing Checkout from Before the HashOrb Rename
+
+If you cloned the project before it was renamed to **HashOrb**, your local folder or Git remote may still use the old `hashsphere` name even though the code is now HashOrb. Do not delete that checkout and start over just because the folder name is old.
+
+Follow **[Migrating an Existing Pre-Rename Checkout](19-existing-checkout-migration.md)** before continuing. It covers:
+
+- updating `origin` to `enzotrout/hashorb`
+- renaming the local checkout directory from `hashsphere` to `hashorb`
+- safely renaming old `HASHSPHERE_` / `HASHPHERE_` keys in a private `.env`
+- recreating `.venv` because virtual environments may contain absolute paths
+- rebuilding native code and, on a DGX Spark, rebuilding the CUDA extension
+
+New clones of `https://github.com/enzotrout/hashorb.git` do not need this migration.
 ## 2. Create Your Configuration
 
 Copy the example file without committing the result.
