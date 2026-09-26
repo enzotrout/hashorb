@@ -3,10 +3,6 @@ name: Security
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - "docs/**"
-      - "tasks/**"
-      - "**/*.md"
   push:
     branches: [main]
     paths-ignore:
@@ -35,26 +31,54 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Detect docs-only pull request
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          if printf '%s\n' "$changed" | grep -qvE '^(docs/|tasks/|.*\.md$)'; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Docs-only security check
+        if: steps.scope.outputs.docs_only == 'true'
+        run: echo "Docs-only pull request; full source security scan is not required."
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.scope.outputs.docs_only != 'true'
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        if: steps.scope.outputs.docs_only != 'true'
         with:
           enable-cache: true
           version: "0.12.0"
       - name: Sync locked development environment
+        if: steps.scope.outputs.docs_only != 'true'
         run: uv sync --locked --no-python-downloads
       - name: Check security regression contracts
+        if: steps.scope.outputs.docs_only != 'true'
         run: uv run pytest -q tests/test_security_architecture.py tests/test_bitcoin_rpc.py tests/test_bitcoin_cli.py tests/test_event_logging.py tests/test_docker_distribution.py
       - name: Check source quality
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           uv run ruff check .
           uv run ruff format --check .
           uv run mypy src
           uv lock --check
       - name: Scan source, dependencies, history, and workflows
+        if: steps.scope.outputs.docs_only != 'true'
         run: scripts/run-security-audit.sh source
       - name: Build and inspect private artifacts and ephemeral SBOM
+        if: steps.scope.outputs.docs_only != 'true'
         run: scripts/run-security-audit.sh artifacts
 
   container:
@@ -65,18 +89,44 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - name: Detect docs-only pull request
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          if printf '%s\n' "$changed" | grep -qvE '^(docs/|tasks/|.*\.md$)'; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Docs-only container security check
+        if: steps.scope.outputs.docs_only == 'true'
+        run: echo "Docs-only pull request; container security scan is not required."
       - name: Build CPU image
+        if: steps.scope.outputs.docs_only != 'true'
         run: docker build --tag hashorb:security .
       - name: Run hardened offline container smoke
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           docker run --rm --read-only --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 --cap-drop=ALL --security-opt=no-new-privileges hashorb:security
           test "$(docker run --rm --entrypoint id hashorb:security -u)" = "10001"
       - name: Check image history privacy
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           if docker history --no-trunc hashorb:security | grep -qE -i 'bitcoin_address|stratum_password|YOUR_BITCOIN_ADDRESS'; then
             echo "Image history contains a forbidden configuration marker."
             exit 1
           fi
       - name: Scan CPU runtime image
+        if: steps.scope.outputs.docs_only != 'true'
         run: scripts/run-security-audit.sh image hashorb:security
