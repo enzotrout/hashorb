@@ -19,12 +19,7 @@ from hashorb.config import TRUE_SOLO_FLAG, load_hashorb_environment, require_exa
 _ROOT = Path(__file__).resolve().parents[1]
 _LEGACY_PATTERN = "Hashsphere|hashsphere|HASHSPHERE_|Hashphere|hashphere|HASHPHERE_"
 _ALLOWED_LEGACY_FILES = {
-    "docs/13-installation-and-packaging.md",
     "docs/15-security-audit.md",
-    "docs/18-ide-development-setup.md",
-    "docs/19-existing-checkout-migration.md",
-    "docs/QUICKSTART.md",
-    "docs/README.md",
     "scripts/migrate-hashorb-env.py",
     "scripts/smoke-installed-distribution.py",
     "scripts/verify-distributions.py",
