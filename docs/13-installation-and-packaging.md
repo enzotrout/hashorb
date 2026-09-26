@@ -117,6 +117,23 @@ hashorb doctor --probe-cuda-device 0
 The probe reports only a usable-ordinal count of zero or one. Selecting a
 profile may perform the capability probes required by that profile policy.
 
+## Existing Pre-Rename Checkouts
+
+HashOrb was renamed before its first public release. A developer or early tester may therefore have a valid local checkout whose outer directory is still named `hashsphere`, whose Git `origin` still points at the previous repository name, or whose private `.env` still contains `HASHSPHERE_` or `HASHPHERE_` keys.
+
+Those local names are not part of the Python package and do not change mining behavior, but they should be migrated after the renamed `main` branch is available. The migration order matters because repository-local virtual environments and compiled extensions can embed absolute source paths.
+
+Use **[Migrating an Existing Pre-Rename Checkout](19-existing-checkout-migration.md)** for the complete Mac and Linux/DGX Spark procedure. In summary:
+
+1. Make sure the checkout is clean.
+2. Update the existing Git remote to `enzotrout/hashorb` without changing SSH versus HTTPS unnecessarily.
+3. Fetch and fast-forward `main`.
+4. Run the repository's POSIX `.env` migration helper if a private `.env` exists.
+5. Rename the outer checkout directory from `hashsphere` to `hashorb`.
+6. Recreate `.venv` and generated build outputs.
+7. Rebuild the native extension; on a DGX Spark or another intentionally configured NVIDIA Linux development host, rebuild CUDA for the correct architecture.
+
+The migration helper is intentionally POSIX-only. It is not a Windows configuration-migration tool. New installations and fresh clones should simply use the HashOrb names from the start.
 ## Linux User-Local Installation
 
 Prerequisites are uv on `PATH` and an existing CPython 3.13. The installer does
