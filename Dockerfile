@@ -14,7 +14,7 @@ COPY src ./src
 RUN python -m pip wheel --wheel-dir /wheels .
 
 
-FROM python:${PYTHON_VERSION}-slim-bookworm@sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64 AS runtime
+FROM python:${PYTHON_VERSION}-slim-trixie@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS runtime
 
 ARG HASHORB_GID=10001
 ARG HASHORB_UID=10001
@@ -25,7 +25,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_ROOT_USER_ACTION=ignore
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends --only-upgrade libpcre2-8-0 \
+    && apt-get upgrade --yes \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid "${HASHORB_GID}" hashorb \
     && useradd --uid "${HASHORB_UID}" --gid hashorb --create-home hashorb
