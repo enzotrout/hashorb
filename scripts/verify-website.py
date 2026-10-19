@@ -36,7 +36,9 @@ def main() -> int:
     headers = {"User-Agent": "HashOrb-deployment-verifier/1.0", "Cache-Control": "no-cache"}
     for attempt in range(1, attempts + 1):
         try:
-            request = urllib.request.Request(\n                URL + "?verify=" + str(int(time.time())), headers=headers\n            )
+            request = urllib.request.Request(
+                URL + "?verify=" + str(int(time.time())), headers=headers
+            )
             with urllib.request.urlopen(request, timeout=15) as response:
                 status = response.status
                 final_url = response.url
@@ -45,14 +47,19 @@ def main() -> int:
                 raise ValueError(f"Unexpected HTTP response: status={status}, url={final_url}")
             found = release_content(body)
             if found != expected:
-                raise ValueError(\n                    f"Website release details differ: expected={expected!r}, found={found!r}"\n                )
+                raise ValueError(
+                    f"Website release details differ: expected={expected!r}, found={found!r}"
+                )
             print(f"PASS: {URL} serves the expected release badge and download link")
             return 0
         except (OSError, UnicodeError, ValueError) as exc:
             print(f"Attempt {attempt}/{attempts}: {exc}", file=sys.stderr)
             if attempt < attempts:
                 time.sleep(20)
-    print(\n        "FAIL: Published website does not match current site/index.html release content",\n        file=sys.stderr,\n    )
+    print(
+        "FAIL: Published website does not match current site/index.html release content",
+        file=sys.stderr,
+    )
     return 1
 
 
