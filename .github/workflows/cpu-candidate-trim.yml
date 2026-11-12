@@ -1,0 +1,25 @@
+name: CPU runtime candidate (trim)
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile.cpu-trim'
+      - '.github/workflows/cpu-candidate-trim.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build candidate
+        run: docker build --file Dockerfile.cpu-trim --tag hashorb:candidate .
+      - name: Offline nonroot hardened smoke
+        run: |
+          docker run --rm --read-only --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 --cap-drop=ALL --security-opt=no-new-privileges hashorb:candidate
+          test "$(docker run --rm --entrypoint id hashorb:candidate -u)" = "10001"
+      - name: Full unchanged image security audit
+        run: scripts/run-security-audit.sh image hashorb:candidate
