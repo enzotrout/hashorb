@@ -20,6 +20,6 @@ jobs:
       - name: Offline nonroot hardened smoke
         run: |
           docker run --rm --read-only --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 --cap-drop=ALL --security-opt=no-new-privileges hashorb:candidate
-          test "$(docker run --rm --entrypoint /usr/bin/python3 hashorb:candidate -c 'import os; print(os.getuid())')" = "10001"
+          test "$(docker run --rm --entrypoint /usr/local/bin/python hashorb:candidate -c 'import os; print(os.getuid())')" = "10001"
       - name: Full unchanged image security audit
         run: scripts/run-security-audit.sh image hashorb:candidate
