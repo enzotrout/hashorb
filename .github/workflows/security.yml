@@ -119,7 +119,7 @@ jobs:
         if: steps.scope.outputs.docs_only != 'true'
         run: |
           docker run --rm --read-only --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 --cap-drop=ALL --security-opt=no-new-privileges hashorb:security
-          test "$(docker run --rm --entrypoint id hashorb:security -u)" = "10001"
+          test "$(docker run --rm --entrypoint /usr/local/bin/python hashorb:security -c "import os; print(os.getuid())")" = "10001"
       - name: Check image history privacy
         if: steps.scope.outputs.docs_only != 'true'
         run: |
