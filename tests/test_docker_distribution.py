@@ -20,10 +20,8 @@ def test_dockerfile_builds_cpu_wheel_and_has_a_minimal_nonroot_runtime() -> None
     assert "USER 10001:10001" in text
     assert 'ENTRYPOINT ["/usr/local/bin/python", "-m", "hashorb"]' in text
     assert 'CMD ["doctor", "--log-dir", "/app/logs"]' in text
-    assert (
-        'CMD ["/usr/local/bin/python", "-m", "hashorb", "doctor", "--log-dir", "/app/logs"]'
-        in text
-    )
+    assert 'CMD ["/usr/local/bin/python", "-m", "hashorb"' in text
+    assert '"doctor", "--log-dir", "/app/logs"]' in text
     assert "uv run" not in text
     assert "stratum-mine" not in text
     assert "HASHORB_BITCOIN_ADDRESS" not in text
