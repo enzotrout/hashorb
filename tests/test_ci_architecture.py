@@ -47,4 +47,4 @@ def test_docker_ci_validates_default_doctor_argument_forwarding_and_nonroot() ->
     assert "docker build --tag hashorb:ci ." in text
     assert "docker run --rm hashorb:ci\n" in text
     assert "docker run --rm hashorb:ci --help" in text
-    assert "--entrypoint id" in text
+    assert "--entrypoint /usr/local/bin/python" in text
