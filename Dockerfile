@@ -6,7 +6,8 @@ WORKDIR /build
 COPY pyproject.toml setup.py MANIFEST.in README.md ./
 COPY src ./src
 RUN python -m pip wheel --wheel-dir /wheels . \
-    && python -m pip install --no-index --find-links=/wheels --target=/opt/hashorb hashorb
+    && python -m pip install --no-index --find-links=/wheels --target=/opt/hashorb hashorb \
+    && mkdir -p /build/logs
 
 # Base-only distroless runtime avoids bundling Debian's older Python.
 # Base manifest digest recorded from GitHub Actions on 2026-11-12.
@@ -15,6 +16,7 @@ ENV PYTHONPATH=/opt/hashorb PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /opt/hashorb /opt/hashorb
 WORKDIR /app
+COPY --from=builder --chown=10001:10001 /build/logs /app/logs
 USER 10001:10001
 VOLUME ["/app/logs"]
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
