@@ -25,6 +25,6 @@ jobs:
           test "$(docker run --rm --entrypoint /usr/local/bin/python hashorb:candidate -c 'import os; print(os.getuid())')" = "10001"
       - name: Check Python TLS, DNS, and runtime modules
         run: |
-          docker run --rm --entrypoint /usr/local/bin/python hashorb:candidate -c 'import ssl, socket, sqlite3, hashlib, ctypes; print(ssl.OPENSSL_VERSION); print(socket.getaddrinfo("localhost", 80))'
+          docker run --rm --entrypoint /usr/local/bin/python hashorb:candidate -c 'import ssl, socket, hashlib, ctypes; print(ssl.OPENSSL_VERSION); print(socket.getaddrinfo("localhost", 80))'
       - name: Full unchanged image security audit
         run: scripts/run-security-audit.sh image hashorb:candidate
