@@ -15,11 +15,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Record immutable distroless base digest
+        run: docker buildx imagetools inspect gcr.io/distroless/base-debian13:nonroot
       - name: Build candidate
         run: docker build --file Dockerfile.cpu-distroless --tag hashorb:candidate .
       - name: Offline nonroot hardened smoke
         run: |
           docker run --rm --read-only --tmpfs /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700 --cap-drop=ALL --security-opt=no-new-privileges hashorb:candidate
           test "$(docker run --rm --entrypoint /usr/local/bin/python hashorb:candidate -c 'import os; print(os.getuid())')" = "10001"
+      - name: Check Python TLS, DNS, and runtime modules
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/python hashorb:candidate -c 'import ssl, socket, sqlite3, hashlib, ctypes; print(ssl.OPENSSL_VERSION); print(socket.getaddrinfo("localhost", 80))'
       - name: Full unchanged image security audit
         run: scripts/run-security-audit.sh image hashorb:candidate
