@@ -94,7 +94,7 @@ jobs:
           docker run --rm hashorb:ci --help
           docker run --rm hashorb:ci profile-info --profile custom --backend python --chunk-size 1000
           docker run --rm hashorb:ci compute-benchmark --backend python --hash-count 16
-          test "$(docker run --rm --entrypoint id hashorb:ci -u)" = "10001"
+          test "$(docker run --rm --entrypoint /usr/local/bin/python hashorb:ci -c "import os; print(os.getuid())")" = "10001"
       - name: Check image history privacy
         run: |
           if docker history --no-trunc hashorb:ci | grep -E -i 'bitcoin_address|stratum_password|YOUR_BITCOIN_ADDRESS'; then
