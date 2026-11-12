@@ -30,15 +30,8 @@ RUN apt-get update \
     && apt-get autoremove --yes --purge \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-# Experimental removal of optional CLI utilities. The build fails if apt cannot
-# resolve a safe dependency set; the unchanged smoke test verifies the runtime.
-RUN for pkg in perl util-linux-extra; do \
-      if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then \
-        apt-get purge --yes "$pkg"; \
-      fi; \
-    done \
-    && apt-get autoremove --yes --purge \
-    && rm -rf /var/lib/apt/lists/*
+# Keep required system packages: apt rejects removal of Perl/util-linux dependencies.
+# Autoremove already removes only packages apt identifies as unnecessary.
 RUN groupadd --gid "${HASHORB_GID}" hashorb \
     && useradd --uid "${HASHORB_UID}" --gid hashorb --create-home hashorb
 COPY --from=builder /wheels /wheels
