@@ -95,7 +95,7 @@ def test_docker_bases_are_digest_pinned_and_runtime_is_nonroot() -> None:
     from_lines = [line for line in text.splitlines() if line.startswith("FROM ")]
     assert len(from_lines) == 2
     assert all(re.search(r"@sha256:[0-9a-f]{64}\s+AS\s+", line) for line in from_lines)
-    assert "USER hashorb" in text
+    assert "USER 10001:10001" in text
     assert "HEALTHCHECK" in text
     for forbidden in ("HASHORB_BITCOIN_RPC_PASSWORD", "HASHORB_STRATUM_PASSWORD"):
         assert forbidden not in text

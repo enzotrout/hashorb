@@ -11,16 +11,17 @@ def test_dockerfile_builds_cpu_wheel_and_has_a_minimal_nonroot_runtime() -> None
     text = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "ARG PYTHON_VERSION=3.13.14" in text
-    assert "-bookworm@sha256:" in text
     assert "-slim-trixie@sha256:" in text
+    assert "gcr.io/distroless/base-debian13:nonroot@sha256:" in text
     assert "HASHORB_BUILD_CUDA=0" in text
     assert "python -m pip wheel" in text
-    assert "apt-get upgrade --yes" in text
-    assert "rm -rf /var/lib/apt/lists/*" in text
-    assert "USER hashorb" in text
-    assert 'ENTRYPOINT ["hashorb"]' in text
+    assert "COPY --from=builder /usr/local /usr/local" in text
+    assert "COPY --from=builder /opt/hashorb /opt/hashorb" in text
+    assert "USER 10001:10001" in text
+    assert 'ENTRYPOINT ["/usr/local/bin/python", "-m", "hashorb"]' in text
     assert 'CMD ["doctor", "--log-dir", "/app/logs"]' in text
-    assert 'CMD ["hashorb", "doctor", "--log-dir", "/app/logs"]' in text
+    assert 'CMD ["/usr/local/bin/python", "-m", "hashorb"' in text
+    assert '"doctor", "--log-dir", "/app/logs"]' in text
     assert "uv run" not in text
     assert "stratum-mine" not in text
     assert "HASHORB_BITCOIN_ADDRESS" not in text
@@ -31,7 +32,7 @@ def test_docker_exec_entrypoint_forwards_arguments_and_owns_signals() -> None:
     lines = (_ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
     entrypoint = next(line for line in lines if line.startswith("ENTRYPOINT"))
 
-    assert entrypoint == 'ENTRYPOINT ["hashorb"]'
+    assert entrypoint == 'ENTRYPOINT ["/usr/local/bin/python", "-m", "hashorb"]'
     assert "sh -c" not in entrypoint
     assert "bash -c" not in entrypoint
 
