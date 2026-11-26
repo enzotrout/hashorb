@@ -10,6 +10,10 @@ from collections.abc import Mapping
 from types import TracebackType
 from typing import Any, Self
 
+# Real Stratum messages are a few kilobytes; this bound only stops an unterminated
+# or oversized line from growing the receive buffer without limit.
+MAX_STRATUM_MESSAGE_BYTES = 1024 * 1024
+
 
 class StratumTransportError(RuntimeError):
     """Base error for Stratum transport failures."""
@@ -21,6 +25,10 @@ class StratumConnectionError(StratumTransportError):
 
 class StratumProtocolError(StratumTransportError):
     """Raised when a received line is not a valid JSON object."""
+
+
+class _StratumMessageTooLargeError(StratumProtocolError):
+    """Raised internally when a received line exceeds the message size limit."""
 
 
 class StratumReceiveTimeoutError(StratumTransportError):
@@ -111,7 +119,13 @@ class StratumTransport:
         if timeout_seconds is not None:
             _validate_receive_timeout(timeout_seconds)
 
-        line = self._receive_line(timeout_seconds)
+        try:
+            line = self._receive_line(timeout_seconds)
+        except _StratumMessageTooLargeError:
+            # The stream cannot be resynchronized after an oversized line, so the
+            # session and its buffered data are discarded.
+            self.close()
+            raise
 
         try:
             decoded = line.decode("utf-8")
@@ -151,6 +165,7 @@ class StratumTransport:
     def _receive_line(self, timeout_seconds: float | None) -> bytes:
         connection = self._require_socket()
         newline_index = self._receive_buffer.find(b"\n")
+        self._enforce_line_bound(newline_index)
         if newline_index >= 0:
             return self._pop_buffered_line(newline_index)
 
@@ -180,6 +195,7 @@ class StratumTransport:
 
                 self._receive_buffer.extend(chunk)
                 newline_index = self._receive_buffer.find(b"\n")
+                self._enforce_line_bound(newline_index)
                 if newline_index >= 0:
                     return self._pop_buffered_line(newline_index)
 
@@ -201,6 +217,13 @@ class StratumTransport:
                     raise StratumConnectionError(
                         "failed to restore Stratum receive timeout"
                     ) from exc
+
+    def _enforce_line_bound(self, newline_index: int) -> None:
+        """Reject a pending line that exceeds the message size limit."""
+
+        pending_length = newline_index if newline_index >= 0 else len(self._receive_buffer)
+        if pending_length > MAX_STRATUM_MESSAGE_BYTES:
+            raise _StratumMessageTooLargeError("received Stratum message exceeds the size limit")
 
     def _pop_buffered_line(self, newline_index: int) -> bytes:
         line = bytes(self._receive_buffer[:newline_index])

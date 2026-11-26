@@ -110,7 +110,9 @@ newline-delimited JSON framing, and raw receive buffering. A bounded receive
 temporarily changes the socket timeout, restores the prior timeout on every
 outcome, and retains incomplete or additional framed data for later calls. A
 normal receive timeout is distinct from connection closure, I/O failure, and
-malformed protocol data.
+malformed protocol data. A single received line is limited to 1 MiB; a longer
+line, terminated or not, is a protocol error that closes the session and
+discards its buffered data.
 
 `hashorb.network.stratum.client` owns connection state, request identifiers,
 request-response routing, notification parsing, and the ordered notification
@@ -181,11 +183,15 @@ resets progression and invalidates old work without storing nonce history.
 
 Normal polling is configurable, bounded, and never busy; long polling is
 deferred. A reported backend match is reconstructed and double-hashed in
-Python, then checked against fresh template identity. The lifecycle delegates
-only that verified current candidate to one capability policy. The hash-only
+Python, then checked against a fresh template. A candidate is stale only when
+the fresh template builds on a different previous block; a template that differs
+only in transactions or time leaves a verified candidate eligible. The
+lifecycle delegates only that verified current candidate to one capability
+policy. The hash-only
 policy has no proposal callable, submit callable, generic RPC client, or block
 assembly. The submission policy alone assembles the complete block, requires
-Core proposal acceptance, refreshes again, and calls `submitblock` once.
+Core proposal acceptance, refreshes again, and calls `submitblock` once. Both
+refreshes apply the same previous-block staleness rule.
 
 `bitcoin-core-check`, `solo-hash`, and `solo-mine` are separate CLI branches.
 The first has its own read-only opt-in and no compute. The second requires the

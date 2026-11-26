@@ -373,3 +373,18 @@ def test_search_strategy_rejects_malformed_values(
 
     with pytest.raises(ValueError, match="HASHORB_SEARCH_STRATEGY"):
         Settings.from_env()
+
+
+def test_settings_repr_does_not_expose_the_stratum_password() -> None:
+    settings = Settings(
+        stratum_host="pool.example.com",
+        stratum_port=3333,
+        bitcoin_address="bc1qexampleaddress",
+        worker_name="rig",
+        stratum_password="correct-horse-battery-staple",
+        compute_backend="python",
+    )
+
+    assert "correct-horse-battery-staple" not in repr(settings)
+    assert "correct-horse-battery-staple" not in str(settings)
+    assert settings.stratum_password == "correct-horse-battery-staple"

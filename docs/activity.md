@@ -1,5 +1,13 @@
 # HashOrb Activity
 
+## 2026-11-25
+
+- Bounded the Stratum receive buffer: a received line longer than 1 MiB, terminated or not, now raises a protocol error and closes the session instead of growing memory without limit.
+
+- Changed solo mining so a verified candidate is discarded only when the chain tip moved. Template changes in transactions or time no longer drop a block that Core's proposal check accepted.
+
+- Excluded the Stratum password from the `Settings` dataclass representation.
+
 ## 2026-10-19
 
 - Added a concise employer-facing architecture and AI-assisted engineering section to the public website, with source links and a responsive CSS diagram.

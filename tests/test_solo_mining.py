@@ -302,6 +302,41 @@ def test_replacement_after_proposal_suppresses_submission() -> None:
     assert submit_calls == []
 
 
+@pytest.mark.parametrize("changed_fetch_call", [1, 2])
+def test_same_tip_template_change_does_not_discard_verified_candidate(
+    changed_fetch_call: int,
+) -> None:
+    # Fetch 1 follows the backend match and fetch 2 follows Core's proposal check. A
+    # different time on the same previous block models ordinary template churn that does
+    # not make the candidate stale.
+    initial = _template(marker=0x11)
+    churned = _template(marker=0x11, current_time=1_700_000_002)
+    assert initial.fingerprint != churned.fingerprint
+    assert initial.previous_block_hash == churned.previous_block_hash
+    fetch_calls = 0
+    proposed: list[bytes] = []
+    submitted: list[bytes] = []
+
+    def fetch() -> BlockTemplate:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return churned if fetch_calls == changed_fetch_call else initial
+
+    result = _run(
+        template=initial,
+        fetch_template=fetch,
+        propose_block=lambda block: proposed.append(block) or ProposalOutcome(True, "accepted"),
+        submit_block=lambda block: submitted.append(block) or SubmissionOutcome(True, "accepted"),
+    )
+
+    assert fetch_calls >= changed_fetch_call
+    assert result.outcome is SoloMiningOutcome.BLOCK_ACCEPTED
+    assert result.candidates_suppressed == 0
+    assert result.proposals_performed == result.submissions_performed == 1
+    assert len(proposed) == len(submitted) == 1
+    assert proposed[0] == submitted[0]
+
+
 def test_proposal_unavailability_has_fail_closed_policy() -> None:
     def unavailable(block: bytes) -> ProposalOutcome:
         del block

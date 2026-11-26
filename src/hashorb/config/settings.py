@@ -7,7 +7,7 @@ import os
 import re
 import socket
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from hashorb.config.environment import load_hashorb_environment
 from hashorb.config.profile import (
@@ -110,7 +110,7 @@ class Settings:
     stratum_port: int
     bitcoin_address: str
     worker_name: str
-    stratum_password: str
+    stratum_password: str = field(repr=False)
     compute_backend: str
     compute_profile: str | None = None
     compute_workers: int = DEFAULT_COMPUTE_WORKERS
@@ -351,8 +351,8 @@ def parse_cuda_devices(value: object) -> tuple[int, ...]:
     if len(fields) > MAX_CUDA_DEVICES:
         raise ValueError(f"HASHORB_CUDA_DEVICES must contain at most {MAX_CUDA_DEVICES} devices")
     ordinals: list[int] = []
-    for field in fields:
-        token = field.strip()
+    for entry in fields:
+        token = entry.strip()
         if (
             not token
             or not token.isascii()

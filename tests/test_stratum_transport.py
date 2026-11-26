@@ -422,3 +422,51 @@ def test_context_manager_connects_and_closes(
 
     assert transport.is_connected is False
     assert fake_socket.closed is True
+
+
+def test_unterminated_oversized_message_is_rejected_and_session_discarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limit = transport_module.MAX_STRATUM_MESSAGE_BYTES
+    chunk = b"A" * 65536
+    fake_socket = FakeSocket(recv_effects=[chunk] * (limit // len(chunk) + 2))
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    with pytest.raises(StratumProtocolError, match="size limit"):
+        transport.receive_message(timeout_seconds=5.0)
+
+    assert transport.is_connected is False
+    assert fake_socket.closed is True
+    # The buffer must stop growing at the first chunk past the limit.
+    assert fake_socket.recv_calls == limit // len(chunk) + 1
+
+
+def test_oversized_message_with_newline_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limit = transport_module.MAX_STRATUM_MESSAGE_BYTES
+    fake_socket = FakeSocket(recv_effects=[b"x" * (limit + 1) + b"\n"])
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    with pytest.raises(StratumProtocolError, match="size limit"):
+        transport.receive_message()
+
+    assert transport.is_connected is False
+
+
+def test_message_exactly_at_size_limit_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limit = transport_module.MAX_STRATUM_MESSAGE_BYTES
+    prefix = b'{"padding":"'
+    suffix = b'"}'
+    padding = b"p" * (limit - len(prefix) - len(suffix))
+    line = prefix + padding + suffix
+    assert len(line) == limit
+    fake_socket = FakeSocket(recv_effects=[line + b"\n"])
+    transport = connect_fake_socket(monkeypatch, fake_socket)
+
+    message = transport.receive_message()
+
+    assert len(message["padding"]) == len(padding)
+    assert transport.is_connected is True

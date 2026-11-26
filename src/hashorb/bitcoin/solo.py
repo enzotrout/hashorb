@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import partial
 from typing import Protocol, runtime_checkable
 
 from hashorb.bitcoin.block import SoloWorkVariant, assemble_solo_block, prepare_solo_work
@@ -29,6 +30,9 @@ _PACING_SLICE_SECONDS = 0.1
 type TemplateFetcher = Callable[[], BlockTemplate]
 type BlockProposer = Callable[[bytes], ProposalOutcome]
 type BlockSubmitter = Callable[[bytes], SubmissionOutcome]
+# Refreshes the template and reports whether the candidate's chain tip is no longer current.
+# Template changes that keep the same previous block (new transactions, a later time) do
+# not invalidate an already verified candidate.
 type TemplateRefresher = Callable[[], bool]
 type StopAwareWaiter = Callable[[float, StopToken], None]
 
@@ -534,6 +538,10 @@ def run_solo_mining(
             replace_template(fresh)
         return changed
 
+    def refresh_candidate_tip(candidate: SoloWorkVariant) -> bool:
+        refresh_template(force=True)
+        return _chain_tip_moved(candidate, current_template)
+
     while True:
         if stop_token.stop_requested:
             return finish(_stop_outcome(stop_token))
@@ -610,13 +618,14 @@ def run_solo_mining(
 
         if result.match is not None:
             _verify_backend_candidate(current_variant, result)
+            candidate_variant = current_variant
             try:
-                changed = refresh_template(force=True)
+                refresh_template(force=True)
             except BitcoinRpcError:
                 suppressions += 1
                 selected_observer.candidate_suppressed("rpc_invalidated", suppressions)
                 return finish(SoloMiningOutcome.RPC_FAILURE)
-            if changed:
+            if _chain_tip_moved(candidate_variant, current_template):
                 suppressions += 1
                 selected_observer.candidate_suppressed("template_replaced", suppressions)
                 continue
@@ -626,9 +635,9 @@ def run_solo_mining(
                 return finish(_stop_outcome(stop_token))
             candidates += 1
             decision = candidate_policy.handle_verified_candidate(
-                current_variant,
+                candidate_variant,
                 result.match.nonce,
-                refresh_template=lambda: refresh_template(force=True),
+                refresh_template=partial(refresh_candidate_tip, candidate_variant),
                 stop_token=stop_token,
                 observer=selected_observer,
             )
@@ -651,6 +660,12 @@ def run_solo_mining(
             return finish(SoloMiningOutcome.CHUNK_LIMIT_REACHED)
         if plan.inter_range_delay_seconds > 0:
             selected_wait(plan.inter_range_delay_seconds, stop_token)
+
+
+def _chain_tip_moved(candidate: SoloWorkVariant, current: BlockTemplate) -> bool:
+    """Return whether a verified candidate no longer builds on the current chain tip."""
+
+    return candidate.template.previous_block_hash != current.previous_block_hash
 
 
 def _verify_backend_candidate(variant: SoloWorkVariant, result: NonceSearchResult) -> None:
