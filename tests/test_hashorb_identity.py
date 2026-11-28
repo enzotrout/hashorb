@@ -77,6 +77,7 @@ def test_native_and_cuda_extensions_use_hashorb_package_boundary() -> None:
 def test_legacy_environment_is_rejected_without_value_reflection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(environment_module, "find_dotenv", lambda **kwargs: "")
     monkeypatch.setattr(environment_module, "load_dotenv", lambda: False)
     synthetic_value = "synthetic-value-must-not-appear"
     monkeypatch.setenv("HASHPHERE_ENABLE_TRUE_SOLO", synthetic_value)
