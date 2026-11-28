@@ -79,3 +79,10 @@ vulnerabilities:
   - id: CVE-2026-9538
     expired_at: 2026-10-31
     statement: HashOrb does not invoke the Perl interpreter.
+
+  - id: CVE-2026-107494
+    expired_at: 2026-12-28
+    statement: HashOrb uses TCP-based networking. Source and runtime dependency review found no QUIC or HTTP/3 implementation. Debian fix is deferred.
+  - id: CVE-2026-124709
+    expired_at: 2026-12-28
+    statement: HashOrb uses TCP-based networking. Source and runtime dependency review found no QUIC stream handling implementation. Debian fix is deferred.

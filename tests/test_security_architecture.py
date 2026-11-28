@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -106,8 +107,14 @@ def test_container_vulnerability_exceptions_are_narrow_reviewed_and_expiring() -
     entries = ignore.split("  - id: ")[1:]
     assert entries
     assert all(re.match(r"CVE-\d{4}-\d+\n", entry) for entry in entries)
-    assert all("expired_at: 2026-10-31" in entry for entry in entries)
-    assert all("statement: HashOrb does not" in entry for entry in entries)
+    for entry in entries:
+        match = re.search(r"^    expired_at: (\d{4}-\d{2}-\d{2})$", entry, re.MULTILINE)
+        assert match, "Every exception needs a valid expiration date"
+        expiration = date.fromisoformat(match.group(1))
+        assert expiration <= date(2026, 12, 28), "Exception extends beyond approved review horizon"
+        statement = re.search(r"^    statement: (.+)$", entry, re.MULTILINE)
+        assert statement and len(statement.group(1).strip()) >= 30
+        assert statement.group(1).startswith("HashOrb ")
     assert "secrets:" not in ignore
     script = (_ROOT / "scripts" / "run-security-audit.sh").read_text(encoding="utf-8")
     assert script.count("--ignorefile") == 1

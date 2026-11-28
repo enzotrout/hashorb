@@ -10,8 +10,8 @@ RUN python -m pip wheel --wheel-dir /wheels . \
     && mkdir -p /build/logs
 
 # Base-only distroless runtime avoids bundling Debian's older Python.
-# Base manifest digest recorded from GitHub Actions on 2026-11-12.
-FROM gcr.io/distroless/base-debian13:nonroot@sha256:7fe4df6a4413adf5889960d345a28b4574aea0872ea47684c7244c8d88027dca AS runtime
+# Base manifest digest verified with Cosign on 2026-11-28.
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:7088bf1cdc94a65af4e0d5ad94518ed489a372dec1ece38ff4411c6c15fb5864 AS runtime
 ENV PYTHONPATH=/opt/hashorb PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /opt/hashorb /opt/hashorb
